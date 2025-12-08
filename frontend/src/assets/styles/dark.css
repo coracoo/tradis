@@ -1,0 +1,72 @@
+/* 全局暗黑模式背景 */
+html.dark, body.dark, .dark #app {
+  background-color: #1a1a1a;
+  color: #e5e5e5;
+}
+
+/* 覆盖 Element Plus 组件在暗黑模式下的样式（如果需要额外调整） */
+.dark .el-card {
+  background-color: #252525;
+  border-color: #333;
+  color: #e5e5e5;
+}
+
+.dark .el-card__header {
+  border-bottom-color: #333;
+}
+
+.dark .el-dialog {
+  background-color: #252525;
+}
+
+.dark .el-drawer {
+  background-color: #252525;
+}
+
+.dark .el-table {
+  background-color: #252525;
+  --el-table-tr-bg-color: #252525;
+  --el-table-header-bg-color: #2d2d2d;
+  color: #e5e5e5;
+}
+
+.dark .el-table th, .dark .el-table td {
+  border-bottom-color: #333;
+}
+
+.dark .el-input__wrapper, 
+.dark .el-textarea__inner, 
+.dark .el-select__wrapper {
+  background-color: #1a1a1a;
+  box-shadow: 0 0 0 1px #333 inset;
+}
+
+.dark .el-input__inner {
+  color: #e5e5e5;
+}
+
+/* 导航栏暗黑模式 */
+.dark .sidebar {
+  background-color: #202020;
+  border-right-color: #333;
+}
+
+.dark .header {
+  background-color: #202020;
+  border-bottom-color: #333;
+}
+
+/* 自定义卡片背景 */
+.dark .app-card {
+  background-color: #252525;
+  border-color: #333;
+}
+
+.dark .category-header {
+  color: #e5e5e5;
+  border-bottom-color: #333;
+}
+
+.dark .terminal-container {
+    background-color: #000;
+}

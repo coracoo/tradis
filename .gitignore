@@ -1,0 +1,35 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.DS_Store
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.env.local
+frontend/.env.*.local
+
+# Backend
+backend/docker-manager-backend
+backend/bin/
+backend/obj/
+backend/.DS_Store
+backend/*.exe
+backend/*.dll
+backend/*.so
+backend/*.dylib
+
+# Data & Logs
+backend/data/*.db
+backend/data/*.logs
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

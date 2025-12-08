@@ -1,0 +1,63 @@
+{
+  "id": "komga",
+  "name": "Komga漫画服务器",
+  "description": "一个免费开源的漫画/电子书服务器",
+  "category": "媒体",
+  "version": "1.0.0",
+  "logo": "https://example.com/logos/komga.png",
+  "author": "Docker Manager",
+  "website": "https://komga.org",
+  "tags": ["漫画", "电子书", "媒体服务器"],
+  "ports": [
+    {
+      "container": 25600,
+      "host": 25600,
+      "description": "Web界面"
+    }
+  ],
+  "volumes": [
+    {
+      "container": "/config",
+      "host": "./komga/config",
+      "description": "配置文件"
+    },
+    {
+      "container": "/data",
+      "host": "./komga/data",
+      "description": "数据文件"
+    },
+    {
+      "container": "/comic",
+      "host": "./komga/comics",
+      "description": "漫画文件"
+    }
+  ],
+  "environment": [
+    {
+      "name": "TZ",
+      "value": "Asia/Shanghai",
+      "description": "时区设置"
+    }
+  ],
+  "compose": {
+    "version": "3.3",
+    "services": {
+      "komga": {
+        "image": "gotson/komga",
+        "container_name": "komga",
+        "volumes": [
+          "./komga/config:/config",
+          "./komga/data:/data",
+          "./komga/comics:/comic"
+        ],
+        "ports": [
+          "25600:25600"
+        ],
+        "environment": [
+          "TZ=Asia/Shanghai"
+        ],
+        "restart": "unless-stopped"
+      }
+    }
+  }
+}

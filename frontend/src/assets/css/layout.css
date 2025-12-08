@@ -1,0 +1,211 @@
+/* 全局布局与紧凑列表风格，参考 docker_design.html 配色与结构 */
+:root {
+  --color-primary: #3b82f6;
+  --color-card: #ffffff;
+  --color-bg: #f8fafc;
+  --color-border: #e5e7eb;
+  --color-text: #1f2937;
+  --color-text-secondary: #6b7280;
+  --header-bg: #fff;
+  --sidebar-bg: #0f172a;
+}
+
+html.dark {
+  --color-primary: #60a5fa;
+  --color-card: #1e293b;
+  --color-bg: #0f172a;
+  --color-border: #334155;
+  --color-text: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --header-bg: #1e293b;
+  --sidebar-bg: #020617;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* 防止最外层出现滚动条 */
+}
+
+.app-layout {
+  display: flex;
+  height: 100vh; /* 使用视口高度 */
+  background: var(--color-bg);
+  color: var(--color-text);
+  overflow: hidden; /* 防止布局溢出 */
+}
+
+/* 侧边栏 */
+.sidebar {
+  width: 240px; /* 文字多2个字符左右的宽度 */
+  background: var(--sidebar-bg);
+  color: #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0; /* 防止侧边栏被压缩 */
+}
+.sidebar .logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-weight: 700;
+}
+.sidebar .menu {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+.sidebar .menu .el-menu-item {
+  border-radius: 8px;
+  margin: 4px 8px;
+}
+
+/* 顶部导航 */
+.topbar {
+  height: 60px; /* 稍微增加高度以提升美观 */
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px; /* 增加左右内边距 */
+  box-shadow: 0 1px 4px rgba(0,21,41,0.08); /* 添加阴影增加美观度 */
+  flex-shrink: 0; /* 防止被压缩 */
+}
+.topbar .title {
+  font-size: 18px; /* 增大字体 */
+  font-weight: 600;
+  color: var(--color-text);
+  text-transform: capitalize; /* 首字母大写 */
+  letter-spacing: 0.5px; /* 增加字间距 */
+}
+
+/* 主内容 */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* 允许子元素（content）在溢出时正确滚动 */
+  min-height: 0;
+}
+.content {
+  /* 撑满剩余空间，确保页脚固定在底部 */
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+/* 底部状态栏 */
+.footer {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--header-bg);
+  color: var(--color-text-secondary);
+}
+
+/* Element Plus Dark Theme Overrides */
+html.dark .el-table {
+  --el-table-bg-color: var(--color-card);
+  --el-table-tr-bg-color: var(--color-card);
+  --el-table-header-bg-color: var(--header-bg);
+  --el-table-border-color: var(--color-border);
+  --el-table-text-color: var(--color-text);
+  --el-table-header-text-color: var(--color-text);
+  --el-table-row-hover-bg-color: var(--color-bg); /* 添加 hover 颜色 */
+}
+
+html.dark .el-card {
+  --el-card-bg-color: var(--color-card);
+  --el-card-border-color: var(--color-border);
+  --el-text-color-primary: var(--color-text);
+  background-color: var(--color-card); /* 显式设置背景色 */
+  color: var(--color-text);
+}
+
+html.dark .el-dialog {
+  --el-dialog-bg-color: var(--color-card);
+  background-color: var(--color-card);
+}
+
+html.dark .el-input__wrapper,
+html.dark .el-select__wrapper {
+  background-color: var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-border) inset;
+}
+
+html.dark .el-drawer {
+  background-color: var(--color-card);
+  border-left: 1px solid var(--color-border);
+}
+
+html.dark .el-dropdown-menu {
+  background-color: var(--color-card);
+  border-color: var(--color-border);
+}
+
+html.dark .el-dropdown-menu__item {
+  color: var(--color-text);
+}
+
+html.dark .el-dropdown-menu__item:hover {
+  background-color: var(--color-bg);
+}
+
+html.dark .el-button--default {
+  background-color: var(--color-bg);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+html.dark .el-tag--plain {
+  background-color: var(--color-bg);
+  border-color: var(--color-border);
+}
+
+html.dark .el-pagination button {
+  background-color: var(--color-bg) !important;
+  color: var(--color-text);
+}
+
+html.dark .el-pagination .el-pager li {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+html.dark .el-pagination .el-pager li.is-active {
+  background-color: var(--color-primary);
+  color: #fff;
+}
+
+/* 紧凑表格列表 */
+.compact-table .el-table__row {
+  height: 40px;
+}
+.compact-table .el-table .cell {
+  padding: 6px 8px;
+}
+.operation-bar {
+  margin-bottom: 12px;
+  display: flex;
+  gap: 8px;
+}
+.pagination {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 响应式 */
+@media (max-width: 960px) {
+  .sidebar { width: 64px; }
+  .sidebar .logo { justify-content: center; }
+  .sidebar .el-menu-item span { display: none; }
+}

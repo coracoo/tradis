@@ -1,0 +1,14 @@
+version: '3.3'
+services:
+  komga:
+    image: gotson/komga
+    container_name: komga
+    volumes:
+      - ./komga/config:/config
+      - ./komga/data:/data
+      - ./komga/comics:/comic
+    ports:
+      - 25600:25600
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped

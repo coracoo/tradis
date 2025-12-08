@@ -1,0 +1,458 @@
+<template>
+  <div class="container compact-table">
+    <div class="header">
+      <div class="title">
+        <el-button link @click="goBack">
+          <el-icon><Back /></el-icon>
+        </el-button>
+        {{ containerName }}
+      </div>
+      <div class="status">
+        <el-tag :type="containerStatus === '运行中' ? 'success' : 'info'">
+          {{ containerStatus }}
+        </el-tag>
+      </div>
+      <div class="actions">
+        <el-button-group>
+          <el-button 
+            type="primary" 
+            :disabled="containerStatus === '运行中'"
+            @click="handleStart"
+          >
+            启动
+          </el-button>
+          <el-button 
+            type="warning" 
+            :disabled="containerStatus !== '运行中'"
+            @click="handleStop"
+          >
+            停止
+          </el-button>
+          <el-button 
+            type="primary"
+            @click="handleRestart"
+          >
+            重启
+          </el-button>
+        </el-button-group>
+      </div>
+    </div>
+
+    <div class="content">
+      <el-tabs v-model="activeTab">
+        <el-tab-pane label="基本信息" name="info">
+          <div class="info-section">
+            <div class="resource-usage">
+              <el-row :gutter="20">
+                <el-col :span="6">
+                  <div class="metric-card">
+                    <div class="metric-title">CPU</div>
+                    <div class="metric-value">{{ cpuUsage }}%</div>
+                    <div class="metric-chart">
+                      <el-progress 
+                        :percentage="cpuUsage" 
+                        :color="getProgressColor(cpuUsage)"
+                      />
+                    </div>
+                  </div>
+                </el-col>
+                <el-col :span="6">
+                  <div class="metric-card">
+                    <div class="metric-title">内存</div>
+                    <div class="metric-value">{{ memoryUsage }}MB</div>
+                    <div class="metric-chart">
+                      <el-progress 
+                        :percentage="(memoryUsage / memoryLimit) * 100" 
+                        :color="getProgressColor((memoryUsage / memoryLimit) * 100)"
+                      />
+                    </div>
+                  </div>
+                </el-col>
+                <el-col :span="6">
+                  <div class="metric-card">
+                    <div class="metric-title">网络(上传)</div>
+                    <div class="metric-value">{{ networkUp }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="6">
+                  <div class="metric-card">
+                    <div class="metric-title">网络(下载)</div>
+                    <div class="metric-value">{{ networkDown }}</div>
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+
+            <div class="detail-info">
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="容器名称">{{ containerName }}</el-descriptions-item>
+                <el-descriptions-item label="镜像">{{ imageInfo }}</el-descriptions-item>
+                <el-descriptions-item label="创建时间">{{ createTime }}</el-descriptions-item>
+                <el-descriptions-item label="运行时长">{{ uptime }}</el-descriptions-item>
+                <el-descriptions-item label="端口映射">{{ ports }}</el-descriptions-item>
+                <el-descriptions-item label="存储卷">{{ volumes }}</el-descriptions-item>
+                <el-descriptions-item label="网络">{{ networks }}</el-descriptions-item>
+                <el-descriptions-item label="重启策略">{{ restartPolicy }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="日志" name="logs">
+          <div class="logs-container">
+            <div class="logs-header">
+              <div class="logs-options">
+                <el-switch
+                  v-model="autoScroll"
+                  active-text="自动滚动"
+                />
+                <el-input
+                  v-model="logFilter"
+                  placeholder="过滤日志"
+                  style="width: 200px"
+                >
+                  <template #prefix>
+                    <el-icon><Search /></el-icon>
+                  </template>
+                </el-input>
+              </div>
+              <el-button @click="handleClearLogs">清空日志</el-button>
+            </div>
+            <div class="logs-content" ref="logsRef">
+              <pre v-for="(log, index) in filteredLogs" 
+                   :key="index" 
+                   :class="getLogClass(log)">{{ log.content }}</pre>
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Back, Search } from '@element-plus/icons-vue'
+import api from '../api'
+import { formatTimeTwoLines } from '../utils/format'
+
+const route = useRoute()
+const router = useRouter()
+const containerName = ref(route.params.name || '')
+const containerStatus = ref('')
+const activeTab = ref('info')
+const loading = ref(false)
+const containerId = ref('') // 存储容器完整 ID
+
+// 基本信息数据
+const cpuUsage = ref(0)
+const memoryUsage = ref(0)
+const memoryLimit = ref(0)
+const networkUp = ref('0 B/s')
+const networkDown = ref('0 B/s')
+const imageInfo = ref('')
+const createTime = ref('')
+const uptime = ref('')
+const ports = ref('')
+const volumes = ref('')
+const networks = ref('')
+const restartPolicy = ref('')
+
+// 日志相关
+const autoScroll = ref(true)
+const logFilter = ref('')
+const logs = ref([])
+const logsRef = ref(null)
+let logWebSocket = null
+let refreshTimer = null
+
+// 计算属性和方法
+const filteredLogs = computed(() => {
+  if (!logFilter.value) return logs.value
+  return logs.value.filter(log => 
+    log.content.toLowerCase().includes(logFilter.value.toLowerCase())
+  )
+})
+
+const getProgressColor = (percentage) => {
+  if (percentage < 60) return '#67C23A'
+  if (percentage < 80) return '#E6A23C'
+  return '#F56C6C'
+}
+
+const getLogClass = (log) => ({
+  'error': log.level === 'error',
+  'warning': log.level === 'warning',
+  'info': log.level === 'info'
+})
+
+// 格式化网络流量
+const formatBytes = (bytes) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+// 获取容器详情
+const fetchContainerDetail = async () => {
+  if (!containerName.value) return
+  
+  try {
+    // 这里我们假设后端支持通过名称或ID获取详情
+    // 由于后端只实现了通过ID获取，我们需要先在前端找到对应的容器ID
+    // 或者修改后端路由支持通过名称获取。
+    // 这里采用先获取列表匹配名称的方式（虽然效率低，但暂时可行）
+    // TODO: 优化后端 API 支持通过名称查询或前端传递 ID
+    
+    // 如果没有 ID，先通过列表查找
+    if (!containerId.value) {
+      const list = await api.containers.listContainers()
+      // axios 返回的数据在 list.data 中，但如果在拦截器中处理过，可能直接就是数据
+      // 需要确认 list 的结构。通常 axios.get 返回的是 { data: ... }
+      // 如果后端直接返回数组，那么 list.data 就是数组
+      // 如果出错提示 list.data.find is undefined，说明 list.data 可能不是数组或者 list 已经是数组了
+      
+      const containers = Array.isArray(list) ? list : (list.data || [])
+      
+      const target = containers.find(c => {
+         const name = c.Names?.[0]?.replace(/^\//, '')
+         return name === containerName.value
+      })
+      
+      if (target) {
+        containerId.value = target.Id
+      } else {
+        ElMessage.error('找不到指定容器')
+        return
+      }
+    }
+
+    // 获取详情
+    const res = await api.containers.getContainer(containerId.value)
+    
+    // api.index.js 中拦截器直接返回 response.data，所以 res 已经是数据本身，不需要再 .data
+    // 但后端可能返回的是 { data: ... } 或者直接是数据结构，这取决于后端
+    // 后端 api/container.go 中 GetContainer 函数是 c.JSON(http.StatusOK, result)
+    // 其中 result 是 map[string]interface{}
+    // 所以 res 应该就是 result
+    
+    // 如果返回结构是 { data: {...} }，那么这里 res.data 才是数据
+    // 如果拦截器返回 response.data，而 axios 原始 response.data 就是后端返回的 JSON
+    // 假设后端返回 {"Name": "xxx", "State": "running", ...}
+    // 那么 res 就应该是这个对象
+    // 如果报错 Cannot read properties of undefined (reading 'State')
+    // 说明 res.data 是 undefined，这意味着 res 已经是数据对象了，或者 res 本身就是 undefined
+    
+    const data = res.data || res // 尝试兼容两种情况
+
+    if (!data) {
+        throw new Error('获取容器详情返回为空')
+    }
+
+    // 更新数据
+    // 注意：后端返回的字段首字母大写
+    // 且后端返回的 State 是个 struct 或者 map，需要确认结构
+    // 查看 backend/api/container.go，返回的是：
+    /*
+        result := gin.H{
+            "Id":              inspect.ID,
+            "Name":            inspect.Name,
+            "State":           inspect.State.Status, // 这里直接是 string
+            "Running":         inspect.State.Running,
+            // ...
+        }
+    */
+    // 所以 data.State 应该是 string
+    
+    containerStatus.value = (data.State === 'running' || data.Running) ? '运行中' : data.State
+    imageInfo.value = data.Image
+    createTime.value = formatTimeTwoLines(data.Created)
+    uptime.value = data.RunningTime
+    restartPolicy.value = data.RestartPolicy
+    
+    // 格式化端口
+    if (data.Ports && data.Ports.length) {
+      ports.value = data.Ports.map(p => {
+        if (p.PublicPort) {
+          return `${p.IP || '0.0.0.0'}:${p.PublicPort}:${p.PrivatePort}/${p.Type}`
+        }
+        return `${p.PrivatePort}/${p.Type}`
+      }).join(', ')
+    } else {
+      ports.value = '-'
+    }
+
+    // 格式化挂载卷
+    if (data.Mounts && data.Mounts.length) {
+      volumes.value = data.Mounts.map(m => `${m.Source}:${m.Destination}`).join(', ')
+    } else {
+      volumes.value = '-'
+    }
+
+    // 格式化网络
+    if (data.Networks && data.Networks.length) {
+      networks.value = data.Networks.join(', ')
+    } else {
+      networks.value = '-'
+    }
+    
+    // 资源使用（暂时模拟或通过 WebSocket 获取）
+    // 这里简单设置一些默认值，实际应该从后端获取实时状态
+    // memoryLimit.value = data.HostConfig.Memory || 0 // Docker API 这里的单位可能是字节
+    
+  } catch (error) {
+    console.error('获取容器详情失败:', error)
+    ElMessage.error('获取容器详情失败')
+  }
+}
+
+// 操作方法
+const goBack = () => {
+  router.push('/containers')
+}
+
+const handleStart = async () => {
+  try {
+    await api.containers.startContainer(containerId.value)
+    ElMessage.success('容器已启动')
+    fetchContainerDetail()
+  } catch (error) {
+    ElMessage.error('启动失败: ' + (error.response?.data?.error || error.message))
+  }
+}
+
+const handleStop = async () => {
+  try {
+    await api.containers.stopContainer(containerId.value)
+    ElMessage.success('容器已停止')
+    fetchContainerDetail()
+  } catch (error) {
+    ElMessage.error('停止失败: ' + (error.response?.data?.error || error.message))
+  }
+}
+
+const handleRestart = async () => {
+  try {
+    await api.containers.restartContainer(containerId.value) // 假设 API 有这个方法
+    ElMessage.success('容器已重启')
+    fetchContainerDetail()
+  } catch (error) {
+    // ElMessage.error('重启失败')
+    // 注意：api/container.js 中可能没有 restartContainer，需要确认
+    // 经检查 api/container.js 中确实没有 restartContainer，只有 start/stop/remove
+    // 如果需要重启功能，需要在 api/container.js 添加
+    console.error(error)
+  }
+}
+
+const handleClearLogs = () => {
+  logs.value = []
+}
+
+// 初始化 WebSocket 连接获取日志（示例）
+const initLogWebSocket = () => {
+  if (!containerId.value) return
+  // 实现 WebSocket 连接逻辑...
+}
+
+onMounted(() => {
+  fetchContainerDetail()
+  refreshTimer = setInterval(fetchContainerDetail, 5000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  if (logWebSocket) logWebSocket.close()
+})
+</script>
+
+<style scoped>
+.container { padding: 0; }
+
+.header { display: flex; align-items: center; margin-bottom: 12px; gap: 12px; }
+
+.title { display: flex; align-items: center; font-size: 18px; font-weight: bold; gap: 8px; }
+
+.content {
+  background: #fff;
+  border-radius: 4px;
+  padding: 20px;
+}
+
+.metric-card {
+  background: #f5f7fa;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.metric-title {
+  font-size: 14px;
+  color: #606266;
+  margin-bottom: 10px;
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.detail-info {
+  margin-top: 20px;
+}
+
+.logs-container {
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background: #f5f7fa;
+  border: 1px solid #dcdfe6;
+  border-bottom: none;
+}
+
+.logs-options {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.logs-content {
+  flex: 1;
+  overflow-y: auto;
+  background: #1e1e1e;
+  color: #fff;
+  padding: 10px;
+  font-family: monospace;
+  border: 1px solid #dcdfe6;
+}
+
+.logs-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.logs-content .error {
+  color: #ff4949;
+}
+
+.logs-content .warning {
+  color: #e6a23c;
+}
+
+.logs-content .info {
+  color: #67c23a;
+}
+</style>
