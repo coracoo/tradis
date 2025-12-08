@@ -57,6 +57,8 @@ if [ -z "$current_remote" ]; then
     read -p "地址: " repo_url
     
     if [ -n "$repo_url" ]; then
+        # 移除可能存在的旧 origin
+        git remote remove origin 2>/dev/null
         git remote add origin "$repo_url"
         echo -e "${GREEN}已添加远程仓库: $repo_url${NC}"
     else
@@ -68,17 +70,63 @@ else
     echo -e "${GREEN}当前远程仓库: $current_remote${NC}"
 fi
 
-# 6. 推送代码
-echo -e "${YELLOW}准备推送到远程仓库 (main 分支)...${NC}"
-git push -u origin main
+# 6. 处理认证与推送
+echo -e "${YELLOW}正在尝试连接远程仓库...${NC}"
 
-if [ $? -eq 0 ]; then
+# 尝试首次推送
+if git push -u origin main; then
     echo -e "${GREEN}✅ 代码上传成功！${NC}"
+    exit 0
 else
-    echo -e "${RED}❌ 上传失败。${NC}"
-    echo -e "可能原因："
-    echo -e "1. 仓库地址错误"
-    echo -e "2. 权限不足 (请确保已配置 SSH Key 或使用了正确的 Token)"
-    echo -e "3. 网络问题"
-    echo -e "4. 远程仓库包含本地没有的更改 (尝试 git pull origin main --rebase)"
+    echo -e "${RED}❌ 首次推送失败。${NC}"
+    echo -e "${YELLOW}=== 故障排查 ===${NC}"
+    
+    # 检查是否是因为需要 Pull
+    git fetch origin main 2>/dev/null
+    local_hash=$(git rev-parse HEAD)
+    remote_hash=$(git rev-parse origin/main 2>/dev/null)
+    
+    if [ -n "$remote_hash" ] && [ "$local_hash" != "$remote_hash" ]; then
+        echo -e "${YELLOW}检测到远程仓库包含本地没有的更改。${NC}"
+        read -p "是否尝试合并远程更改 (git pull --rebase)? [y/N] " merge_choice
+        if [[ "$merge_choice" =~ ^[Yy]$ ]]; then
+            if git pull origin main --rebase; then
+                echo -e "${GREEN}合并成功，正在重试推送...${NC}"
+                git push -u origin main && echo -e "${GREEN}✅ 代码上传成功！${NC}" && exit 0
+            else
+                echo -e "${RED}合并失败，请手动解决冲突。${NC}"
+                exit 1
+            fi
+        fi
+    fi
+
+    echo -e "${YELLOW}如果是因为认证失败（Password authentication is not supported），请尝试使用 Token。${NC}"
+    read -p "是否要输入 GitHub Personal Access Token 进行认证? [y/N] " token_choice
+    
+    if [[ "$token_choice" =~ ^[Yy]$ ]]; then
+        read -p "请输入您的 GitHub 用户名: " gh_user
+        read -s -p "请输入您的 GitHub Token (输入时不显示): " gh_token
+        echo ""
+        
+        # 获取当前仓库 URL 的路径部分
+        repo_url=$(git remote get-url origin)
+        # 提取 github.com/user/repo.git 部分
+        clean_url=$(echo "$repo_url" | sed -E 's/https?:\/\/(.*@)?//')
+        
+        # 构造带 Token 的 URL
+        new_url="https://${gh_user}:${gh_token}@${clean_url}"
+        
+        git remote set-url origin "$new_url"
+        echo -e "${GREEN}已更新远程仓库地址包含认证信息。${NC}"
+        echo -e "${YELLOW}正在重试推送...${NC}"
+        
+        if git push -u origin main; then
+            echo -e "${GREEN}✅ 代码上传成功！${NC}"
+        else
+             echo -e "${RED}❌ 仍然失败。请检查 Token 是否只有效或网络连接。${NC}"
+        fi
+    else
+        echo -e "${YELLOW}您可以检查 SSH Key 配置或手动运行 git push。${NC}"
+    fi
 fi
+
