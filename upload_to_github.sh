@@ -107,7 +107,7 @@ else
         read -p "请输入您的 GitHub 用户名: " gh_user
         read -s -p "请输入您的 GitHub Token (输入时不显示): " gh_token
         echo ""
-        
+        gh_token=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
         # 获取当前仓库 URL 的路径部分
         repo_url=$(git remote get-url origin)
         # 提取 github.com/user/repo.git 部分
