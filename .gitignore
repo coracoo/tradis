@@ -29,7 +29,9 @@ logs/
 .vscode/
 *.swp
 *.swo
-
+*.*/
 # OS
 .DS_Store
 Thumbs.db
+
+upload_to_github.sh
