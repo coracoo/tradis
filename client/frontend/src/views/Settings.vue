@@ -55,6 +55,14 @@
           <div class="help-text">用于自动生成外网访问的容器导航链接。</div>
         </el-form-item>
 
+        <!--<el-form-item label="应用商城服务器地址">
+          <el-input 
+            v-model="settingsForm.appStoreServerUrl" 
+            placeholder="https://template.cgakki.top:33333" 
+          />
+          <div class="help-text">用于从应用商城获取模板列表与详情。</div>
+        </el-form-item>-->
+
         <el-form-item>
           <el-button type="primary" @click="saveServerSettings" :loading="urlLoading">保存配置</el-button>
         </el-form-item>
@@ -64,20 +72,42 @@
             <el-switch v-model="settingsForm.socketProxyEnabled" />
             <span class="status-text">{{ settingsForm.socketProxyEnabled ? '已开启' : '已关闭' }}</span>
           </div>
-          <div class="help-text">开启后允许通过 TCP 端口访问 Docker Socket，请谨慎操作。</div>
+          <div class="help-text">（开发中）开启后允许通过 TCP 端口访问 Docker Socket，请谨慎操作。</div>
         </el-form-item>
 
         <el-divider />
         
-        <div class="section-title">界面设置</div>
-        <el-form-item label="主题模式">
-           <el-radio-group v-model="theme" @change="handleThemeChange">
-             <el-radio-button label="light">浅色</el-radio-button>
-             <el-radio-button label="dark">深色</el-radio-button>
-             <el-radio-button label="auto">跟随系统</el-radio-button>
-           </el-radio-group>
-        </el-form-item>
       </el-form>
+    </el-card>
+
+    <el-card class="settings-card" style="margin-top: 20px">
+      <template #header>
+        <div class="card-header">
+          <span>端口管理设置</span>
+        </div>
+      </template>
+      <div class="port-settings">
+        <el-form :model="allocSettings" label-width="140px">
+          <el-form-item label="自动分配范围">
+            <el-col :span="11">
+              <el-input-number v-model="allocSettings.start" :min="1024" :max="65535" placeholder="起始端口" style="width: 100%" />
+            </el-col>
+            <el-col :span="2" class="text-center">
+              <span class="text-gray-500">-</span>
+            </el-col>
+            <el-col :span="11">
+              <el-input-number v-model="allocSettings.end" :min="1024" :max="65535" placeholder="结束端口" style="width: 100%" />
+            </el-col>
+          </el-form-item>
+          <el-form-item>
+             <el-button type="primary" @click="saveAllocSettings" :loading="allocSaving">保存范围</el-button>
+          </el-form-item>
+        </el-form>
+        
+        <div class="help-text">
+          <p>自动分配范围：用于应用部署时自动填充端口。</p>
+        </div>
+      </div>
     </el-card>
   </div>
 </template>
@@ -86,64 +116,59 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import request from '../utils/request'
+import api from '../api'
 
 const settingsForm = ref({
   oldPassword: '',
   newPassword: '',
   confirmPassword: '',
-  theme: 'light',
   lanUrl: '',
   wanUrl: '',
+  appStoreServerUrl: '',
   socketProxyEnabled: false
 })
 const loading = ref(false)
 const urlLoading = ref(false)
+// const portRange = ref({ start: 0, end: 65535, protocol: 'TCP+UDP' })
+const allocSettings = ref({ start: 50000, end: 51000 })
+const allocSaving = ref(false)
 
 onMounted(async () => {
-  // 加载主题设置
-  const savedTheme = localStorage.getItem('theme')
-  if (savedTheme) {
-    settingsForm.value.theme = savedTheme
-  }
-  
   // 加载全局设置
   try {
     const res = await request.get('/settings/global')
     if (res) {
       settingsForm.value.lanUrl = res.lanUrl || ''
       settingsForm.value.wanUrl = res.wanUrl || ''
+      settingsForm.value.appStoreServerUrl = res.appStoreServerUrl || ''
+      if (res.allocPortStart) allocSettings.value.start = res.allocPortStart
+      if (res.allocPortEnd) allocSettings.value.end = res.allocPortEnd
     }
   } catch (error) {
     console.error('Failed to load settings:', error)
   }
+
+  try {
+    const pr = await api.ports.getRange()
+    if (pr && typeof pr.start === 'number') {
+      portRange.value = pr
+    }
+  } catch (e) {}
 })
 
 const saveServerSettings = async () => {
-  if (!settingsForm.value.lanUrl && !settingsForm.value.wanUrl) {
-    ElMessage.warning('请至少填写一个地址')
-    return
-  }
-  
-  // 简单的格式校验
-  if (settingsForm.value.lanUrl && !/^https?:\/\//.test(settingsForm.value.lanUrl)) {
-    ElMessage.warning('内网地址必须以 http:// 或 https:// 开头')
-    return
-  }
-  if (settingsForm.value.wanUrl && !/^https?:\/\//.test(settingsForm.value.wanUrl)) {
-    ElMessage.warning('外网地址必须以 http:// 或 https:// 开头')
-    return
-  }
-
   urlLoading.value = true
   try {
-    await request.post('/settings/global', { 
+    await request.post('/settings/global', {
       lanUrl: settingsForm.value.lanUrl,
-      wanUrl: settingsForm.value.wanUrl
+      wanUrl: settingsForm.value.wanUrl,
+      appStoreServerUrl: settingsForm.value.appStoreServerUrl,
+      allocPortStart: allocSettings.value.start,
+      allocPortEnd: allocSettings.value.end
     })
     ElMessage.success('配置已保存')
   } catch (error) {
-    console.error('Failed to save settings:', error)
-    ElMessage.error('保存失败')
+    ElMessage.error('保存失败: ' + (error.response?.data?.error || error.message))
   } finally {
     urlLoading.value = false
   }
@@ -185,12 +210,40 @@ const updatePassword = async () => {
   }
 }
 
-const handleThemeChange = (val) => {
-  // 具体的切换逻辑将在 App.vue 或 layout 中统一处理，这里只保存设置
-  localStorage.setItem('theme', val)
-  // 触发自定义事件通知
-  window.dispatchEvent(new Event('theme-change'))
+const saveAllocSettings = async () => {
+  allocSaving.value = true
+  try {
+    await request.post('/settings/global', {
+      lanUrl: settingsForm.value.lanUrl,
+      wanUrl: settingsForm.value.wanUrl,
+      allocPortStart: allocSettings.value.start,
+      allocPortEnd: allocSettings.value.end
+    })
+    ElMessage.success('端口分配范围已保存')
+  } catch (error) {
+    ElMessage.error('保存失败: ' + (error.response?.data?.error || error.message))
+  } finally {
+    allocSaving.value = false
+  }
 }
+
+/*
+const testAllocate = async () => {
+  allocating.value = true
+  allocResult.value = []
+  try {
+    const res = await api.ports.allocate({ count: allocCount.value, protocol: 'tcp', type: 'host', useAllocRange: false })
+    if (res && res.length > 0) {
+      allocResult.value = res[0]
+      ElMessage.success(`成功分配 ${res[0].length} 个端口`)
+    }
+  } catch (e) {
+    ElMessage.error('分配失败: ' + e.message)
+  } finally {
+    allocating.value = false
+  }
+}
+*/
 </script>
 
 <style scoped>
@@ -232,4 +285,7 @@ const handleThemeChange = (val) => {
   color: var(--el-text-color-secondary);
   margin-top: 5px;
 }
+.port-settings { padding: 10px; }
+.range-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.alloc-result { margin-top: 10px; }
 </style>

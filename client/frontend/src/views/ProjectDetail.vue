@@ -9,21 +9,41 @@
       </div>
       <div class="actions">
         <el-button-group>
-          <el-button type="primary" :disabled="!isRunning" @click="handleStop">
-            停止
+          <el-button type="primary" :loading="isBuilding" @click="handleBuild">
+            重新构建
           </el-button>
-          <el-button type="primary" :disabled="isRunning" @click="handleStart">
+          <el-button type="success" :loading="isStarting" :disabled="isRunning" @click="handleStart">
             启动
           </el-button>
-          <el-button type="primary" @click="handleRestart">
-            重启
+          <el-button type="danger" :loading="isStopping" :disabled="!isRunning" @click="handleStop">
+            停止
           </el-button>
-          <el-button type="warning" @click="handleDown">
-            清除
+          <el-button type="warning" :loading="isRestarting" @click="handleRestart">
+            重启
           </el-button>
         </el-button-group>
       </div>
     </div>
+
+    <!-- 构建日志弹窗 -->
+    <el-dialog
+      v-model="buildDialogVisible"
+      title="项目构建"
+      width="800px"
+      :close-on-click-modal="false"
+      :before-close="handleCloseBuildDialog"
+    >
+      <div class="build-options">
+        <el-checkbox v-model="pullLatest" :disabled="isBuildingLogs">构建前重新拉取最新镜像</el-checkbox>
+        <el-checkbox v-model="startAfterBuild" :disabled="isBuildingLogs" style="margin-left: 20px">构建后立即启动</el-checkbox>
+        <el-button type="primary" :loading="isBuildingLogs" @click="startBuild" style="margin-left: 20px">
+          {{ isBuildingLogs ? '构建中...' : '开始构建' }}
+        </el-button>
+      </div>
+      <div class="build-logs" ref="buildLogsRef">
+        <pre v-for="(log, index) in buildLogs" :key="index">{{ log }}</pre>
+      </div>
+    </el-dialog>
 
     <el-tabs v-model="activeTab" class="detail-tabs" v-loading="isLoading">
       <el-tab-pane label="YAML配置" name="yaml">
@@ -31,7 +51,7 @@
           <div class="editor-header">
             <span>docker-compose.yml</span>
             <div class="editor-actions">
-              <el-button type="primary" size="small" @click="handleSaveYaml">
+              <el-button type="primary" size="small" :loading="isSaving" @click="handleSaveYaml">
                 保存
               </el-button>
             </div>
@@ -96,9 +116,7 @@
             </el-button>
           </div>
           <div class="logs-content" ref="logsRef">
-            <pre v-for="(log, index) in logs" :key="index" :class="log.type">
-              {{ log.content }}
-            </pre>
+            <pre v-for="(log, index) in logs" :key="index" :class="log.type">{{ log.content }}</pre>
           </div>
         </div>
       </el-tab-pane>
@@ -119,12 +137,26 @@ const projectName = ref(route.params.name || '')
 const activeTab = ref('yaml')
 const isRunning = ref(true)
 const isLoading = ref(true)
+const isBuilding = ref(false)
+const isStarting = ref(false)
+const isStopping = ref(false)
+const isRestarting = ref(false)
+const isSaving = ref(false)
 const autoScroll = ref(true)
 const logsRef = ref(null)
 const containerList = ref([])  // 修改为空数组，等待从后端获取数据
 const logs = ref([])  // 添加日志数组
 const logWebSocket = ref(null)  // 移动到这里统一声明
 const yamlContent = ref('')
+
+// 构建弹窗相关状态
+const buildDialogVisible = ref(false)
+const pullLatest = ref(false)
+const startAfterBuild = ref(false)
+const buildLogs = ref([])
+const isBuildingLogs = ref(false)
+const buildEventSource = ref(null)
+const buildLogsRef = ref(null)
 
 // 添加返回方法
 const goBack = () => {
@@ -152,7 +184,7 @@ const fetchContainers = async () => {
     }
   } catch (error) {
     console.error('获取容器列表失败:', error.response?.data || error.message)
-    ElMessage.error(`获取容器列表失败: ${error.response?.data?.error || '服务器错误'}`)
+    // ElMessage.error(`获取容器列表失败: ${error.response?.data?.error || '服务器错误'}`) // 降低打扰，定时刷新时出错不弹窗
     containerList.value = []
   }
 }
@@ -160,6 +192,8 @@ const fetchContainers = async () => {
 // 修改容器操作方法
 const handleContainerRestart = async (container) => {
   try {
+    // 暂时没有单独重启容器的 API，先调用项目重启，或者需要后端增加单独重启容器接口
+    // 这里保持原有逻辑，但提示可能需要优化
     await api.compose.restart(projectName.value)
     ElMessage.success(`重启容器 ${container.name} 成功`)
     await fetchContainers() // 刷新容器列表
@@ -170,6 +204,7 @@ const handleContainerRestart = async (container) => {
 
 const handleContainerStop = async (container) => {
   try {
+    // 暂时没有单独停止容器的 API
     await api.compose.stop(projectName.value)
     ElMessage.success(`停止容器 ${container.name} 成功`)
     await fetchContainers() // 刷新容器列表
@@ -179,58 +214,143 @@ const handleContainerStop = async (container) => {
 }
 
 // 修改项目操作方法
+const handleBuild = () => {
+  buildDialogVisible.value = true
+  buildLogs.value = []
+  // 不重置 pullLatest，保留用户上次选择
+}
+
+const startBuild = () => {
+  if (isBuildingLogs.value) return
+  
+  isBuildingLogs.value = true
+  buildLogs.value = []
+  buildLogs.value.push("开始构建请求...")
+  
+  const token = localStorage.getItem('token')
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
+  const url = `/api/compose/${projectName.value}/build/events?pull=${pullLatest.value}${tokenParam}`
+  
+  if (buildEventSource.value) {
+    buildEventSource.value.close()
+  }
+
+  const es = new EventSource(url)
+  buildEventSource.value = es
+  
+  es.onopen = () => {
+    buildLogs.value.push("已连接到构建服务...")
+  }
+
+  es.addEventListener('log', (event) => {
+    buildLogs.value.push(event.data)
+    scrollToBuildBottom()
+    
+    if (event.data.includes('success: 构建完成')) {
+      isBuildingLogs.value = false
+      ElMessage.success('构建完成')
+      es.close()
+      
+      if (startAfterBuild.value) {
+        handleStart()
+      }
+    } else if (event.data.includes('error:')) {
+      isBuildingLogs.value = false
+      // ElMessage.error('构建出错') // 日志中已有错误信息，不再弹窗
+      es.close()
+    }
+  })
+  
+  es.onerror = (e) => {
+    console.error('SSE Build Error:', e)
+    if (es.readyState === EventSource.CLOSED) {
+        buildLogs.value.push("连接已关闭")
+    } else {
+        buildLogs.value.push("连接错误，正在尝试重连...")
+    }
+    // 通常 error 后需要手动关闭，防止无限重连，除非后端支持断线重连
+    if (es.readyState === EventSource.CLOSED || isBuildingLogs.value === false) {
+       es.close()
+       isBuildingLogs.value = false
+    }
+  }
+}
+
+const handleCloseBuildDialog = (done) => {
+  if (isBuildingLogs.value) {
+    ElMessageBox.confirm('构建正在进行中，关闭窗口不会停止后台构建，确定关闭吗？')
+      .then(() => {
+        if (buildEventSource.value) {
+          buildEventSource.value.close()
+          buildEventSource.value = null
+        }
+        isBuildingLogs.value = false
+        done()
+      })
+      .catch(() => {})
+  } else {
+    if (buildEventSource.value) {
+      buildEventSource.value.close()
+      buildEventSource.value = null
+    }
+    done()
+  }
+}
+
+const scrollToBuildBottom = () => {
+  if (buildLogsRef.value) {
+    nextTick(() => {
+      buildLogsRef.value.scrollTop = buildLogsRef.value.scrollHeight
+    })
+  }
+}
+
 const handleStart = async () => {
+  isStarting.value = true
+  ElMessage.info('正在发送启动指令...')
   try {
     await api.compose.start(projectName.value)
-    ElMessage.success('启动项目成功')
-    isRunning.value = true
-    await fetchContainers() // 刷新容器列表
+    ElMessage.success('启动指令已发送，正在后台处理')
+    // 异步操作，无需立即设置为 true，等待 fetchContainers 更新
+    setTimeout(fetchContainers, 1000)
+    setTimeout(fetchContainers, 3000)
+    setTimeout(fetchContainers, 5000)
   } catch (error) {
-    ElMessage.error('启动项目失败')
+    ElMessage.error('启动请求失败: ' + (error.response?.data?.error || error.message))
+  } finally {
+    isStarting.value = false
   }
 }
 
 const handleStop = async () => {
+  isStopping.value = true
+  ElMessage.info('正在发送停止指令...')
   try {
     await api.compose.stop(projectName.value)
-    ElMessage.success('停止项目成功')
-    isRunning.value = false
-    await fetchContainers() // 刷新容器列表
+    ElMessage.success('停止指令已发送，正在后台处理')
+    setTimeout(fetchContainers, 1000)
+    setTimeout(fetchContainers, 3000)
+    setTimeout(fetchContainers, 5000)
   } catch (error) {
-    ElMessage.error('停止项目失败')
+    ElMessage.error('停止请求失败: ' + (error.response?.data?.error || error.message))
+  } finally {
+    isStopping.value = false
   }
 }
 
 const handleRestart = async () => {
+  isRestarting.value = true
+  ElMessage.info('正在发送重启指令...')
   try {
     await api.compose.restart(projectName.value)
-    ElMessage.success('重启项目成功')
-    await fetchContainers() // 刷新容器列表
+    ElMessage.success('重启指令已发送，正在后台处理')
+    setTimeout(fetchContainers, 1000)
+    setTimeout(fetchContainers, 3000)
+    setTimeout(fetchContainers, 5000)
   } catch (error) {
-    ElMessage.error('重启项目失败')
-  }
-}
-
-const handleDown = async () => {
-  try {
-    await ElMessageBox.confirm(
-      '确定要清除该项目的容器和网络吗？\n这将停止并删除容器，但保留项目文件。',
-      '提示',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
-    
-    await api.compose.down(projectName.value)
-    ElMessage.success('清除成功')
-    isRunning.value = false
-    await fetchContainers()
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error(`清除失败: ${error.response?.data?.error || error.message || '未知错误'}`)
-    }
+    ElMessage.error('重启请求失败: ' + (error.response?.data?.error || error.message))
+  } finally {
+    isRestarting.value = false
   }
 }
 
@@ -259,12 +379,16 @@ const fetchYamlContent = async () => {
 
 // 修改保存 YAML 的方法
 const handleSaveYaml = async () => {
+  isSaving.value = true
+  ElMessage.info('正在保存配置...')
   try {
     await api.compose.saveYaml(projectName.value, yamlContent.value)
     ElMessage.success('保存成功')
   } catch (error) {
     console.error('保存YAML失败:', error)
     ElMessage.error('保存失败')
+  } finally {
+    isSaving.value = false
   }
 }
 
@@ -417,12 +541,23 @@ watch(logs, () => {
 
 .logs-header { display: flex; justify-content: space-between; align-items: center; padding: 8px; background: #f5f7fa; border: 1px solid #dcdfe6; border-bottom: none; }
 
-.logs-content { flex: 1; overflow-y: auto; background: #1e1e1e; color: #fff; padding: 8px; font-family: monospace; border: 1px solid #dcdfe6; }
+.logs-content { 
+  flex: 1; 
+  overflow-y: auto; 
+  background: #1e1e1e; 
+  color: #fff; 
+  padding: 8px; 
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace; 
+  border: 1px solid #dcdfe6; 
+  font-size: 13px;
+  line-height: 1.5;
+}
 
 .logs-content pre {
   margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
+  text-align: left;
 }
 
 .logs-content .error {
@@ -435,5 +570,28 @@ watch(logs, () => {
 
 .logs-content .info {
   color: #909399;
+}
+
+.build-options {
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+}
+
+.build-logs {
+  height: 400px;
+  overflow-y: auto;
+  background: #1e1e1e;
+  color: #fff;
+  padding: 10px;
+  font-family: monospace;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+}
+
+.build-logs pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 </style>

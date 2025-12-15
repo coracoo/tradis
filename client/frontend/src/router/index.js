@@ -13,6 +13,7 @@ import Projects from '../views/Projects.vue'
 import ProjectDetail from '../views/ProjectDetail.vue'
 import DockerDetail from '../views/DockerDetail.vue'
 import Settings from '../views/Settings.vue'
+import Ports from '../views/Ports.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -62,6 +63,10 @@ const router = createRouter({
         {
           path: 'networks',
           component: Networks
+        },
+        {
+          path: 'ports',
+          component: Ports
         },
         {
           path: 'navigation',

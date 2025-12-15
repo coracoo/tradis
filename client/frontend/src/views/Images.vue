@@ -13,7 +13,12 @@
           <el-icon><Upload /></el-icon> 导入
         </el-button>
         <el-button @click="settingsVisible = true">
-           <el-icon><Setting /></el-icon> 配置
+           <el-icon><Setting /></el-icon>
+           配置
+        </el-button>
+        <el-button type="danger" plain @click="clearImages">
+          <el-icon class="el-icon--left"><Delete /></el-icon>
+          清除未使用镜像
         </el-button>
       </el-button-group>
 
@@ -252,22 +257,23 @@
     </el-dialog>
 	
 	<!-- 导入镜像对话框 -->
-	<el-dialog
-	  v-model="importDialogVisible"
-	  title="导入镜像"
-	  width="400px"
-	  destroy-on-close
+  <el-dialog
+      v-model="importDialogVisible"
+      title="导入镜像"
+      width="400px"
+      destroy-on-close
       class="compact-dialog"
-	>
-	  <el-upload
-		class="upload-demo"
-		drag
-		action="/api/images/import"
-		:on-progress="handleImportProgress"
-		:on-success="handleImportSuccess"
-		:on-error="handleImportError"
-		:before-upload="beforeImportUpload"
-		:show-file-list="false"
+    >
+      <el-upload
+        class="upload-demo"
+        drag
+        action="/api/images/import"
+        :headers="uploadHeaders"
+        :on-progress="handleImportProgress"
+        :on-success="handleImportSuccess"
+        :on-error="handleImportError"
+        :before-upload="beforeImportUpload"
+        :show-file-list="false"
 		accept=".tar"
 	  >
 		<el-icon class="el-icon--upload"><upload-filled /></el-icon>
@@ -356,6 +362,50 @@ const getImageTag = (repoTag) => {
 const settingsVisible = ref(false)
 const showProxyDialog = () => {
   settingsVisible.value = true
+}
+
+// 清除未使用镜像
+const clearImages = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要清除所有未使用的镜像吗？这将删除所有未被容器引用的镜像，此操作不可恢复。',
+      '警告',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    loading.value = true
+    const res = await api.images.prune()
+    
+    let msg = '清理完成'
+    if (res && res.report) {
+      const deletedCount = res.report.ImagesDeleted ? res.report.ImagesDeleted.length : 0
+      const spaceReclaimed = res.report.SpaceReclaimed || 0
+      msg = `清理完成，删除了 ${deletedCount} 个镜像，释放了 ${formatSize(spaceReclaimed)} 空间`
+    }
+    
+    ElMessage.success(msg)
+    await fetchImages()
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('清理镜像失败:', error)
+      ElMessage.error('清理镜像失败: ' + (error.message || '未知错误'))
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+// 格式化文件大小
+const formatSize = (size) => {
+  if (!size) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(size) / Math.log(k))
+  return (size / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i]
 }
 
 // 修改获取镜像列表的函数，添加更详细的错误处理
@@ -481,6 +531,10 @@ const importProgress = ref({
   percent: 0,
   status: '',
   uploading: false
+})
+const uploadHeaders = computed(() => {
+  const token = localStorage.getItem('token') || ''
+  return token ? { Authorization: `Bearer ${token}` } : {}
 })
 
 // 导入镜像
@@ -772,31 +826,17 @@ const handleTagImage = async () => {
 
 const exportImage = async (image) => {
   try {
-    const imageId = image.Id
-    
-    const response = await api.images.export(imageId)
-    
-    // 处理文件下载
-    const blob = new Blob([response], { type: 'application/x-tar' })
-    const url = window.URL.createObjectURL(blob)
-    
-    // 创建下载链接
-    const link = document.createElement('a')
-    link.href = url
-    
-    // 设置文件名
-    let fileName = image.Id.substring(7, 19)
-    if (image.RepoTags && image.RepoTags.length > 0 && image.RepoTags[0] !== '<none>:<none>') {
-      fileName = image.RepoTags[0].replace(/[\/\:]/g, '_')
-    }
-    link.download = `${fileName}.tar`
-    
-    // 触发下载
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    
-    ElMessage.success('镜像导出成功')
+    const token = localStorage.getItem('token') || ''
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
+    const id = image.Id
+    const url = `${baseUrl}/api/images/export/${encodeURIComponent(id)}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+    const a = document.createElement('a')
+    a.href = url
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    ElMessage.success('开始导出镜像')
   } catch (error) {
     console.error('导出失败:', error)
     ElMessage.error('导出失败: ' + (error.message || '未知错误'))
@@ -833,13 +873,6 @@ const handleSizeChange = (val) => {
 const handleCurrentChange = (val) => {
   currentPage.value = val
   fetchImages()
-}
-
-// 格式化文件大小
-const formatSize = (size) => {
-  if (!size) return '0 MB'
-  const mb = size / (1024 * 1024)
-  return `${mb.toFixed(2)} MB`
 }
 
 // 添加排序相关变量

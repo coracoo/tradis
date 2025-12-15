@@ -2,13 +2,15 @@
 package api // 必须声明包名
 
 import (
-	"context"
-	"dockerpanel/backend/pkg/docker"
-	"fmt"
-	"net/http"
-	"regexp"
-	"strings"
-	"time"
+    "context"
+    "dockerpanel/backend/pkg/docker"
+    "dockerpanel/backend/pkg/database"
+    "fmt"
+    "net/http"
+    "regexp"
+    "strings"
+    "time"
+    "strconv"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -387,14 +389,31 @@ func stopContainer(c *gin.Context) {
 // 删除容器
 func removeContainer(c *gin.Context) {
 
-	cli, err := docker.NewDockerClient()
+    cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
+    id := c.Param("id")
+    var hostPorts []int
+    inspect, ierr := cli.ContainerInspect(context.Background(), id)
+    if ierr == nil {
+        dedup := make(map[int]struct{})
+        for _, bindings := range inspect.NetworkSettings.Ports {
+            for _, b := range bindings {
+                if b.HostPort != "" {
+                    if p, perr := strconv.Atoi(b.HostPort); perr == nil && p > 0 {
+                        if _, ok := dedup[p]; !ok {
+                            hostPorts = append(hostPorts, p)
+                            dedup[p] = struct{}{}
+                        }
+                    }
+                }
+            }
+        }
+    }
 	timeout := 2 // 设置超时时间为 2 秒
 	err = cli.ContainerStop(context.Background(), id, container.StopOptions{
 		Timeout: &timeout,
@@ -404,13 +423,23 @@ func removeContainer(c *gin.Context) {
 		return
 	}
 
-	err = cli.ContainerRemove(context.Background(), id, types.ContainerRemoveOptions{})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+    err = cli.ContainerRemove(context.Background(), id, types.ContainerRemoveOptions{})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
 
-	c.JSON(http.StatusOK, gin.H{"message": "容器已删除"})
+    if len(hostPorts) > 0 {
+        if tx, txErr := database.GetDB().Begin(); txErr == nil {
+            if derr := database.DeleteReservedPortsByPortsTx(tx, hostPorts); derr != nil {
+                _ = tx.Rollback()
+            } else {
+                _ = tx.Commit()
+            }
+        }
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "容器已删除"})
 }
 
 // CreateContainerRequest 定义创建容器的请求结构

@@ -4,21 +4,29 @@
       <div class="left-ops">
         <el-radio-group v-model="activeCategory" size="default">
           <el-radio-button label="all">全部</el-radio-button>
-          <el-radio-button label="web">Web服务</el-radio-button>
-          <el-radio-button label="database">数据库</el-radio-button>
-          <el-radio-button label="tools">工具</el-radio-button>
-          <el-radio-button label="storage">存储</el-radio-button>
+          <el-radio-button label="entertainment">影音</el-radio-button>
+          <el-radio-button label="photos">图像</el-radio-button>
+          <el-radio-button label="file">文件</el-radio-button>
+          <el-radio-button label="hobby">个人</el-radio-button>
+          <el-radio-button label="team">协作</el-radio-button>
+          <el-radio-button label="knowledge">知识库</el-radio-button>
+          <el-radio-button label="game">游戏</el-radio-button>
+          <el-radio-button label="productivity">生产</el-radio-button>    
+          <el-radio-button label="social">社交</el-radio-button>
+          <el-radio-button label="platform">管理</el-radio-button>
+          <el-radio-button label="network">网安</el-radio-button>
+          <el-radio-button label="other">其他</el-radio-button>
         </el-radio-group>
       </div>
       <div class="right-ops">
-        <el-input
+         <el-button @click="refreshApps"><el-icon><Refresh /></el-icon></el-button>
+         <el-input
           v-model="searchQuery"
           placeholder="搜索应用..."
           :prefix-icon="Search"
           clearable
           style="width: 250px"
         />
-        <el-button type="primary" :icon="Refresh" circle @click="refreshApps" title="刷新列表" />
       </div>
     </div>
 
@@ -27,7 +35,7 @@
         <el-card v-for="app in filteredApps" :key="app.id" class="app-card" shadow="hover">
           <div class="app-card-body">
             <div class="app-icon-wrapper">
-              <img :src="app.logo || app.icon" :alt="app.name" class="app-icon" @error="handleImageError">
+              <img :src="resolvePicUrl(app.logo || app.icon)" :alt="app.name" class="app-icon" @error="handleImageError">
             </div>
             <div class="app-info">
               <div class="app-header-row">
@@ -61,7 +69,7 @@
     >
       <template v-if="currentApp">
         <div class="app-detail-header">
-          <img :src="currentApp.logo || currentApp.icon" :alt="currentApp.name" class="detail-icon" @error="handleImageError">
+          <img :src="resolvePicUrl(currentApp.logo || currentApp.icon)" :alt="currentApp.name" class="detail-icon" @error="handleImageError">
           <div class="detail-info">
             <p class="detail-desc">{{ currentApp.description }}</p>
             <div class="detail-meta">
@@ -76,7 +84,6 @@
             </div>
           </div>
         </div>
-        
         <div class="app-readme">
           <h4>应用简介</h4>
           <p>{{ currentApp.description }}</p>
@@ -95,6 +102,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, Download, InfoFilled, PriceTag, Folder, Refresh } from '@element-plus/icons-vue'
 import api from '../api'
+import request from '../utils/request'
 
 const router = useRouter()
 const activeCategory = ref('all')
@@ -104,6 +112,7 @@ const currentApp = ref(null)
 const apps = ref([])
 const installedProjects = ref([])
 const loading = ref(false)
+const appStoreBase = ref('')
 
 const CACHE_KEY = 'appstore_projects'
 const CACHE_TIME_KEY = 'appstore_cache_time'
@@ -203,25 +212,44 @@ const fetchInstalledProjects = async () => {
 }
 
 onMounted(() => {
-  fetchApps()
+  initAppStoreBase().then(() => fetchApps())
   fetchInstalledProjects()
 })
+
+const initAppStoreBase = async () => {
+  try {
+    const s = await request.get('/settings/global')
+    appStoreBase.value = (s && s.appStoreServerUrl) ? s.appStoreServerUrl.replace(/\/$/, '') : 'https://template.cgakki.top:33333'
+  } catch (e) {
+    appStoreBase.value = 'https://template.cgakki.top:33333'
+  }
+}
+
+const resolvePicUrl = (u) => {
+  if (!u) return ''
+  if (u.startsWith('http://') || u.startsWith('https://')) return u
+  if (u.startsWith('/')) return appStoreBase.value + u
+  return appStoreBase.value + '/' + u
+}
 </script>
 
 <style scoped>
 .app-store-view {
-  padding: 20px;
+  padding: 0 16px 16px 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .operation-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
   gap: 10px;
 }
-
 .app-grid {
   display: grid;
   grid-template-columns: repeat(1, 1fr);
@@ -302,6 +330,7 @@ onMounted(() => {
   color: #666;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.5;

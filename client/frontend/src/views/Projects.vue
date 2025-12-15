@@ -49,7 +49,7 @@
         </el-table-column>
         <el-table-column prop="path" label="项目路径" min-width="130" show-overflow-tooltip header-align="left">
           <template #default="scope">
-            <span v-if="scope.row.path.startsWith('data/project/')" class="text-gray">{{ scope.row.path }}</span>
+            <span v-if="isManagedProject(scope.row.path)" class="text-gray">{{ scope.row.path }}</span>
             <span v-else class="text-gray">非本项目创建，请在容器管理中操作</span>
           </template>
         </el-table-column>
@@ -61,7 +61,7 @@
                   link
                   type="primary" 
                   @click="handleStart(scope.row)" 
-                  :disabled="scope.row.status === '运行中' || !scope.row.path.startsWith('data/project/')">
+                  :disabled="scope.row.status === '运行中' || !isManagedProject(scope.row.path)">
                   <el-icon><VideoPlay /></el-icon>
                 </el-button>
               </el-tooltip>
@@ -70,22 +70,22 @@
                   link
                   type="warning" 
                   @click="handleStop(scope.row)" 
-                  :disabled="scope.row.status !== '运行中' || !scope.row.path.startsWith('data/project/')">
+                  :disabled="scope.row.status !== '运行中' || !isManagedProject(scope.row.path)">
                   <el-icon><VideoPause /></el-icon>
                 </el-button>
               </el-tooltip>
               <el-tooltip content="编辑" placement="top">
-                <el-button link type="primary" @click="handleEdit(scope.row)" :disabled="!scope.row.path.startsWith('data/project/')">
+                <el-button link type="primary" @click="handleEdit(scope.row)" :disabled="!isManagedProject(scope.row.path)">
                   <el-icon><Edit /></el-icon>
                 </el-button>
               </el-tooltip>
               <el-tooltip content="清除(保留文件)" placement="top">
-                <el-button link type="warning" @click="handleDown(scope.row)" :disabled="!scope.row.path.startsWith('data/project/')">
+                <el-button link type="warning" @click="handleDown(scope.row)" :disabled="!isManagedProject(scope.row.path)">
                   <el-icon><CircleClose /></el-icon>
                 </el-button>
               </el-tooltip>
               <el-tooltip content="删除" placement="top">
-                <el-button link type="danger" @click="handleDelete(scope.row)" :disabled="!scope.row.path.startsWith('data/project/')">
+                <el-button link type="danger" @click="handleDelete(scope.row)" :disabled="!isManagedProject(scope.row.path)">
                   <el-icon><Delete /></el-icon>
                 </el-button>
               </el-tooltip>
@@ -188,6 +188,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, InfoFilled, ArrowDown, VideoPlay, VideoPause, Edit, Delete, CircleClose } from '@element-plus/icons-vue'
 import * as monaco from 'monaco-editor'
 import api from '../api'
+
+// 判断是否为本项目管理的项目
+const isManagedProject = (path) => {
+  if (!path) return false
+  // 检查相对路径
+  if (path.startsWith('data/project/')) return true
+  // 检查绝对路径（包含 data/project 目录）
+  // 兼容 Windows 反斜杠
+  const normalizedPath = path.replace(/\\/g, '/')
+  return normalizedPath.includes('/data/project/')
+}
 
 // 编辑器配置——新增
 const editorInstance = shallowRef(null)
@@ -337,7 +348,7 @@ const projectForm = ref({
 // 监听项目名称变化，自动更新路径
 watch(() => projectForm.value.name, (newName) => {
   if (dialogTitle.value === '新建项目') {
-    const basePath = '/home/ttdocker/docker-manager/client/backend/data/project'
+    const basePath = 'data/project'
     projectForm.value.path = newName ? `${basePath}/${newName}` : basePath
   }
 })

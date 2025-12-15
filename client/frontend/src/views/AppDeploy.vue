@@ -11,7 +11,7 @@
         <!-- 应用基本信息卡片 -->
         <el-card class="info-card" shadow="never">
           <div class="app-header">
-            <img :src="project.icon" class="app-icon" @error="handleImageError" />
+            <img :src="resolvePicUrl(project.logo || project.icon)" class="app-icon" @error="handleImageError" />
             <div class="app-meta">
               <h2>{{ project.name }} <el-tag>{{ project.version }}</el-tag></h2>
               <p>{{ project.description }}</p>
@@ -20,6 +20,8 @@
         </el-card>
 
         <!-- 配置表单 -->
+        <el-tabs v-model="activeTab" class="deploy-tabs">
+        <el-tab-pane label="部署" name="deploy">
         <el-form
           ref="formRef"
           :model="formData"
@@ -28,6 +30,33 @@
           label-width="200px"
           class="deploy-form"
         >
+          <div class="auto-allocate-bar">
+            <el-alert
+              type="info"
+              :closable="false"
+              class="allocate-alert"
+            >
+              <template #title>
+                <div class="allocate-header">
+                  <span class="allocate-title">端口自动分配</span>
+                  <div class="allocate-actions">
+                     <el-button 
+                       type="primary" 
+                       size="small" 
+                       @click="handleAutoAllocate" 
+                       :loading="allocating"
+                       icon="MagicStick"
+                     >
+                       {{ allocating ? '正在分配...' : '一键分配端口' }}
+                     </el-button>
+                  </div>
+                </div>
+              </template>
+              <template #default>
+                <span class="allocate-desc">系统将从锁定的端口范围中，自动查找并填充所需的连续端口段。</span>
+              </template>
+            </el-alert>
+          </div>
           <div v-if="Object.keys(groupedSchema).length === 0">
             <el-empty description="暂无配置参数" />
           </div>
@@ -58,7 +87,13 @@
                 <!-- 基础配置 -->
                 <div v-if="group.basic.length > 0" class="config-section">
                   <div class="section-label" v-if="group.advanced.length > 0">基础配置</div>
-                  <div v-for="config in group.basic" :key="config.name" class="form-row-custom">
+                  <!-- Use index as key if config.name is not stable or unique enough during edits, 
+                       but ideally config.name should be unique. 
+                       However, if config.name is editable, using it as :key will cause re-render on input.
+                       Use config itself or a stable ID if available. 
+                       Since we don't have stable IDs, let's use index within the group for now or try to not update key.
+                  -->
+                  <div v-for="(config, idx) in group.basic" :key="idx" class="form-row-custom">
                     <el-row :gutter="10" align="middle">
                       <!-- 1. 类型 (自定义可编辑，否则只读) -->
                       <el-col :span="6">
@@ -67,11 +102,11 @@
                         </div>
                         <div class="param-type-wrapper" v-else>
                            <el-select v-model="config.paramType" size="small" style="width: 100%">
-                              <el-option label="端口" value="port" />
-                              <el-option label="路径" value="path" />
-                              <el-option label="变量" value="env" />
-                              <el-option label="硬件" value="hardware" />
-                              <el-option label="其它" value="other" />
+                                <el-option label="端口（port）" value="port" />
+                                <el-option label="路径（volume）" value="path" />
+                                <el-option label="环境变量（environment）" value="env" />
+                                <el-option label="硬件（device）" value="hardware" />
+                                <el-option label="其它（other）" value="other" />
                            </el-select>
                         </div>
                       </el-col>
@@ -149,19 +184,18 @@
                   </div>
                 </div>
 
-                <!-- 高级配置 (嵌套折叠) -->
-                <div v-if="group.advanced.length > 0" class="config-section advanced-section">
-                   <el-divider content-position="left">
-                    <span class="advanced-divider-text" @click="toggleAdvanced(serviceName)">
-                      高级配置 
-                      <el-icon class="advanced-icon" :class="{ 'is-active': activeAdvancedCollapse.includes(`advanced-${serviceName}`) }"><ArrowRight /></el-icon>
-                    </span>
-                   </el-divider>
-                   
+                <!-- 高级配置 -->
+                <div v-if="group.advanced.length > 0" class="config-section">
+                  <div class="advanced-header" @click="toggleAdvanced(serviceName)" style="cursor: pointer; padding: 10px 0; display: flex; align-items: center; color: var(--el-text-color-secondary);">
+                    <el-icon :class="{ 'is-active': activeAdvancedCollapse.includes(`advanced-${serviceName}`) }" style="margin-right: 5px; transition: transform 0.3s;">
+                      <ArrowRight />
+                    </el-icon>
+                    <span>高级配置 ({{ group.advanced.length }})</span>
+                  </div>
                   <el-collapse-transition>
                     <div v-show="activeAdvancedCollapse.includes(`advanced-${serviceName}`)">
-                      <div v-for="config in group.advanced" :key="config.name" class="form-row-custom">
-                          <el-row :gutter="10" align="middle">
+                      <div v-for="(config, idx) in group.advanced" :key="idx" class="form-row-custom">
+                        <el-row :gutter="10" align="middle">
                           <!-- 1. 类型 -->
                           <el-col :span="6">
                             <div class="param-type-wrapper" v-if="!config.isCustom">
@@ -169,11 +203,11 @@
                             </div>
                             <div class="param-type-wrapper" v-else>
                                <el-select v-model="config.paramType" size="small" style="width: 100%">
-                                  <el-option label="端口" value="port" />
-                                  <el-option label="路径" value="path" />
-                                  <el-option label="变量" value="env" />
-                                  <el-option label="硬件" value="hardware" />
-                                  <el-option label="其它" value="other" />
+                                  <el-option label="端口（port）" value="port" />
+                                  <el-option label="路径（volume）" value="path" />
+                                  <el-option label="环境变量（environment）" value="env" />
+                                  <el-option label="硬件（device）" value="hardware" />
+                                  <el-option label="其它（other）" value="other" />
                                </el-select>
                             </div>
                           </el-col>
@@ -262,6 +296,14 @@
             </el-button>
           </div>
         </el-form>
+        </el-tab-pane>
+        <el-tab-pane label="使用教程" name="tutorial">
+          <el-card shadow="never">
+            <div v-if="project?.tutorial" class="tutorial-content" v-html="tutorialHtml"></div>
+            <div v-else class="tutorial-content">暂无使用教程</div>
+          </el-card>
+        </el-tab-pane>
+        </el-tabs>
       </div>
       <el-empty v-else description="加载应用信息失败" />
     </div>
@@ -306,11 +348,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, reactive, nextTick } from 'vue'
+import { ref, computed, onMounted, reactive, nextTick, shallowRef, triggerRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { QuestionFilled, ArrowRight, Plus, Remove } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
+import request from '../utils/request'
 
 const route = useRoute()
 const router = useRouter()
@@ -320,7 +363,7 @@ const loading = ref(false)
 const deploying = ref(false)
 const project = ref(null)
 // 使用 deployConfig 数组来存储可编辑的配置，不再使用 formData 对象
-const deployConfig = ref([])
+const deployConfig = shallowRef([])
 const activeServiceNames = ref([])
 const activeAdvancedCollapse = ref([])
 const formRef = ref(null)
@@ -330,6 +373,34 @@ const showLogs = ref(false)
 const deployLogs = ref([])
 const logsContent = ref(null)
 const deploySuccess = ref(false)
+const activeTab = ref('deploy')
+const allocating = ref(false)
+const appStoreBase = ref('')
+const escapeHtml = (str) => {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+const renderMarkdown = (md) => {
+  let html = md
+  html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${escapeHtml(code)}</code></pre>`)
+  html = html.replace(/^###### (.*)$/gm, '<h6>$1</h6>')
+  html = html.replace(/^##### (.*)$/gm, '<h5>$1</h5>')
+  html = html.replace(/^#### (.*)$/gm, '<h4>$1</h4>')
+  html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>')
+  html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>')
+  html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>')
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
+  html = html.replace(/^\s*[-*]\s+(.*)$/gm, '<ul><li>$1</li></ul>')
+  html = html.replace(/\n<ul>\n/g, '<ul>')
+  html = html.replace(/\n<\/li><\/ul>/g, '</li></ul>')
+  html = html.replace(/!\[([^\]]*)\]\(([^\)]+)\)/g, '<img alt="$1" src="$2" />')
+  html = html.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+  html = html.replace(/\n{2,}/g, '<br/>')
+  return html
+}
+const tutorialHtml = computed(() => renderMarkdown(project.value?.tutorial || ''))
 
 // 表单验证规则
 const formData = ref({})
@@ -337,6 +408,22 @@ const rules = reactive({})
 
 const handleImageError = (e) => {
   e.target.src = 'https://cdn-icons-png.flaticon.com/512/873/873133.png'
+}
+
+const initAppStoreBase = async () => {
+  try {
+    const s = await request.get('/settings/global')
+    appStoreBase.value = (s && s.appStoreServerUrl) ? s.appStoreServerUrl.replace(/\/$/, '') : 'https://template.cgakki.top:33333'
+  } catch (e) {
+    appStoreBase.value = 'https://template.cgakki.top:33333'
+  }
+}
+
+const resolvePicUrl = (u) => {
+  if (!u) return ''
+  if (u.startsWith('http://') || u.startsWith('https://')) return u
+  if (u.startsWith('/')) return appStoreBase.value + u
+  return appStoreBase.value + '/' + u
 }
 
 const groupedSchema = computed(() => {
@@ -392,12 +479,12 @@ const getParamTypeLabel = (config) => {
 }
 
 const toggleAdvanced = (serviceName) => {
-  const name = `advanced-${serviceName}`
-  const index = activeAdvancedCollapse.value.indexOf(name)
+  const key = `advanced-${serviceName}`
+  const index = activeAdvancedCollapse.value.indexOf(key)
   if (index > -1) {
     activeAdvancedCollapse.value.splice(index, 1)
   } else {
-    activeAdvancedCollapse.value.push(name)
+    activeAdvancedCollapse.value.push(key)
   }
 }
 
@@ -405,7 +492,7 @@ const handleAddCustomParam = (serviceName) => {
   // 直接向 deployConfig 添加
   const newParamName = `CUSTOM_${serviceName.toUpperCase()}_${Date.now()}`
   
-  deployConfig.value.push({
+  deployConfig.value.push(reactive({
     name: newParamName,
     label: '自定义参数',
     customKey: '', // 用户输入的参数名
@@ -416,13 +503,15 @@ const handleAddCustomParam = (serviceName) => {
     category: 'basic', // 默认基础配置
     serviceName: serviceName,
     isCustom: true // 标记为自定义
-  })
+  }))
+  triggerRef(deployConfig)
 }
 
 const handleRemoveParam = (config) => {
   const index = deployConfig.value.findIndex(item => item === config || item.name === config.name)
   if (index > -1) {
     deployConfig.value.splice(index, 1)
+    triggerRef(deployConfig)
     ElMessage.success('已移除参数')
   }
 }
@@ -432,7 +521,15 @@ const initForm = () => {
 
   // 深拷贝 schema 到 deployConfig，作为表单数据源
   try {
-      deployConfig.value = JSON.parse(JSON.stringify(project.value.schema))
+      const raw = JSON.parse(JSON.stringify(project.value.schema))
+      // 将每个配置项转为 reactive，确保属性变化能被 UI (如 label) 响应
+      deployConfig.value = raw.map(item => {
+        // 确保 serviceName 存在，避免 groupedSchema 依赖 name 导致编辑时重渲染
+        if (!item.serviceName) {
+           item.serviceName = 'Global'
+        }
+        return reactive(item)
+      })
   } catch (e) {
       deployConfig.value = []
   }
@@ -690,10 +787,52 @@ const submitDeploy = async () => {
   }
 }
 
-onMounted(() => {
-  if (projectId) {
-    fetchProject()
+const getPortConfigs = () => {
+  const list = [];
+  (deployConfig.value || []).forEach(cfg => {
+    const isPort = (cfg.paramType === 'port') || (cfg.type === 'port')
+    if (isPort) list.push(cfg)
+  })
+  return list
+}
+
+const handleAutoAllocate = async () => {
+  const ports = getPortConfigs()
+  if (!ports.length) {
+    ElMessage.info('当前无端口参数需要分配')
+    return
   }
+  allocating.value = true
+  try {
+    const res = await api.ports.allocate({ count: ports.length, protocol: 'tcp', type: 'host', useAllocRange: true, dryRun: true })
+    if (res && res.segments && res.segments.length > 0) {
+      const seg = res.segments[0]
+      if (seg.length !== ports.length) {
+        ElMessage.error('分配端口数量不足')
+        return
+      }
+      for (let i = 0; i < ports.length; i++) {
+        ports[i].name = String(seg[i])
+      }
+      triggerRef(deployConfig) // 触发更新
+      ElMessage.success('已自动分配端口')
+    } else {
+       ElMessage.error('分配失败: 未获取到端口段')
+    }
+  } catch (error) {
+    ElMessage.error('自动分配失败: ' + (error.response?.data?.error || error.message))
+  } finally {
+    allocating.value = false
+  }
+}
+
+
+onMounted(() => {
+  initAppStoreBase().then(() => {
+    if (projectId) {
+      fetchProject()
+    }
+  })
 })
 </script>
 
@@ -705,12 +844,54 @@ onMounted(() => {
 .deploy-content {
   margin-top: 20px;
   max-width: 1000px;
-  margin-left: auto;
-  margin-right: auto;
+  margin-left: 16px;
+  margin-right: 16px;
 }
 
 .info-card {
   margin-bottom: 20px;
+}
+
+.auto-allocate-bar {
+  margin-bottom: 25px;
+}
+
+.allocate-alert {
+  padding: 12px 16px;
+  background-color: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+}
+
+.allocate-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.allocate-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+
+.allocate-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.allocate-desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.deploy-form {
+  background: #fff;
+  padding: 30px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
 }
 
 .app-header {
@@ -750,6 +931,26 @@ onMounted(() => {
   background: #fff;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Remove default header background and border if needed */
+:deep(.el-collapse-item__header) {
+  background-color: #f5f7fa;
+  border-bottom: 1px solid #ebeef5;
+  height: auto;
+  line-height: normal;
+  padding: 12px 20px;
+}
+
+:deep(.el-collapse-item__content) {
+  padding: 20px;
+}
+/* Ensure advanced toggle icon rotates */
+.advanced-header .el-icon {
+  transform: rotate(0deg);
+}
+.advanced-header .el-icon.is-active {
+  transform: rotate(90deg);
 }
 
 :deep(.el-collapse-item__header) {
@@ -953,5 +1154,9 @@ onMounted(() => {
 
 .status-tag {
   margin-left: 10px;
+}
+.tutorial-content {
+  line-height: 1.7;
+  font-size: 14px;
 }
 </style>

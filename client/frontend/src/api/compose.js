@@ -29,6 +29,20 @@ export default {
       method: 'post'
     })
   },
+
+  restart(name) {
+    return request({
+      url: `/compose/${name}/restart`,
+      method: 'post'
+    })
+  },
+
+  build(name) {
+    return request({
+      url: `/compose/${name}/build`,
+      method: 'post'
+    })
+  },
   
   remove(name) {
     return request({

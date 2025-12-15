@@ -2,6 +2,7 @@ import request from '../utils/request'
 import imagesApi, { getProxy, updateProxy } from './images'
 import compose from './compose'
 import appstore from './appstore'
+import ports from './ports'
 
 // 定义 API 对象
 const api = {
@@ -37,6 +38,7 @@ const api = {
   
   compose,
   
+  ports,
   appstore,
 
   volumes: {

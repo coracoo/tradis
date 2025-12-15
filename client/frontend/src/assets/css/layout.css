@@ -93,10 +93,11 @@ html, body, #app {
   min-height: 0;
 }
 .content {
-  /* 撑满剩余空间，确保页脚固定在底部 */
   flex: 1;
-  overflow: auto;
+  overflow-y: scroll;
+  overflow-x: hidden;
   padding: 16px;
+  scrollbar-gutter: stable;
 }
 
 /* 底部状态栏 */

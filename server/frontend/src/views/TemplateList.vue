@@ -78,9 +78,17 @@ const formRef = ref(null)
 
 const getCategoryLabel = (val) => {
   const map = {
-    web: 'Web服务',
-    database: '数据库',
-    development: '开发工具',
+    entertainment: '影音',
+    photos: '图像',
+    file: '文件',
+    hobby: '个人',
+    team: '协作',
+    knowledge: '知识库',
+    game: '游戏',
+    productivity: '生产',
+    social: '社交',
+    platform: '管理',
+    network: '网安',
     other: '其他'
   }
   return map[val] || val

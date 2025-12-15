@@ -12,7 +12,7 @@
       </el-tooltip>
       
       <el-tooltip content="消息通知" placement="bottom">
-        <el-button circle text>
+        <el-button circle text @click="showNotifications">
           <el-icon><Bell /></el-icon>
         </el-button>
       </el-tooltip>
@@ -30,8 +30,8 @@
         </div>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item>个人中心</el-dropdown-item>
-            <el-dropdown-item divided>退出登录</el-dropdown-item>
+            <el-dropdown-item @click="goProfile">个人中心</el-dropdown-item>
+            <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -41,6 +41,8 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { Refresh, Bell, Moon, Sunny } from '@element-plus/icons-vue'
 
 const props = defineProps({
@@ -54,6 +56,8 @@ const titleMap = {
   'volumes': '卷管理',
   'networks': '网络管理',
   'appstore': '应用商城',
+  'app-store': '应用商城',
+  'ports': '端口管理',
   'projects': '项目管理',
   'settings': '系统设置',
   'navigation': '导航页'
@@ -66,6 +70,25 @@ const displayTitle = computed(() => {
 })
 
 const isDark = ref(false)
+
+// 切换消息中心
+const showNotifications = () => {
+  ElMessage.info('暂无新消息')
+}
+
+// 跳转个人中心
+const router = useRouter()
+const goProfile = () => {
+  router.push('/settings')
+}
+
+// 退出登录
+const logout = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('username')
+  ElMessage.success('已退出登录')
+  router.push('/login')
+}
 
 const initTheme = () => {
   const theme = localStorage.getItem('theme') || 'auto'

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
 const service = axios.create({
+  // baseURL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'),s
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   timeout: 300000,  // 5分钟超时，因为拉取镜像需要较长时间
   headers: {

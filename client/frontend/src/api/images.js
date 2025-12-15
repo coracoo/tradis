@@ -78,6 +78,14 @@ const imagesApi = {
       },
       timeout: 600000 // 10分钟超时
     })
+  },
+  
+  // 清理未使用的镜像
+  prune: () => {
+    return request({
+      url: '/images/prune',
+      method: 'post'
+    })
   }
 }
 

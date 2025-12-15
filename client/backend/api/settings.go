@@ -27,9 +27,11 @@ func getGlobalSettings(c *gin.Context) {
 }
 
 type UpdateSettingsRequest struct {
-    LanUrl           string `json:"lanUrl"`
-    WanUrl           string `json:"wanUrl"`
+    LanUrl            string `json:"lanUrl"`
+    WanUrl            string `json:"wanUrl"`
     AppStoreServerUrl string `json:"appStoreServerUrl"`
+	AllocPortStart    int    `json:"allocPortStart"`
+	AllocPortEnd      int    `json:"allocPortEnd"`
 }
 
 func updateGlobalSettings(c *gin.Context) {
@@ -43,9 +45,11 @@ func updateGlobalSettings(c *gin.Context) {
 	log.Printf("Bound request: %+v", req)
 
     err := settings.UpdateSettings(settings.Settings{
-        LanUrl:           req.LanUrl,
-        WanUrl:           req.WanUrl,
+        LanUrl:            req.LanUrl,
+        WanUrl:            req.WanUrl,
         AppStoreServerUrl: req.AppStoreServerUrl,
+		AllocPortStart:    req.AllocPortStart,
+		AllocPortEnd:      req.AllocPortEnd,
     })
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings: " + err.Error()})

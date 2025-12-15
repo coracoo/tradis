@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +32,29 @@ func RegisterImageRoutes(r *gin.RouterGroup) {
 		group.POST("/tag", tagImage)
 		group.GET("/export/:id", exportImage)
 		group.POST("/import", importImage)
+		group.POST("/prune", pruneImages)
 	}
+}
+
+// 清理未使用的镜像
+func pruneImages(c *gin.Context) {
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer cli.Close()
+
+	report, err := cli.ImagesPrune(context.Background(), filters.Args{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "已清理未使用的镜像",
+		"report":  report,
+	})
 }
 
 // 导入镜像
@@ -218,7 +241,32 @@ func convertRegistryToDatabase(r docker.Registry) *database.Registry {
 
 // 获取 Docker 代理配置
 func getDockerProxy(c *gin.Context) {
-	// 优先从 daemon.json 获取配置
+	// 读取宿主机 Docker 运行时信息（通过 /var/run/docker.sock）
+	runtimeHTTP := ""
+	runtimeHTTPS := ""
+	runtimeNoProxy := ""
+	runtimeMirrors := []string{}
+	func() {
+		cli, err := docker.NewDockerClient()
+		if err != nil {
+			log.Printf("连接 Docker 失败: %v", err)
+			return
+		}
+		defer cli.Close()
+		info, err := cli.Info(context.Background())
+		if err != nil {
+			log.Printf("读取 Docker Info 失败: %v", err)
+			return
+		}
+		runtimeHTTP = info.HTTPProxy
+		runtimeHTTPS = info.HTTPSProxy
+		runtimeNoProxy = info.NoProxy
+		if info.RegistryConfig != nil && len(info.RegistryConfig.Mirrors) > 0 {
+			runtimeMirrors = info.RegistryConfig.Mirrors
+		}
+	}()
+
+	// 读取 daemon.json（如果容器有挂载 /etc/docker/daemon.json 则优先）
 	daemonConfig, err := docker.GetDaemonConfig()
 	if err != nil {
 		log.Printf("获取 daemon.json 失败: %v", err)
@@ -246,25 +294,47 @@ func getDockerProxy(c *gin.Context) {
 		registries[k] = convertRegistryToDocker(v)
 	}
 
+	// 合并来源：daemon.json > runtime info > database
+	finalHTTP := ""
+	finalHTTPS := ""
+	finalNoProxy := ""
+	finalMirrors := []string{}
+	if daemonConfig.Proxies != nil {
+		finalHTTP = daemonConfig.Proxies.HTTPProxy
+		finalHTTPS = daemonConfig.Proxies.HTTPSProxy
+		finalNoProxy = daemonConfig.Proxies.NoProxy
+	}
+	if finalHTTP == "" && runtimeHTTP != "" {
+		finalHTTP = runtimeHTTP
+	}
+	if finalHTTPS == "" && runtimeHTTPS != "" {
+		finalHTTPS = runtimeHTTPS
+	}
+	if finalNoProxy == "" && runtimeNoProxy != "" {
+		finalNoProxy = runtimeNoProxy
+	}
+	if len(daemonConfig.RegistryMirrors) > 0 {
+		finalMirrors = daemonConfig.RegistryMirrors
+	} else if len(runtimeMirrors) > 0 {
+		finalMirrors = runtimeMirrors
+	} else if proxy.RegistryMirrors != "" {
+		var mirrors []string
+		_ = json.Unmarshal([]byte(proxy.RegistryMirrors), &mirrors)
+		finalMirrors = mirrors
+	}
+
+	enabled := (daemonConfig.Proxies != nil) || (finalHTTP != "" || finalHTTPS != "")
+
 	config := DockerConfig{
-		Enabled:         daemonConfig.Proxies != nil,
-		RegistryMirrors: daemonConfig.RegistryMirrors,
+		Enabled:         enabled,
+		HTTPProxy:       finalHTTP,
+		HTTPSProxy:      finalHTTPS,
+		NoProxy:         finalNoProxy,
+		RegistryMirrors: finalMirrors,
 		Registries:      registries,
 	}
 
-	// 如果 daemon.json 中有代理配置，使用它
-	if daemonConfig.Proxies != nil {
-		config.HTTPProxy = daemonConfig.Proxies.HTTPProxy
-		config.HTTPSProxy = daemonConfig.Proxies.HTTPSProxy
-		config.NoProxy = daemonConfig.Proxies.NoProxy
-	} else {
-		// 如果 daemon.json 中没有代理配置，使用数据库中的配置
-		config.HTTPProxy = proxy.HTTPProxy
-		config.HTTPSProxy = proxy.HTTPSProxy
-		config.NoProxy = proxy.NoProxy
-	}
-
-	// 保存当前 daemon.json 的配置到数据库
+	// 保存合并后的代理配置到数据库
 	dbProxy := &database.DockerProxy{
 		Enabled:         config.Enabled,
 		HTTPProxy:       config.HTTPProxy,
@@ -272,7 +342,6 @@ func getDockerProxy(c *gin.Context) {
 		NoProxy:         config.NoProxy,
 		RegistryMirrors: database.MarshalRegistryMirrors(config.RegistryMirrors),
 	}
-
 	if err := database.SaveDockerProxy(dbProxy); err != nil {
 		log.Printf("保存代理配置到数据库失败: %v", err)
 	}

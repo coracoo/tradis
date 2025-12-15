@@ -4,14 +4,16 @@ import (
 	"database/sql"
 	"dockerpanel/backend/pkg/database"
 	"log"
-	"os"
 	"path/filepath"
+	"strconv"
 )
 
 type Settings struct {
 	LanUrl            string `json:"lanUrl"`
 	WanUrl            string `json:"wanUrl"`
 	AppStoreServerUrl string `json:"appStoreServerUrl"`
+	AllocPortStart    int    `json:"allocPortStart"`
+	AllocPortEnd      int    `json:"allocPortEnd"`
 }
 
 // InitSettingsTable 初始化设置表
@@ -27,33 +29,31 @@ func InitSettingsTable() error {
 		return err
 	}
 
-	// Insert default lan_url if not exists
-	var val string
-	err = db.QueryRow("SELECT value FROM global_settings WHERE key = 'lan_url'").Scan(&val)
-	if err == sql.ErrNoRows {
-		_, err = db.Exec("INSERT INTO global_settings (key, value) VALUES ('lan_url', 'http://localhost')")
-		if err != nil {
+	// Helper to insert default if not exists
+	insertDefault := func(key, value string) error {
+		var val string
+		err := db.QueryRow("SELECT value FROM global_settings WHERE key = ?", key).Scan(&val)
+		if err == sql.ErrNoRows {
+			_, err = db.Exec("INSERT INTO global_settings (key, value) VALUES (?, ?)", key, value)
 			return err
 		}
+		return nil
 	}
 
-	// Insert default wan_url if not exists
-	err = db.QueryRow("SELECT value FROM global_settings WHERE key = 'wan_url'").Scan(&val)
-	if err == sql.ErrNoRows {
-		// 默认外网地址为空或与内网一致，这里先给个空或者 localhost
-		_, err = db.Exec("INSERT INTO global_settings (key, value) VALUES ('wan_url', '')")
-		if err != nil {
-			return err
-		}
+	if err := insertDefault("lan_url", "http://localhost"); err != nil {
+		return err
 	}
-
-	// Insert default appstore_server_url if not exists
-	err = db.QueryRow("SELECT value FROM global_settings WHERE key = 'appstore_server_url'").Scan(&val)
-	if err == sql.ErrNoRows {
-		_, err = db.Exec("INSERT INTO global_settings (key, value) VALUES ('appstore_server_url', 'http://localhost:3002')")
-		if err != nil {
-			return err
-		}
+	if err := insertDefault("wan_url", ""); err != nil {
+		return err
+	}
+	if err := insertDefault("appstore_server_url", "https://template.cgakki.top:33333"); err != nil {
+		return err
+	}
+	if err := insertDefault("alloc_port_start", "20000"); err != nil {
+		return err
+	}
+	if err := insertDefault("alloc_port_end", "30000"); err != nil {
+		return err
 	}
 
 	return nil
@@ -63,95 +63,89 @@ func GetSettings() (Settings, error) {
 	db := database.GetDB()
 	var s Settings
 
-	var val string
-	err := db.QueryRow("SELECT value FROM global_settings WHERE key = 'lan_url'").Scan(&val)
-	if err == nil {
-		s.LanUrl = val
+	getValue := func(key string) string {
+		var val string
+		_ = db.QueryRow("SELECT value FROM global_settings WHERE key = ?", key).Scan(&val)
+		return val
 	}
 
-	err = db.QueryRow("SELECT value FROM global_settings WHERE key = 'wan_url'").Scan(&val)
-	if err == nil {
-		s.WanUrl = val
+	s.LanUrl = getValue("lan_url")
+	s.WanUrl = getValue("wan_url")
+	s.AppStoreServerUrl = getValue("appstore_server_url")
+	if s.AppStoreServerUrl == "" {
+		s.AppStoreServerUrl = "https://template.cgakki.top:33333"
 	}
 
-	err = db.QueryRow("SELECT value FROM global_settings WHERE key = 'appstore_server_url'").Scan(&val)
-	if err == nil {
-		s.AppStoreServerUrl = val
-	} else {
-		// 默认值
-		s.AppStoreServerUrl = "http://localhost:3002"
+	parseInt := func(v string, def int) int {
+		if v == "" {
+			return def
+		}
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			return def
+		}
+		return i
 	}
+
+	s.AllocPortStart = parseInt(getValue("alloc_port_start"), 20000)
+	s.AllocPortEnd = parseInt(getValue("alloc_port_end"), 30000)
 
 	return s, nil
 }
 
-func UpdateSettings(s Settings) error {
-	db := database.GetDB()
-
-	log.Printf("Updating settings: LanUrl=%s, WanUrl=%s, AppStoreServerUrl=%s", s.LanUrl, s.WanUrl, s.AppStoreServerUrl)
-
-	_, err := db.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('lan_url', ?)", s.LanUrl)
-	if err != nil {
-		log.Printf("Error updating lan_url: %v", err)
-		return err
-	}
-
-	_, err = db.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('wan_url', ?)", s.WanUrl)
-	if err != nil {
-		log.Printf("Error updating wan_url: %v", err)
-		return err
-	}
-
-	_, err = db.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('appstore_server_url', ?)", s.AppStoreServerUrl)
-	if err != nil {
-		log.Printf("Error updating appstore_server_url: %v", err)
-		return err
-	}
-
-	return nil
+// GetDataDir 获取数据目录
+func GetDataDir() string {
+	return "data"
 }
 
-// GetLanUrl 获取内网地址 (Helper)
+// GetProjectRoot 获取项目根目录
+func GetProjectRoot() string {
+	return filepath.Join(GetDataDir(), "project")
+}
+
+// GetAppStoreBasePath 获取应用商店基础路径
+func GetAppStoreBasePath() string {
+	return GetDataDir()
+}
+
+// GetLanUrl 获取局域网地址
 func GetLanUrl() string {
 	s, _ := GetSettings()
-	if s.LanUrl == "" {
-		return "http://localhost"
-	}
 	return s.LanUrl
 }
 
-// GetWanUrl 获取外网地址 (Helper)
+// GetWanUrl 获取外网地址
 func GetWanUrl() string {
 	s, _ := GetSettings()
 	return s.WanUrl
 }
 
-// GetAppStoreBasePath 获取 AppStore 相对路径根目录 (已弃用，请使用 GetDataDir)
-func GetAppStoreBasePath() string {
-	return GetDataDir()
-}
+func UpdateSettings(s Settings) error {
+	db := database.GetDB()
 
-// GetProjectRoot 获取项目根目录 (包含 go.mod 的目录)
-func GetProjectRoot() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "."
+	log.Printf("Updating settings: %+v", s)
+
+	// Helper to update
+	update := func(key, value string) error {
+		_, err := db.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)", key, value)
+		return err
 	}
 
-	// 1. 如果当前目录有 go.mod，则认为是根目录
-	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
-		return cwd
+	if err := update("lan_url", s.LanUrl); err != nil {
+		return err
+	}
+	if err := update("wan_url", s.WanUrl); err != nil {
+		return err
+	}
+	if err := update("appstore_server_url", s.AppStoreServerUrl); err != nil {
+		return err
+	}
+	if err := update("alloc_port_start", strconv.Itoa(s.AllocPortStart)); err != nil {
+		return err
+	}
+	if err := update("alloc_port_end", strconv.Itoa(s.AllocPortEnd)); err != nil {
+		return err
 	}
 
-	// 2. 如果是从项目根目录 (docker-manager) 运行，且存在 client/backend/go.mod
-	if _, err := os.Stat(filepath.Join(cwd, "client", "backend", "go.mod")); err == nil {
-		return filepath.Join(cwd, "client", "backend")
-	}
-
-	return cwd
-}
-
-// GetDataDir 获取统一的数据存储目录 (.../client/backend/data)
-func GetDataDir() string {
-	return filepath.Join(GetProjectRoot(), "data")
+	return nil
 }

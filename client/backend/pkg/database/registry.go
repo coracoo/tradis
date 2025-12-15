@@ -60,7 +60,8 @@ func SaveRegistry(registry *Registry) error {
 			return fmt.Errorf("注册表 URL 不能为空")
 		}
 
-		result, err := db.Exec(`
+		var result sql.Result
+		result, err = db.Exec(`
             INSERT INTO registries 
             (name, url, username, password, is_default, created_at, updated_at) 
             VALUES (?, ?, ?, ?, ?, ?, ?)

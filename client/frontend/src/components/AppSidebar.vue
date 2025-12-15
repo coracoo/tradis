@@ -49,6 +49,10 @@
         <el-icon><Connection /></el-icon>
         <span>网络</span>
       </el-menu-item>
+      <el-menu-item index="/ports">
+        <el-icon><Connection /></el-icon>
+        <span>端口</span>
+      </el-menu-item>
       
       <div class="menu-group-title">系统</div>
       <el-menu-item index="/settings">
@@ -61,8 +65,8 @@
 
     <div class="footer-status">
       <div class="status-item">
-        <span class="dot connected" /> 
-        <span> Socket 运行正常 </span>
+        <span :class="appStoreConnected ? 'dot connected' : 'dot'" /> 
+        <span> {{ appStoreConnected ? '商城服务连接正常' : '商城服务连接异常' }} </span>
       </div>
       <div class="version-info">v1.0.0 (Vue3+Vite)</div>
     </div>
@@ -70,8 +74,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import request from '../utils/request'
 // 图标组件已经在 main.js 中全局注册，或者按需引入
 // 这里假设已经在 main.js 中全局注册了 Element Plus Icons
 
@@ -82,6 +87,29 @@ const defaultActive = computed(() => {
   if (path.startsWith('/containers/')) return '/containers'
   if (path.startsWith('/projects/')) return '/projects'
   return path
+})
+
+const appStoreConnected = ref(false)
+let pingTimer = null
+
+const pingAppStore = async () => {
+  try {
+    const s = await request.get('/settings/global')
+    const base = (s && s.appStoreServerUrl) ? s.appStoreServerUrl : 'https://template.cgakki.top:33333'
+    const resp = await fetch(base.replace(/\/$/, '') + '/api/templates', { method: 'GET' })
+    appStoreConnected.value = resp.ok
+  } catch (e) {
+    appStoreConnected.value = false
+  }
+}
+
+onMounted(() => {
+  pingAppStore()
+  pingTimer = setInterval(pingAppStore, 15000)
+})
+
+onUnmounted(() => {
+  if (pingTimer) clearInterval(pingTimer)
 })
 </script>
 

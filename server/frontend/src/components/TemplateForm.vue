@@ -9,9 +9,18 @@
       <el-col :span="12">
         <el-form-item label="项目分类" required>
           <el-select v-model="form.category" style="width: 100%" placeholder="请选择分类">
-            <el-option label="Web服务" value="web" />
-            <el-option label="数据库" value="database" />
-            <el-option label="开发工具" value="development" />
+            <el-option label="其他" value="other" />
+            <el-option label="影音" value="entertainment" />
+            <el-option label="图像" value="photos" />
+            <el-option label="文件" value="file" />
+            <el-option label="个人" value="hobby" />
+            <el-option label="协作" value="team" />
+            <el-option label="知识库" value="knowledge" />
+            <el-option label="游戏" value="game" />
+            <el-option label="生产" value="productivity" />
+            <el-option label="社交" value="social" />
+            <el-option label="管理" value="platform" />
+            <el-option label="网安" value="network" />
             <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
@@ -41,12 +50,14 @@
           <el-upload
             class="logo-uploader"
             action="/api/upload"
+            :data="{ project: form.name, type: 'icon' }"
             :show-file-list="false"
             :on-success="handleLogoSuccess"
           >
             <img v-if="form.logo" :src="form.logo" class="logo">
             <el-icon v-else class="logo-uploader-icon"><Plus /></el-icon>
           </el-upload>
+          <el-input v-model="form.logo" placeholder="可填写互联网 Logo URL (https://...)" style="margin-top:8px" />
           <div class="upload-tip">建议尺寸: 200x200px</div>
         </el-form-item>
       </el-col>
@@ -54,6 +65,7 @@
         <el-form-item label="项目截图">
           <el-upload
             action="/api/upload"
+            :data="{ project: form.name, type: 'screenshot', index: (form.screenshots.length + 1) }"
             list-type="picture-card"
             :file-list="screenshotFileList"
             :on-success="handleScreenshotSuccess"
@@ -61,6 +73,10 @@
           >
             <el-icon><Plus /></el-icon>
           </el-upload>
+          <div class="screenshot-url-adder">
+            <el-input v-model="newScreenshotUrl" placeholder="可填写互联网 Screenshot URL (https://...)" />
+            <el-button type="primary" size="small" @click="addScreenshotUrl" style="margin-left:8px">添加URL</el-button>
+          </div>
         </el-form-item>
       </el-col>
     </el-row>
@@ -343,6 +359,7 @@ const form = ref({
   tutorial: '',
   schema: []
 })
+const newScreenshotUrl = ref('')
 
 const activeServices = ref([])
 
@@ -471,6 +488,15 @@ const handleScreenshotRemove = (file) => {
   if (index !== -1) {
     form.value.screenshots.splice(index, 1)
   }
+}
+
+const addScreenshotUrl = () => {
+  const url = (newScreenshotUrl.value || '').trim()
+  if (!url) return
+  if (!form.value.screenshots.includes(url)) {
+    form.value.screenshots.push(url)
+  }
+  newScreenshotUrl.value = ''
 }
 
 const handleComposeSuccess = async (response) => {
@@ -743,6 +769,7 @@ const handleSubmit = async () => {
   margin-top: 5px;
   line-height: 1.2;
 }
+.screenshot-url-adder { margin-top: 8px; display: flex; align-items: center; }
 
 .compose-editor-container {
   position: relative;

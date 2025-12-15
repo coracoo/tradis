@@ -3,10 +3,12 @@ package api
 import (
 	"bufio"
 	"context"
+	"dockerpanel/backend/pkg/database" // Add this
 	"dockerpanel/backend/pkg/docker"
 	"dockerpanel/backend/pkg/settings" // 添加 settings 包
 	"dockerpanel/backend/pkg/task"
 	"os/exec"
+	"strconv" // Add this
 
 	// 添加 task 包
 	"encoding/json"
@@ -32,7 +34,7 @@ func getAppCacheDir() string {
 func getAppStoreServerURL() string {
 	s, err := settings.GetSettings()
 	if err != nil || s.AppStoreServerUrl == "" {
-		return "http://localhost:3002"
+		return "https://template.cgakki.top:33333"
 	}
 	return s.AppStoreServerUrl
 }
@@ -409,6 +411,35 @@ func deployApp(c *gin.Context) {
 		}
 
 		t.AddLog("success", fmt.Sprintf("应用 %s 部署成功！", app.Name))
+
+		// 部署成功后，记录使用的端口到数据库
+		if len(deployReq.Config) > 0 {
+			var usedPorts []int
+			for _, item := range deployReq.Config {
+				if item.ParamType == "port" && item.Name != "" {
+					if p, err := strconv.Atoi(item.Name); err == nil {
+						usedPorts = append(usedPorts, p)
+					}
+				}
+			}
+			if len(usedPorts) > 0 {
+				t.AddLog("info", fmt.Sprintf("正在登记端口使用情况: %v", usedPorts))
+				tx, err := database.GetDB().Begin()
+				if err == nil {
+					// ReservedBy could be app name or ID
+					if err := database.ReservePortsTx(tx, usedPorts, app.Name, "TCP", "App"); err != nil {
+						t.AddLog("warning", fmt.Sprintf("端口登记失败: %v", err))
+						tx.Rollback()
+					} else {
+						tx.Commit()
+						t.AddLog("info", "端口登记完成")
+					}
+				} else {
+					t.AddLog("warning", "无法开启数据库事务进行端口登记")
+				}
+			}
+		}
+
 		t.Finish(task.StatusSuccess, gin.H{"app_id": app.ID}, "")
 	}(t.ID, id, req)
 

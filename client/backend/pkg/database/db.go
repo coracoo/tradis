@@ -54,7 +54,7 @@ func createTables() error {
 	}
 
 	// 初始化管理员账户
-	if err := initAdminUser(); err != nil {
+	if err = initAdminUser(); err != nil {
 		log.Printf("警告: 初始化管理员账户失败: %v", err)
 	}
 
@@ -123,6 +123,7 @@ func createTables() error {
         icon TEXT,
         category TEXT,
         is_auto INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
         container_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -131,6 +132,9 @@ func createTables() error {
 	if err != nil {
 		return err
 	}
+
+	// 尝试添加 is_deleted 列（为了兼容旧数据库）
+	_, _ = db.Exec(`ALTER TABLE navigation_items ADD COLUMN is_deleted INTEGER DEFAULT 0`)
 
 	// 创建全局设置表
 	_, err = db.Exec(`
@@ -163,6 +167,46 @@ func createTables() error {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (app_id) REFERENCES applications(id)
     )`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	    CREATE TABLE IF NOT EXISTS port_settings (
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
+	        range_start INTEGER NOT NULL,
+	        range_end INTEGER NOT NULL,
+	        protocol TEXT NOT NULL,
+	        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	    );
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	    CREATE TABLE IF NOT EXISTS port_notes (
+	        port INTEGER NOT NULL,
+	        type TEXT NOT NULL,
+	        protocol TEXT NOT NULL,
+	        note TEXT,
+	        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	        PRIMARY KEY (port, type, protocol)
+	    );
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	    CREATE TABLE IF NOT EXISTS port_reservations (
+	        port INTEGER PRIMARY KEY,
+	        reserved_by TEXT,
+	        protocol TEXT,
+	        type TEXT,
+	        reserved_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	    );
+	`)
 	if err != nil {
 		return err
 	}

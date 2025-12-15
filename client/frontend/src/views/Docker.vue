@@ -9,7 +9,10 @@
             <el-icon class="el-icon--left"><Plus /></el-icon> 
             新建容器
           </el-button>
-          <el-button @click="clearContainers">清理未使用容器</el-button>
+          <el-button type="danger" plain @click="clearContainers">
+            <el-icon class="el-icon--left"><Delete /></el-icon>
+            清除未使用容器
+          </el-button>
         </el-button-group>
         <!--<el-button-group>
           <el-button type="success" @click="batchStart" title="启动"><el-icon><VideoPlay /></el-icon></el-button>

@@ -1,25 +1,26 @@
 package api
 
 import (
-	"bufio"
-	"context"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"sort"
-	"strings"
-	"time"
+    "bufio"
+    "context"
+    "fmt"
+    "io"
+    "net/http"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "sort"
+    "strings"
+    "time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
-	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
+    "github.com/docker/docker/api/types"
+    "github.com/docker/docker/api/types/filters"
+    "github.com/docker/docker/client"
+    "github.com/gin-gonic/gin"
+    "gopkg.in/yaml.v3"
 
-	"dockerpanel/backend/pkg/settings"
+    "dockerpanel/backend/pkg/settings"
+    "dockerpanel/backend/pkg/database"
 )
 
 // getProjectsBaseDir 获取项目根目录
@@ -46,6 +47,9 @@ func RegisterComposeRoutes(r *gin.RouterGroup) {
 		group.GET("/deploy/events", deployEvents)
 		group.POST("/:name/start", startProject)
 		group.POST("/:name/stop", stopProject)
+		group.POST("/:name/restart", restartProject)         // 添加重启路由
+		group.POST("/:name/build", buildProject)             // 保留 POST 构建路由用于兼容
+		group.GET("/:name/build/events", buildProjectEvents) // 添加 SSE 构建路由
 		group.GET("/:name/status", getStackStatus)
 		group.DELETE("/:name/down", downProject)     // 添加清除(down)路由
 		group.DELETE("/remove/:name", removeProject) // 修改为匹配当前请求格式
@@ -60,18 +64,18 @@ func startProject(c *gin.Context) {
 	name := c.Param("name")
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
-	// 使用 docker compose up 命令启动项目
-	cmd := exec.Command("docker", "compose", "up", "-d")
-	cmd.Dir = projectDir
+	// 异步执行启动命令
+	go func() {
+		// 使用 docker compose up 命令启动项目
+		cmd := exec.Command("docker", "compose", "up", "-d")
+		cmd.Dir = projectDir
 
-	if output, err := cmd.CombinedOutput(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("启动失败: %s\n%s", err.Error(), string(output)),
-		})
-		return
-	}
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Error starting project %s: %s\nOutput: %s\n", name, err.Error(), string(output))
+		}
+	}()
 
-	c.JSON(http.StatusOK, gin.H{"message": "项目已启动"})
+	c.JSON(http.StatusAccepted, gin.H{"message": "项目启动指令已发送"})
 }
 
 // stopProject 停止项目
@@ -79,18 +83,128 @@ func stopProject(c *gin.Context) {
 	name := c.Param("name")
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
-	// 使用 docker compose stop 命令停止项目
-	cmd := exec.Command("docker", "compose", "stop")
+	// 异步执行停止命令
+	go func() {
+		// 使用 docker compose stop 命令停止项目，添加 -t 2 缩短超时
+		cmd := exec.Command("docker", "compose", "stop", "-t", "2")
+		cmd.Dir = projectDir
+
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Error stopping project %s: %s\nOutput: %s\n", name, err.Error(), string(output))
+		}
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{"message": "项目停止指令已发送"})
+}
+
+// restartProject 重启项目
+func restartProject(c *gin.Context) {
+	name := c.Param("name")
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+
+	// 异步执行重启命令
+	go func() {
+		// 使用 docker compose restart 命令重启项目，添加 -t 2 缩短超时
+		cmd := exec.Command("docker", "compose", "restart", "-t", "2")
+		cmd.Dir = projectDir
+
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Error restarting project %s: %s\nOutput: %s\n", name, err.Error(), string(output))
+		}
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{"message": "项目重启指令已发送"})
+}
+
+// buildProjectEvents 构建项目并推送 SSE 事件
+func buildProjectEvents(c *gin.Context) {
+	name := c.Param("name")
+	pull := c.Query("pull") == "true"
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+
+	messageChan := make(chan string)
+
+	go func() {
+		defer close(messageChan)
+
+		// 准备构建命令
+		args := []string{"compose", "build"}
+		if pull {
+			args = append(args, "--pull")
+		}
+
+		cmd := exec.Command("docker", args...)
+		cmd.Dir = projectDir
+
+		// 获取输出管道
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			messageChan <- fmt.Sprintf("error: 创建输出管道失败: %s", err.Error())
+			return
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			messageChan <- fmt.Sprintf("error: 创建错误管道失败: %s", err.Error())
+			return
+		}
+
+		if err := cmd.Start(); err != nil {
+			messageChan <- fmt.Sprintf("error: 启动构建失败: %s", err.Error())
+			return
+		}
+
+		// 读取输出
+		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for scanner.Scan() {
+			messageChan <- scanner.Text()
+		}
+
+		if err := cmd.Wait(); err != nil {
+			messageChan <- fmt.Sprintf("error: 构建失败: %s", err.Error())
+		} else {
+			messageChan <- "success: 构建完成"
+		}
+	}()
+
+	// 发送事件
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case msg, ok := <-messageChan:
+			if !ok {
+				return false
+			}
+			// 简单的日志行作为 data 发送
+			c.SSEvent("log", msg)
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
+}
+
+// buildProject 构建项目
+func buildProject(c *gin.Context) {
+	name := c.Param("name")
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+
+	// 使用 docker compose build 命令构建项目
+	// 可以添加 --pull 选项确保拉取最新基础镜像，但这可能会慢
+	cmd := exec.Command("docker", "compose", "build")
 	cmd.Dir = projectDir
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("停止失败: %s\n%s", err.Error(), string(output)),
+			"error": fmt.Sprintf("构建失败: %s\n%s", err.Error(), string(output)),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "项目已停止"})
+	c.JSON(http.StatusOK, gin.H{"message": "项目构建完成"})
 }
 
 // listProjects 获取项目列表
@@ -208,7 +322,9 @@ func listProjects(c *gin.Context) {
 
 	// 转换为数组
 	result := make([]*ComposeProject, 0, len(projects))
-	projectRoot := settings.GetProjectRoot()
+	// projectRoot := settings.GetProjectRoot() // 不再使用 projectRoot 进行相对路径计算，而是使用 CWD
+
+	cwd, _ := os.Getwd()
 
 	for _, project := range projects {
 		// 尝试读取 compose 文件
@@ -217,8 +333,9 @@ func listProjects(c *gin.Context) {
 			project.Compose = string(data)
 		}
 
-		// 将绝对路径转换为相对路径
-		if relPath, err := filepath.Rel(projectRoot, project.Path); err == nil {
+		// 将绝对路径转换为相对路径 (相对于程序运行目录)
+		// 这样可以保留 data/project/ 前缀，方便前端识别
+		if relPath, err := filepath.Rel(cwd, project.Path); err == nil {
 			project.Path = filepath.ToSlash(relPath)
 		}
 
@@ -542,20 +659,28 @@ func downProject(c *gin.Context) {
 // 2. 扫描并强制删除所有带有 com.docker.compose.project=name 标签的残留容器
 // 3. 删除项目文件目录
 func removeProject(c *gin.Context) {
-	name := c.Param("name")
-	projectDir := filepath.Join(getProjectsBaseDir(), name)
+    name := c.Param("name")
+    projectDir := filepath.Join(getProjectsBaseDir(), name)
 
-	// 清理资源
-	if err := cleanProjectResources(name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+    // 清理资源
+    if err := cleanProjectResources(name); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
 
-	// 4. 删除项目目录
-	if err := os.RemoveAll(projectDir); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除项目目录失败: " + err.Error()})
-		return
-	}
+    if tx, err := database.GetDB().Begin(); err == nil {
+        if derr := database.DeleteReservedPortsByOwnerTx(tx, name); derr != nil {
+            _ = tx.Rollback()
+        } else {
+            _ = tx.Commit()
+        }
+    }
+
+    // 4. 删除项目目录
+    if err := os.RemoveAll(projectDir); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "删除项目目录失败: " + err.Error()})
+        return
+    }
 
 	c.JSON(http.StatusOK, gin.H{"message": "项目已删除"})
 }
