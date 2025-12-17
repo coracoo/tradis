@@ -4,6 +4,10 @@
       <template #header>
         <div class="card-header">
           <span>系统设置</span>
+          <el-button @click="handleRefresh" plain>
+            <template #icon><el-icon><Refresh /></el-icon></template>
+            刷新
+          </el-button>
         </div>
       </template>
       
@@ -67,13 +71,13 @@
           <el-button type="primary" @click="saveServerSettings" :loading="urlLoading">保存配置</el-button>
         </el-form-item>
 
-        <el-form-item label="Docker Socket Proxy">
+        <!--<el-form-item label="Docker Socket Proxy">
           <div class="switch-group">
             <el-switch v-model="settingsForm.socketProxyEnabled" />
             <span class="status-text">{{ settingsForm.socketProxyEnabled ? '已开启' : '已关闭' }}</span>
           </div>
           <div class="help-text">（开发中）开启后允许通过 TCP 端口访问 Docker Socket，请谨慎操作。</div>
-        </el-form-item>
+        </el-form-item>-->
 
         <el-divider />
         
@@ -89,18 +93,12 @@
       <div class="port-settings">
         <el-form :model="allocSettings" label-width="140px">
           <el-form-item label="自动分配范围">
-            <el-col :span="11">
-              <el-input-number v-model="allocSettings.start" :min="1024" :max="65535" placeholder="起始端口" style="width: 100%" />
-            </el-col>
-            <el-col :span="2" class="text-center">
+            <div class="range-row">
+              <el-input-number v-model="allocSettings.start" :min="1024" :max="65535" placeholder="起始端口" />
               <span class="text-gray-500">-</span>
-            </el-col>
-            <el-col :span="11">
-              <el-input-number v-model="allocSettings.end" :min="1024" :max="65535" placeholder="结束端口" style="width: 100%" />
-            </el-col>
-          </el-form-item>
-          <el-form-item>
-             <el-button type="primary" @click="saveAllocSettings" :loading="allocSaving">保存范围</el-button>
+              <el-input-number v-model="allocSettings.end" :min="1024" :max="65535" placeholder="结束端口" />
+              <el-button type="primary" @click="saveAllocSettings" :loading="allocSaving">保存范围</el-button>
+            </div>
           </el-form-item>
         </el-form>
         
@@ -115,6 +113,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import request from '../utils/request'
 import api from '../api'
 
@@ -155,6 +154,31 @@ onMounted(async () => {
     }
   } catch (e) {}
 })
+
+const handleRefresh = async () => {
+  loading.value = true
+  try {
+    const res = await request.get('/settings/global')
+    if (res) {
+      settingsForm.value.lanUrl = res.lanUrl || ''
+      settingsForm.value.wanUrl = res.wanUrl || ''
+      settingsForm.value.appStoreServerUrl = res.appStoreServerUrl || ''
+      if (res.allocPortStart) allocSettings.value.start = res.allocPortStart
+      if (res.allocPortEnd) allocSettings.value.end = res.allocPortEnd
+    }
+    
+    const pr = await api.ports.getRange()
+    if (pr && typeof pr.start === 'number') {
+      // portRange.value = pr
+    }
+    ElMessage.success('刷新成功')
+  } catch (error) {
+    console.error('Failed to load settings:', error)
+    ElMessage.error('刷新失败')
+  } finally {
+    loading.value = false
+  }
+}
 
 const saveServerSettings = async () => {
   urlLoading.value = true
@@ -213,6 +237,14 @@ const updatePassword = async () => {
 const saveAllocSettings = async () => {
   allocSaving.value = true
   try {
+    if (!allocSettings.value.start || !allocSettings.value.end) {
+      ElMessage.warning('请输入端口范围')
+      return
+    }
+    if (allocSettings.value.end <= allocSettings.value.start) {
+      ElMessage.warning('结束端口必须大于起始端口')
+      return
+    }
     await request.post('/settings/global', {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
@@ -251,6 +283,20 @@ const testAllocate = async () => {
   padding: 20px;
   max-width: 800px;
   margin: 0 auto;
+}
+
+.settings-card {
+  margin-bottom: 20px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.settings-form {
+  max-width: 800px;
 }
 
 .section-title {

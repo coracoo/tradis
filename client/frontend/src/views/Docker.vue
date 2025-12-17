@@ -1,75 +1,85 @@
 <template>
-  <div class="containers-view compact-table">
-    <!-- 顶部操作栏 -->
-    <div class="operation-bar">
-      <div class="left">
-        <el-button-group>
-          <el-button @click="fetchContainers"><el-icon><Refresh /></el-icon></el-button>
-          <el-button type="primary" @click="createContainer">
-            <el-icon class="el-icon--left"><Plus /></el-icon> 
-            新建容器
-          </el-button>
-          <el-button type="danger" plain @click="clearContainers">
-            <el-icon class="el-icon--left"><Delete /></el-icon>
-            清除未使用容器
-          </el-button>
-        </el-button-group>
-        <!--<el-button-group>
-          <el-button type="success" @click="batchStart" title="启动"><el-icon><VideoPlay /></el-icon></el-button>
-          <el-button type="warning" @click="batchStop" title="停止"><el-icon><VideoPause /></el-icon></el-button>
-          <el-button type="danger" @click="batchForceStop" title="强制停止"><el-icon><CircleClose /></el-icon></el-button>
-          <el-button @click="batchRestart">重启</el-button>
-          <el-button @click="batchPause">暂停</el-button>
-          <el-button @click="batchResume">恢复</el-button>
-          <el-button @click="batchDelete">删除</el-button>
-        </el-button-group> -->
-      </div>
-        
-      <!-- 状态筛选 -->
-      <div class="filter-bar">
-        <el-select v-model="statusFilter" placeholder="状态" clearable class="status-filter">
-          <el-option label="所有" value="" />
-          <el-option label="运行中" value="running" />
-          <el-option label="已停止" value="stopped" />
-          <el-option label="已暂停" value="paused" />
-        </el-select>
-        
-        <!-- 搜索框 -->
+  <div class="containers-view">
+    <div class="filter-bar">
+      <div class="filter-left">
         <el-input
           v-model="searchQuery"
           placeholder="搜索容器名称、ID、镜像或端口"
           clearable
-          prefix-icon="Search"
-          style="width: 300px; margin-left: 16px;"
-        />
+          class="search-input"
+          size="medium"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-select v-model="statusFilter" placeholder="状态" clearable class="status-select" size="medium">
+          <el-option label="所有" value="" />
+          <el-option label="运行中" value="running" />
+          <el-option label="已停止" value="stopped" />
+          <el-option label="已暂停" value="paused" />
+          <el-option label="已创建" value="created" />
+        </el-select>
+      </div>
+      
+      <div class="filter-right">
+        <el-button-group>
+          <el-button @click="fetchContainers" plain size="medium">
+            <template #icon><el-icon><Refresh /></el-icon></template>
+            刷新
+          </el-button>
+          <el-button type="primary" @click="createContainer" size="medium">
+            <template #icon><el-icon><Plus /></el-icon></template>
+            新建容器
+          </el-button>
+        </el-button-group>
+
+        <el-dropdown trigger="click" @command="handleGlobalCommand">
+          <el-button plain class="more-btn" size="medium">
+             更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="prune" :icon="Delete">清除未使用容器</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-
-    <!-- 容器列表 -->
-    <el-table 
-      :data="filteredContainers" 
-      class="containers-table"
-      v-loading="loading"
-      @selection-change="handleSelectionChange"
-      :header-cell-style="{ background: 'transparent' }">
+    <div class="table-wrapper">
+      <!-- 容器列表 -->
+      <el-table 
+        :data="filteredContainers" 
+        class="containers-table"
+        v-loading="loading"
+        @selection-change="handleSelectionChange"
+        @sort-change="handleSortChange"
+        :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
+        :row-style="{ height: 'auto' }"
+      >
       <el-table-column type="selection" width="40" />
-      <el-table-column prop="Names" label="名称 / ID" sortable min-width="130">
+      <el-table-column prop="Names" label="名称 / ID" sortable="custom" min-width="220">
         <template #default="scope">
-          <div class="name-col">
-            <el-button 
-              link 
-              type="primary" 
-              class="container-name-btn"
-              @click="goToContainerDetail(scope.row)"
-            >
-              {{ scope.row.Names?.[0]?.replace(/^\//, '') || '-' }}
-            </el-button>
-            <div class="container-short-id font-mono">{{ (scope.row.Id || '').slice(0,12) }}</div>
+          <div class="name-cell-wrapper">
+            <div class="icon-wrapper">
+              <el-icon><Box /></el-icon>
+            </div>
+            <div class="name-col">
+              <el-button 
+                link 
+                type="primary" 
+                class="container-name-btn"
+                @click="goToContainerDetail(scope.row)"
+              >
+                {{ scope.row.Names?.[0]?.replace(/^\//, '') || '-' }}
+              </el-button>
+              <div class="container-short-id font-mono">{{ (scope.row.Id || '').slice(0,12) }}</div>
+            </div>
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="State" label="状态" width="140" header-align="left">
+      <el-table-column prop="State" label="状态" sortable="custom" width="140" header-align="left">
         <template #default="scope">
           <div class="status-cell">
             <div class="status-dot" :class="scope.row.State?.toLowerCase() === 'running' ? 'status-used' : 'status-unused'">
@@ -79,7 +89,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="Image" label="镜像" min-width="150" header-align="left">
+      <el-table-column prop="Image" label="镜像" sortable="custom" min-width="150" header-align="left">
         <template #default="scope">
           <div class="image-cell">
             <div class="truncate image-name" :title="scope.row.Image">{{ getImageName(scope.row.Image) }}</div>
@@ -87,7 +97,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="网络 / 端口" min-width="130" header-align="left">
+      <el-table-column label="网络 / 端口" min-width="130" sortable="custom" prop="Network" header-align="left">
         <template #default="scope">
           <div class="network-info">
             <div class="text-gray ip-address font-mono">{{ getContainerIP(scope.row) }}</div>
@@ -125,7 +135,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="资源" min-width="130"  header-align="left" >
+      <el-table-column label="资源" min-width="130" sortable="custom" prop="Resources" header-align="left" >
         <template #default="scope">
           <div class="resource-line">
             <span class="label">CPU</span>
@@ -140,7 +150,7 @@
         </template>
       </el-table-column>
       <!-- IP 与端口已合并到“网络 / 端口”列；运行时长合并到状态列显示 -->
-      <el-table-column label="创建时间"  min-width="100"  header-align="left">
+      <el-table-column prop="Created" label="创建时间" sortable="custom" min-width="100"  header-align="left">
         <template #default="scope">
           <div class="text-gray font-mono text-center whitespace-pre-line">
             {{ formatTimeTwoLines(scope.row.Created) }}
@@ -175,7 +185,7 @@
     </el-table>
 
     <!-- 分页 -->
-    <div class="pagination">
+    <div class="pagination-bar">
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
@@ -187,6 +197,7 @@
         size="small"
       />
     </div>
+  </div>
 	
 	<!-- 添加组件使用 -->
     <ContainerTerminal
@@ -210,19 +221,20 @@
 
 <!-- 在 script setup 中添加相关变量和方法 -->
 <script setup>
-import { ref, onMounted, computed, nextTick } from 'vue'
+import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Plus, Refresh, VideoPlay, VideoPause, CircleClose, Document, Monitor, Edit, Search } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Refresh, VideoPlay, VideoPause, CircleClose, Document, Monitor, Edit, Search, Delete, Box } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { formatTimeTwoLines } from '../utils/format'
 import api from '../api'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
 import ContainerLogs from '../components/ContainerLogs.vue'
 import ContainerEdit from '../components/ContainerEdit.vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 
 // 变量定义
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const containers = ref([])
 const selectedContainers = ref([])
@@ -243,6 +255,12 @@ const batchForceStop = () => batchAction('kill')
 const batchPause = () => batchAction('pause')
 const batchResume = () => batchAction('unpause')
 const batchDelete = () => batchAction('remove')
+
+const handleGlobalCommand = (command) => {
+  if (command === 'prune') {
+    clearContainers()
+  }
+}
 
 // 打开编辑弹窗
 const openEdit = (container) => {
@@ -418,6 +436,11 @@ const stateMap = {
   'dead': '已死亡'
 }
 
+// 排序处理
+const handleSortChange = ({ prop, order }) => {
+  sortState.value = { prop, order }
+}
+
 // 状态标签类型获取函数
 const getStatusType = (status) => {
   const types = {
@@ -447,6 +470,8 @@ const filteredContainers = computed(() => {
           return state === 'exited'
         case 'paused':
           return state === 'paused'
+        case 'created':
+          return state === 'created'
         default:
           return true
       }
@@ -473,6 +498,48 @@ const filteredContainers = computed(() => {
     })
   }
 
+  // 排序
+  if (sortState.value.prop && sortState.value.order) {
+    const { prop, order } = sortState.value
+    result.sort((a, b) => {
+      let valA, valB
+      switch (prop) {
+        case 'Names':
+          valA = a.Names?.[0] || ''
+          valB = b.Names?.[0] || ''
+          break
+        case 'State':
+          valA = a.State || ''
+          valB = b.State || ''
+          break
+        case 'Image':
+          valA = a.Image || ''
+          valB = b.Image || ''
+          break
+        case 'Network':
+          valA = getContainerIP(a)
+          valB = getContainerIP(b)
+          break
+        case 'Resources':
+          // 按 CPU 排序
+          valA = parseFloat(a.CPUPerc?.replace('%', '') || 0)
+          valB = parseFloat(b.CPUPerc?.replace('%', '') || 0)
+          break
+        case 'Created':
+          valA = a.Created || ''
+          valB = b.Created || ''
+          break
+        default:
+          valA = a[prop]
+          valB = b[prop]
+      }
+      
+      if (valA < valB) return order === 'ascending' ? -1 : 1
+      if (valA > valB) return order === 'ascending' ? 1 : -1
+      return 0
+    })
+  }
+
   return result
 })
 
@@ -493,7 +560,16 @@ const handleCurrentChange = (val) => {
 }
 
 onMounted(() => {
+  const q = route.query.status
+  if (typeof q === 'string') {
+    statusFilter.value = q
+  }
   fetchContainers()
+})
+watch(() => route.query.status, (val) => {
+  if (typeof val === 'string') {
+    statusFilter.value = val
+  }
 })
 // 添加获取容器 IP 的函数
 const getContainerIP = (container) => {
@@ -535,60 +611,104 @@ const getImageTag = (image) => {
 </script>
 
 <style scoped>
-/* 继承 layout.css 的 compact-table 样式 */
-.containers-view {
-  height: 100%; /* 确保高度铺满 */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden; /* 防止撑开父容器 */
-  padding-right: 4px; /* 与 Images.vue 保持一致 */
-}
+  /* 页面容器 - 统一风格 */
+  .containers-view {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: 12px 24px;
+    background-color: var(--el-bg-color-page);
+  }
 
-/* 操作栏 */
-.operation-bar {
+/* 顶部操作栏 */
+.filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px; /* 调整为 16px 与 Images.vue 保持一致 */
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--el-border-color-light);
 }
 
-.operation-bar .left { /* 移除重复的 .operation-bar */
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-/* 筛选栏 */
-.filter-bar {
+.filter-left, .filter-right {
   display: flex;
   align-items: center;
+  gap: 16px;
 }
 
-.status-filter {
+.search-input {
+  width: 300px;
+}
+
+.status-select {
   width: 160px;
 }
 
-/* 容器列表 */
+/* 表格容器 */
+.table-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+}
+
 .containers-table {
   flex: 1;
-  /* 允许表格在容器内滚动 */
   min-height: 0; 
-  overflow: hidden; /* 确保表格不会溢出 */
-  margin-bottom: 0; /* 移除 margin-bottom */
+}
+
+/* 分页 */
+.pagination-bar {
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* --------------------------------------------------------- */
+/* 以下保留原有的列内容样式 */
+
+.name-cell-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
 }
 
 .name-col {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .container-name-btn {
-  justify-content: flex-start;
   padding: 0;
   height: auto;
-  font-weight: 500;
+  font-weight: 600;
   font-size: 14px;
+  color: var(--el-color-primary);
+  justify-content: flex-start;
 }
 
 .container-short-id {
@@ -631,8 +751,7 @@ const getImageTag = (image) => {
   background-color: var(--el-color-info-light-3);
 }
 .status-time {
-  margin-left: 0; /* 移除原来的 margin-left */
-  padding-left: 14px; /* 对齐圆点后的文字 */
+  padding-left: 14px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
 }
@@ -753,21 +872,6 @@ const getImageTag = (image) => {
   white-space: pre-line;
 }
 
-/* 表格样式覆盖 */
-:deep(.el-table) {
-  --el-table-header-bg-color: var(--el-fill-color-light);
-}
-
-:deep(.el-table__row) {
-  height: 64px;
-}
-
-:deep(.el-table .cell) {
-  padding: 8px 12px;
-}
-</style>
-
-<style>
 /* 全局样式（用于 tooltip 等） */
 .ports-tooltip {
   max-width: 300px;
@@ -783,5 +887,16 @@ const getImageTag = (image) => {
 .port-item {
   font-size: 12px;
   color: var(--el-text-color-regular);
+}
+
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
+}
+
+.more-btn {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
 }
 </style>

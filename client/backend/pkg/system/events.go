@@ -20,6 +20,8 @@ import (
 
 var (
 	mutex sync.Mutex
+	// 近期事件ID缓存，用于去重
+	recentIDs = make(map[string]int64)
 )
 
 func getLogFilePath() string {
@@ -39,9 +41,16 @@ type LogEntry struct {
 // StartEventLogger 启动事件监听和日志记录
 func StartEventLogger() {
 	// 确保目录存在
-	if err := os.MkdirAll(filepath.Dir(getLogFilePath()), 0755); err != nil {
-		fmt.Printf("Error creating log directory: %v\n", err)
+	logPath := getLogFilePath()
+	logDir := filepath.Dir(logPath)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Printf("创建日志目录失败: %v\n", err)
 	}
+	if info, err := os.Stat(logDir); err == nil && !info.IsDir() {
+		fmt.Printf("日志目录路径存在但不是目录: %s\n", logDir)
+		return
+	}
+	fmt.Printf("事件日志文件路径: %s\n", logPath)
 
 	// 初始填充历史日志
 	fillHistoryLogs()
@@ -57,9 +66,12 @@ func StartEventLogger() {
 }
 
 func fillHistoryLogs() {
-	// 检查文件是否已存在且有内容
-	if info, err := os.Stat(getLogFilePath()); err == nil && info.Size() > 0 {
-		return
+	// 确保日志文件存在
+	if _, err := os.Stat(getLogFilePath()); os.IsNotExist(err) {
+		f, cerr := os.OpenFile(getLogFilePath(), os.O_CREATE|os.O_WRONLY, 0644)
+		if cerr == nil {
+			f.Close()
+		}
 	}
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -72,6 +84,7 @@ func fillHistoryLogs() {
 	// 获取最近24小时的事件
 	msgs, errs := cli.Events(context.Background(), types.EventsOptions{
 		Since: time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+		Until: time.Now().Format(time.RFC3339),
 	})
 
 	// 收集所有历史事件
@@ -86,7 +99,7 @@ loop:
 				fmt.Printf("Error reading history events: %v\n", err)
 			}
 			break loop
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			break loop
 		}
 	}
@@ -94,6 +107,19 @@ loop:
 	// 写入文件
 	for _, event := range events {
 		processEvent(event)
+	}
+
+	// 如果没有历史事件，写入初始化记录，确保文件不为空
+	if len(events) == 0 {
+		entry := LogEntry{
+			ID:        fmt.Sprintf("init-%d", time.Now().UnixNano()),
+			Type:      "info",
+			TypeClass: "info",
+			Time:      time.Now().Format("15:04:05"),
+			Message:   "docker events logger initialized",
+			Timestamp: time.Now().Unix(),
+		}
+		appendLog(entry)
 	}
 }
 
@@ -170,7 +196,33 @@ func appendLog(entry LogEntry) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
+	// 去重：同一事件ID不重复写入
+	if _, exists := recentIDs[entry.ID]; exists {
+		return
+	}
+	recentIDs[entry.ID] = time.Now().Unix()
+	// 简单清理：保留最多1000个，移除超过5分钟的旧记录
+	if len(recentIDs) > 1000 {
+		cutoff := time.Now().Add(-5 * time.Minute).Unix()
+		for k, ts := range recentIDs {
+			if ts < cutoff {
+				delete(recentIDs, k)
+			}
+		}
+	}
+
 	path := getLogFilePath()
+	dir := filepath.Dir(path)
+
+	// 确保目录存在
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Printf("创建日志目录失败: %v\n", err)
+		return
+	}
+	if info, err := os.Stat(dir); err == nil && !info.IsDir() {
+		fmt.Printf("日志目录路径存在但不是目录: %s\n", dir)
+		return
+	}
 
 	// 检查文件大小，如果超过 5MB 则轮转
 	if info, err := os.Stat(path); err == nil && info.Size() > 5*1024*1024 {
@@ -179,7 +231,7 @@ func appendLog(entry LogEntry) {
 
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Printf("Error opening log file: %v\n", err)
+		fmt.Printf("打开日志文件失败，路径: %s，错误: %v\n", path, err)
 		return
 	}
 	defer file.Close()

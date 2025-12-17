@@ -185,7 +185,7 @@ func registerNavigation(containerID, name, publicPort string) {
 
 	title := name
 	icon := "mdi-docker" // 默认图标
-	category := "Containers"
+	category := "默认"
 
 	if err == sql.ErrNoRows {
 		// Create new

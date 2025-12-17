@@ -2,7 +2,7 @@
   <aside class="sidebar">
     <div class="logo">
       <el-icon :size="24" class="mr-2"><Box /></el-icon>
-      <span class="font-bold text-lg">DockPier</span>
+      <span class="font-bold text-lg">TRADIS</span>
     </div>
     <el-menu 
       :router="true" 
@@ -27,13 +27,17 @@
         <el-icon><Shop /></el-icon>
         <span>应用商店</span>
       </el-menu-item>
-      <el-menu-item index="/projects">
+      <el-menu-item index="/projects" v-if="isDS">
         <el-icon><Folder /></el-icon>
         <span>项目</span>
       </el-menu-item>
-      <el-menu-item index="/containers">
+      <el-menu-item index="/containers" v-if="isDS">
         <el-icon><Box /></el-icon>
         <span>容器</span>
+      </el-menu-item>
+      <el-menu-item index="/compose" v-if="isCS">
+        <el-icon><Folder /></el-icon>
+        <span>Compose</span>
       </el-menu-item>
 
       <div class="menu-group-title">资源管理</div>
@@ -68,7 +72,7 @@
         <span :class="appStoreConnected ? 'dot connected' : 'dot'" /> 
         <span> {{ appStoreConnected ? '商城服务连接正常' : '商城服务连接异常' }} </span>
       </div>
-      <div class="version-info">v1.0.0 (Vue3+Vite)</div>
+      <div class="version-info">v0.3.0 (开发板)</div>
     </div>
   </aside>
 </template>
@@ -81,11 +85,15 @@ import request from '../utils/request'
 // 这里假设已经在 main.js 中全局注册了 Element Plus Icons
 
 const route = useRoute()
+const managementMode = ((window.__ENV__ && window.__ENV__.MANAGEMENT_MODE) || import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toLowerCase()
+const isCS = managementMode === 'centralized' || managementMode === 'cs'
+const isDS = managementMode === 'distributed' || managementMode === 'ds'
 const defaultActive = computed(() => {
   const path = route.path
   // 处理详情页面的高亮
   if (path.startsWith('/containers/')) return '/containers'
   if (path.startsWith('/projects/')) return '/projects'
+  if (path.startsWith('/compose')) return '/compose'
   return path
 })
 

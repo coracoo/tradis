@@ -36,6 +36,17 @@
         </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
         <el-table-column prop="version" label="版本" width="100" />
+        <el-table-column prop="enabled" label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-switch
+              v-model="row.enabled"
+              @change="handleStatusChange(row)"
+              inline-prompt
+              active-text="启用"
+              inactive-text="关闭"
+            />
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button-group>
@@ -124,6 +135,16 @@ const handleEdit = (row) => {
   currentTemplate.value = { ...row }
   dialogTitle.value = '编辑模板'
   dialogVisible.value = true
+}
+
+const handleStatusChange = async (row) => {
+  try {
+    await templateApi.update(row.id, { enabled: row.enabled })
+    ElMessage.success(row.enabled ? '已启用' : '已关闭')
+  } catch (error) {
+    row.enabled = !row.enabled // 恢复状态
+    ElMessage.error('状态更新失败')
+  }
 }
 
 const handleDelete = async (row) => {

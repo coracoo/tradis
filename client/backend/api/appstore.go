@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"dockerpanel/backend/pkg/database" // Add this
 	"dockerpanel/backend/pkg/docker"
@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -361,6 +363,8 @@ func deployApp(c *gin.Context) {
 
 		cmd := exec.Command("docker", "compose", "up", "-d")
 		cmd.Dir = composeDir // 设置工作目录为项目目录
+		// 优化输出为纯文本，便于流式展示进度
+		cmd.Env = append(os.Environ(), "COMPOSE_PROGRESS=plain", "COMPOSE_NO_COLOR=1")
 
 		// 获取输出管道
 		stdout, err := cmd.StdoutPipe()
@@ -385,12 +389,50 @@ func deployApp(c *gin.Context) {
 			return
 		}
 
-		// 实时读取日志
-		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
-		for scanner.Scan() {
-			line := scanner.Text()
-			t.AddLog("info", line)
+		// 实时读取日志（兼容 \n 和 \r 进度刷新，每2秒节流一次）
+		streamPipe := func(r io.Reader) {
+			buf := make([]byte, 4096)
+			var acc []byte
+			lastFlush := time.Now()
+			flush := func(force bool) {
+				if len(acc) == 0 {
+					return
+				}
+				// 将累积内容拆分成多条消息
+				chunks := strings.Split(strings.ReplaceAll(string(acc), "\r", "\n"), "\n")
+				for _, c := range chunks {
+					line := strings.TrimSpace(c)
+					if line != "" {
+						t.AddLog("info", line)
+					}
+				}
+				acc = acc[:0]
+				lastFlush = time.Now()
+			}
+			for {
+				n, err := r.Read(buf)
+				if n > 0 {
+					acc = append(acc, buf[:n]...)
+					// 遇到换行立即flush
+					if bytes.Contains(buf[:n], []byte{'\n'}) || bytes.Contains(buf[:n], []byte{'\r'}) {
+						flush(false)
+					} else {
+						// 节流：每2秒刷新一次
+						if time.Since(lastFlush) > 2*time.Second {
+							flush(false)
+						}
+					}
+				}
+				if err != nil {
+					// EOF或错误时，强制flush一次
+					flush(true)
+					return
+				}
+			}
 		}
+
+		go streamPipe(stdout)
+		go streamPipe(stderr)
 
 		// 等待命令完成
 		if err := cmd.Wait(); err != nil {

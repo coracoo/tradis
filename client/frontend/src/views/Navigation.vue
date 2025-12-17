@@ -1,104 +1,108 @@
 <template>
-  <div class="container">
-    <div class="header">
-      <div class="title">导航栏</div>
-      <div class="actions">
-        <el-button type="primary" @click="handleAdd">
-          <el-icon><Plus /></el-icon>添加应用
+  <div class="nav-view">
+    <div class="filter-bar">
+      <div class="filter-left">
+        <el-button type="primary" @click="handleAdd" size="medium">
+          <template #icon><el-icon><Plus /></el-icon></template>
+          添加应用
         </el-button>
-        <el-button @click="handleManageCategories">
-          <el-icon><Operation /></el-icon>分类管理
+        <el-button @click="handleManageCategories" size="medium">
+          <template #icon><el-icon><Operation /></el-icon></template>
+          分类管理
         </el-button>
-        <el-button @click="handleRefresh">
-          <el-icon><Refresh /></el-icon>刷新
+      </div>
+      <div class="filter-right">
+        <el-button :type="showDeleted ? 'warning' : 'default'" @click="toggleShowDeleted" plain size="medium">
+          <template #icon><el-icon><Delete /></el-icon></template>
+          {{ showDeleted ? '显示正常' : '回收站' }}
         </el-button>
-        <el-button :type="showDeleted ? 'warning' : 'default'" @click="toggleShowDeleted">
-          <el-icon><Delete /></el-icon> {{ showDeleted ? '显示正常' : '回收站' }}
+        <el-button @click="handleRefresh" plain size="medium">
+          <template #icon><el-icon><Refresh /></el-icon></template>
+          刷新
         </el-button>
       </div>
     </div>
 
-    <!-- Grouped Applications -->
-    <div v-for="(group, groupName) in groupedApps" :key="groupName" class="category-section">
-      <div class="category-header">
-        <el-icon><Folder /></el-icon>
-        <span>{{ groupName }}</span>
-      </div>
-      <div class="app-grid">
-        <el-card 
-          v-for="app in group" 
-          :key="app.id" 
-          class="app-card"
-          :body-style="{ padding: '0px' }"
-          shadow="hover"
-        >
-          <div class="app-content">
-            <div class="app-icon">
-              <el-icon v-if="app.icon && app.icon.startsWith('mdi-')" :size="40">
-                 <!-- Icon handling can be improved, simplified for now assuming MDI classes or image -->
-                 <component :is="app.icon.replace('mdi-', '')" /> 
-              </el-icon>
-              <img v-else-if="app.icon" :src="app.icon" :alt="app.title" class="app-icon-img">
-              <el-icon v-else :size="40"><Monitor /></el-icon>
-            </div>
-            <div class="app-info">
-              <h3>{{ app.title }}</h3>
-              <div class="app-tags">
-                 <el-tag v-if="app.is_auto" size="small" type="success">Auto</el-tag>
-                 <el-tag v-if="app.is_deleted" size="small" type="danger">Deleted</el-tag>
+    <div class="content-wrapper">
+      <div class="scroll-content">
+        <div v-for="(group, groupName) in groupedApps" :key="groupName" class="category-section">
+          <div class="category-header">
+            <el-icon><Folder /></el-icon>
+            <span>{{ groupName }}</span>
+          </div>
+          <div class="app-grid">
+            <el-card 
+              v-for="app in group" 
+              :key="app.id" 
+              class="app-card"
+              :body-style="{ padding: '0px' }"
+              shadow="hover"
+            >
+              <div class="app-content">
+                <div class="app-icon-wrapper">
+                  <i v-if="app.icon_url && app.icon_url.startsWith('mdi-')" :class="['mdi', app.icon_url, 'mdi-icon']"></i>
+                  <img v-else-if="app.icon_url" :src="resolveIconUrl(app.icon_url)" :alt="app.title" class="app-icon-img">
+                  <el-icon v-else :size="32" color="#409eff"><Monitor /></el-icon>
+                </div>
+                <div class="app-info">
+                  <h3 class="app-title">{{ app.title }}</h3>
+                  <div class="app-tags">
+                     <el-tag v-if="app.is_auto" size="small" type="danger" effect="plain">Auto</el-tag>
+                     <el-tag v-if="app.is_deleted" size="small" type="danger" effect="plain">Deleted</el-tag>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          
-          <div class="app-actions">
-            <el-button-group v-if="!app.is_deleted">
-              <el-button size="small" type="primary" link @click.stop="handleEdit(app)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
-              <el-button size="small" type="danger" link @click.stop="handleDelete(app)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </el-button-group>
-            <el-button-group v-else>
-              <el-button size="small" type="success" link @click.stop="handleRestore(app)">
-                <el-icon><RefreshLeft /></el-icon> 恢复
-              </el-button>
-            </el-button-group>
-          </div>
+              
+              <div class="app-actions-overlay">
+                <el-button-group v-if="!app.is_deleted">
+                  <el-button size="small" type="primary" circle @click.stop="handleEdit(app)">
+                    <el-icon><Edit /></el-icon>
+                  </el-button>
+                  <el-button size="small" type="danger" circle @click.stop="handleDelete(app)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </el-button-group>
+                <el-button-group v-else>
+                  <el-button size="small" type="success" @click.stop="handleRestore(app)">
+                    <el-icon><RefreshLeft /></el-icon> 恢复
+                  </el-button>
+                </el-button-group>
+              </div>
 
-          <div class="app-links">
-             <el-button 
-               v-if="app.lan_url" 
-               type="primary" 
-               plain 
-               size="small" 
-               class="link-btn"
-               @click.stop="openApp(app.lan_url)"
-             >
-               内网访问
-             </el-button>
-             <el-button 
-               v-if="app.wan_url" 
-               type="success" 
-               plain 
-               size="small" 
-               class="link-btn"
-               @click.stop="openApp(app.wan_url)"
-             >
-               外网访问
-             </el-button>
+              <div class="app-footer">
+                 <el-button 
+                   type="primary" 
+                   plain 
+                   size="small" 
+                   class="link-btn"
+                   @click.stop="openLan(app)"
+                 >
+                   内网
+                 </el-button>
+                 <el-button 
+                   type="success" 
+                   plain 
+                   size="small" 
+                   class="link-btn"
+                   @click.stop="openWan(app)"
+                 >
+                   外网
+                 </el-button>
+              </div>
+            </el-card>
           </div>
-        </el-card>
+        </div>
+        
+        <el-empty v-if="Object.keys(groupedApps).length === 0" description="暂无导航项" />
       </div>
     </div>
-    
-    <el-empty v-if="Object.keys(groupedApps).length === 0" description="暂无导航项" />
 
     <!-- 添加/编辑对话框 -->
     <el-dialog
       :title="dialogTitle"
       v-model="dialogVisible"
       width="500px"
+      append-to-body
     >
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称" required>
@@ -122,7 +126,20 @@
             </el-select>
         </el-form-item>
         <el-form-item label="图标">
-           <el-input v-model="form.icon" placeholder="图标URL或mdi-icon" />
+           <el-input v-model="form.icon_url" placeholder="图标URL或mdi-icon" />
+           <el-upload
+             :show-file-list="true"
+             :auto-upload="false"
+             :on-change="handleIconChange"
+             :on-remove="handleIconRemove"
+             accept="image/*"
+             style="margin-top: 8px; width: 100%"
+           >
+             <el-button size="small">上传图片</el-button>
+             <template #tip>
+               <div class="el-upload__tip">支持mdi-icon/URL/本地文件</div>
+             </template>
+           </el-upload>
         </el-form-item>
         <el-form-item label="内网URL">
           <el-input v-model="form.lan_url" placeholder="http://192.168.1.100:port" />
@@ -144,24 +161,25 @@
       title="分类管理"
       v-model="manageDialogVisible"
       width="500px"
+      append-to-body
     >
       <div class="category-manager">
         <div class="category-actions" style="margin-bottom: 15px;">
-           <el-button type="primary" @click="handleAddCategory">
+           <el-button type="primary" @click="handleAddCategory" size="small">
              <el-icon><Plus /></el-icon> 新增分类
            </el-button>
         </div>
-        <el-table :data="categoryOptions.map(c => ({ name: c }))" style="width: 100%" max-height="400">
+        <el-table :data="categoryOptions.map(c => ({ name: c }))" style="width: 100%" max-height="400" border>
            <el-table-column prop="name" label="分类名称" />
-           <el-table-column label="操作" width="150" align="right">
+           <el-table-column label="操作" width="120" align="center">
              <template #default="scope">
                <el-button-group>
-                 <el-button size="small" :disabled="scope.row.name === '容器'" @click="handleRenameCategory(scope.row.name)">
-                   <el-icon><Edit /></el-icon>
-                 </el-button>
-                 <el-button size="small" type="danger" :disabled="scope.row.name === '容器'" @click="handleDeleteCategory(scope.row.name)">
-                   <el-icon><Delete /></el-icon>
-                 </el-button>
+                <el-button size="small" :disabled="scope.row.name === '默认'" @click="handleRenameCategory(scope.row.name)">
+                  <el-icon><Edit /></el-icon>
+                </el-button>
+                <el-button size="small" type="danger" :disabled="scope.row.name === '默认'" @click="handleDeleteCategory(scope.row.name)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
                </el-button-group>
              </template>
            </el-table-column>
@@ -180,7 +198,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Folder, Monitor, Edit, Delete, RefreshLeft, Operation } from '@element-plus/icons-vue'
-import request from '../api'
+import api from '../api'
 
 const apps = ref([])
 const showDeleted = ref(false)
@@ -191,13 +209,34 @@ const customCategories = ref([])
 const form = ref({
   id: null,
   title: '',
-  category: '容器',
-  icon: '',
+  category: '默认',
+  icon_url: '',
   lan_url: '',
   wan_url: ''
 })
+const pendingIconFile = ref(null)
+const handleIconChange = (file) => {
+  pendingIconFile.value = file?.raw || file
+}
+const handleIconRemove = () => {
+  pendingIconFile.value = null
+}
 
-// 加载自定义分类
+const getServerBase = () => {
+  const base = import.meta.env.VITE_API_BASE_URL || ''
+  if (!base) return ''
+  if (base.endsWith('/api')) return base.slice(0, -4)
+  return base
+}
+
+const resolveIconUrl = (u) => {
+  if (!u) return ''
+  if (u.startsWith('http://') || u.startsWith('https://')) return u
+  const serverBase = getServerBase()
+  if (u.startsWith('/')) return serverBase + u
+  return serverBase ? (serverBase + '/' + u) : u
+}
+
 onMounted(() => {
   const saved = localStorage.getItem('custom_navigation_categories')
   if (saved) {
@@ -215,7 +254,7 @@ const saveCustomCategories = () => {
 }
 
 const categoryOptions = computed(() => {
-  const categories = new Set(['容器', ...customCategories.value])
+  const categories = new Set(['默认', ...customCategories.value])
   apps.value.forEach(app => {
     if (app.category) {
       categories.add(app.category)
@@ -226,22 +265,17 @@ const categoryOptions = computed(() => {
 
 const groupedApps = computed(() => {
   const groups = {}
-  // 初始化所有分类
   categoryOptions.value.forEach(cat => {
     groups[cat] = []
   })
   
   apps.value.forEach(app => {
-    const category = app.category || '容器'
+    const category = app.category || '默认'
     if (!groups[category]) {
       groups[category] = []
     }
     groups[category].push(app)
   })
-  
-  // 移除没有应用且不在自定义列表中的分类（可选，目前保留所有categoryOptions中的分类）
-  // 如果不想显示空的自动分类，可以在这里过滤
-  
   return groups
 })
 
@@ -267,9 +301,7 @@ const handleAddCategory = async () => {
       saveCustomCategories()
       ElMessage.success('添加成功')
     }
-  } catch {
-    // Cancelled
-  }
+  } catch {}
 }
 
 const handleRenameCategory = async (oldName) => {
@@ -284,32 +316,26 @@ const handleRenameCategory = async (oldName) => {
 
     if (newName && newName !== oldName) {
       if (categoryOptions.value.includes(newName) && !customCategories.value.includes(newName)) {
-         // 如果新名字已存在于apps中但不是自定义的，没关系，我们会合并
       } else if (customCategories.value.includes(newName)) {
          ElMessage.warning('分类名已存在')
          return
       }
 
-      // 1. 更新自定义分类列表
       const index = customCategories.value.indexOf(oldName)
       if (index !== -1) {
         customCategories.value[index] = newName
         saveCustomCategories()
       } else {
-        // 如果是之前只存在于app中的分类，现在被重命名了，应该加入到自定义列表中吗？
-        // 或者只是重命名应用？
-        // 为了方便，我们把它加入自定义列表
         customCategories.value.push(newName)
         saveCustomCategories()
       }
 
-      // 2. 更新所有属于该分类的应用
       const appsToUpdate = apps.value.filter(app => app.category === oldName)
       let updatedCount = 0
       
       for (const app of appsToUpdate) {
         try {
-          await request.navigation.update(app.id, { ...app, category: newName })
+          await api.navigation.update(app.id, { ...app, category: newName })
           updatedCount++
         } catch (e) {
           console.error(`Failed to update app ${app.title}`, e)
@@ -319,35 +345,15 @@ const handleRenameCategory = async (oldName) => {
       await fetchApps()
       ElMessage.success(`重命名成功，更新了 ${updatedCount} 个应用`)
     }
-  } catch {
-    // Cancelled
-  }
+  } catch {}
 }
 
 const handleDeleteCategory = async (categoryName) => {
   try {
     const appsInCat = apps.value.filter(app => app.category === categoryName)
-    let action = 'cancel'
     
-    if (appsInCat.length > 0) {
-      action = await ElMessageBox.confirm(
-        `分类 "${categoryName}" 下有 ${appsInCat.length} 个应用。`,
-        '删除分类',
-        {
-          distinguishCancelAndClose: true,
-          confirmButtonText: '移动应用到"容器"并删除分类',
-          cancelButtonText: '仅删除分类(应用保留但分类丢失)',
-          type: 'warning'
-        }
-      ).then(() => 'move').catch((action) => action === 'cancel' ? 'delete_only' : 'cancel')
-      
-      // Element Plus confirm result handling is tricky with distinguishCancelAndClose
-      // Let's simplify interaction
-    }
-    
-    // Simplified confirmation
     await ElMessageBox.confirm(
-       `确定要删除分类 "${categoryName}" 吗？\n该分类下的 ${appsInCat.length} 个应用将被移动到默认分类"容器"。`,
+       `确定要删除分类 "${categoryName}" 吗？\n该分类下的 ${appsInCat.length} 个应用将被移动到默认分类"默认"。`,
        '删除分类',
        {
          confirmButtonText: '确定删除',
@@ -356,12 +362,10 @@ const handleDeleteCategory = async (categoryName) => {
        }
     )
     
-    // Move apps to default
     for (const app of appsInCat) {
-      await request.navigation.update(app.id, { ...app, category: '容器' })
+      await api.navigation.update(app.id, { ...app, category: '默认' })
     }
     
-    // Remove from custom categories
     const index = customCategories.value.indexOf(categoryName)
     if (index !== -1) {
       customCategories.value.splice(index, 1)
@@ -370,7 +374,6 @@ const handleDeleteCategory = async (categoryName) => {
     
     await fetchApps()
     ElMessage.success('删除成功')
-    
   } catch (e) {
     if (e !== 'cancel') console.error(e)
   }
@@ -378,8 +381,7 @@ const handleDeleteCategory = async (categoryName) => {
 
 const fetchApps = async () => {
   try {
-    const response = await request.navigation.list({ include_deleted: showDeleted.value })
-    // 处理返回的数据格式
+    const response = await api.navigation.list({ include_deleted: showDeleted.value })
     if (Array.isArray(response)) {
       apps.value = response
     } else if (response && Array.isArray(response.data)) {
@@ -388,7 +390,6 @@ const fetchApps = async () => {
       apps.value = response.items
     } else {
       apps.value = []
-      console.warn('Unknown navigation data format:', response)
     }
   } catch (error) {
     console.error('获取导航失败', error)
@@ -410,8 +411,8 @@ const handleAdd = () => {
   form.value = {
     id: null,
     title: '',
-    category: '容器',
-    icon: '',
+    category: '默认',
+    icon_url: '',
     lan_url: '',
     wan_url: ''
   }
@@ -423,8 +424,8 @@ const handleEdit = (app) => {
   form.value = {
     id: app.id,
     title: app.title,
-    category: app.category || '容器',
-    icon: app.icon,
+    category: app.category || '默认',
+    icon_url: app.icon_url,
     lan_url: app.lan_url || '',
     wan_url: app.wan_url || ''
   }
@@ -443,22 +444,62 @@ const handleSave = async () => {
 
   try {
     if (form.value.id) {
-      await request.put(`/navigation/${form.value.id}`, {
-          title: form.value.title,
-          category: form.value.category,
-          icon: form.value.icon,
-          lanUrl: form.value.lan_url,
-          wanUrl: form.value.wan_url
+      await api.navigation.update(form.value.id, {
+        title: form.value.title,
+        category: form.value.category,
+        icon_url: form.value.icon_url,
+        lan_url: form.value.lan_url,
+        wan_url: form.value.wan_url
       })
+      if (pendingIconFile.value) {
+        try {
+          const upRes = await api.navigation.uploadIcon(form.value.id, pendingIconFile.value)
+          if (upRes && upRes.icon_url) {
+            form.value.icon_url = upRes.icon_url
+            await api.navigation.update(form.value.id, {
+              title: form.value.title,
+              category: form.value.category,
+              icon_url: form.value.icon_url,
+              lan_url: form.value.lan_url,
+              wan_url: form.value.wan_url
+            })
+          }
+        } catch (e) {
+          console.error('上传图标失败', e)
+          ElMessage.warning('图标上传失败')
+        } finally {
+          pendingIconFile.value = null
+        }
+      }
       ElMessage.success('更新成功')
     } else {
-      await request.post('/navigation', {
-          title: form.value.title,
-          category: form.value.category,
-          icon: form.value.icon,
-          lanUrl: form.value.lan_url,
-          wanUrl: form.value.wan_url
+      const created = await api.navigation.add({
+        title: form.value.title,
+        category: form.value.category,
+        icon_url: form.value.icon_url,
+        lan_url: form.value.lan_url,
+        wan_url: form.value.wan_url
       })
+      if (created && created.id && pendingIconFile.value) {
+        try {
+          const upRes = await api.navigation.uploadIcon(created.id, pendingIconFile.value)
+          if (upRes && upRes.icon_url) {
+            form.value.icon_url = upRes.icon_url
+            await api.navigation.update(created.id, {
+              title: form.value.title,
+              category: form.value.category,
+              icon_url: form.value.icon_url,
+              lan_url: form.value.lan_url,
+              wan_url: form.value.wan_url
+            })
+          }
+        } catch (e) {
+          console.error('上传图标失败', e)
+          ElMessage.warning('图标上传失败')
+        } finally {
+          pendingIconFile.value = null
+        }
+      }
       ElMessage.success('添加成功')
     }
     dialogVisible.value = false
@@ -471,64 +512,85 @@ const handleSave = async () => {
 
 const handleDelete = async (app) => {
   try {
-    await ElMessageBox.confirm('确定要删除这个导航项吗？', '提示', {
-      type: 'warning'
-    })
-    await request.navigation.delete(app.id)
+    await ElMessageBox.confirm('确定要删除这个导航项吗？', '提示', { type: 'warning' })
+    await api.navigation.delete(app.id)
     ElMessage.success('已移至回收站')
     fetchApps()
   } catch (error) {
-    if (error !== 'cancel') {
-      console.error('删除失败', error)
-      ElMessage.error('删除失败')
-    }
+    if (error !== 'cancel') ElMessage.error('删除失败')
   }
 }
 
 const handleRestore = async (app) => {
   try {
-    await request.navigation.restore(app.id)
+    await api.navigation.restore(app.id)
     ElMessage.success('恢复成功')
     fetchApps()
   } catch (error) {
-    console.error('恢复失败', error)
     ElMessage.error('恢复失败')
   }
 }
 
 const openApp = (url) => {
   if (!url) {
-    ElMessage.warning('无效的URL')
+    ElMessageBox.alert('请先到设置中维护URL地址', '提示')
     return
   }
-  // 确保URL包含协议
   let targetUrl = url
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     targetUrl = 'http://' + url
   }
   window.open(targetUrl, '_blank')
 }
-
-onMounted(() => {
-  fetchApps()
-})
+const openLan = (app) => {
+  openApp(app.lan_url)
+}
+const openWan = (app) => {
+  openApp(app.wan_url)
+}
 </script>
 
 <style scoped>
-.container {
-  padding: 20px;
+.nav-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px 24px;
 }
 
-.header {
+.filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
 }
 
-.title {
-  font-size: 24px;
-  font-weight: bold;
+.filter-left, .filter-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.content-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
 }
 
 .category-section {
@@ -538,57 +600,63 @@ onMounted(() => {
 .category-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 18px;
+  gap: 8px;
+  font-size: 16px;
   font-weight: 600;
+  color: var(--el-text-color-primary);
   margin-bottom: 15px;
-  color: var(--el-text-color-regular);
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--el-border-color-lighter);
-  padding-bottom: 5px;
 }
 
 .app-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 20px;
 }
 
 .app-card {
-  transition: transform 0.2s, box-shadow 0.2s;
-  cursor: default;
   position: relative;
-  display: flex;
-  flex-direction: column;
+  transition: all 0.3s;
+  border: none;
+  background-color: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .app-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+  border-color: var(--el-color-primary-light-5);
 }
 
 .app-content {
-  padding: 20px;
+  padding: 20px 20px 10px 20px;
   display: flex;
   align-items: center;
   gap: 15px;
 }
 
-.app-icon {
-  width: 60px;
-  height: 60px;
+.app-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
   display: flex;
-  justify-content: center;
   align-items: center;
-  background-color: var(--el-fill-color-light);
-  border-radius: 12px;
-  color: var(--el-color-primary);
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .app-icon-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  border-radius: 12px;
+  object-fit: contain;
+  border-radius: 10px;
+}
+
+.mdi-icon {
+  font-size: 28px;
+  color: var(--el-color-primary);
 }
 
 .app-info {
@@ -596,12 +664,14 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.app-info h3 {
+.app-title {
   margin: 0 0 5px 0;
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--el-text-color-primary);
 }
 
 .app-tags {
@@ -609,27 +679,37 @@ onMounted(() => {
   gap: 5px;
 }
 
-.app-actions {
+.app-actions-overlay {
   position: absolute;
   top: 10px;
   right: 10px;
   opacity: 0;
   transition: opacity 0.2s;
-  z-index: 10;
+  z-index: 5;
 }
 
-.app-card:hover .app-actions {
+.app-card:hover .app-actions-overlay {
   opacity: 1;
 }
 
-.app-links {
-  padding: 0 20px 20px 20px;
+.app-footer {
+  padding: 10px 20px 15px 20px;
   display: flex;
   gap: 10px;
-  justify-content: flex-start;
 }
 
 .link-btn {
   flex: 1;
+}
+
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
+}
+
+.more-btn {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
 }
 </style>

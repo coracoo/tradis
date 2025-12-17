@@ -1,8 +1,21 @@
 <template>
   <div class="app-store-view">
-    <div class="operation-bar">
-      <div class="left-ops">
-        <el-radio-group v-model="activeCategory" size="default">
+    <div class="filter-bar">
+      <div class="filter-left">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索应用..."
+          clearable
+          class="search-input"
+          size="medium"
+          @keyup.enter="refreshApps"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        
+        <el-radio-group v-model="activeCategory" class="category-filter" size="medium">
           <el-radio-button label="all">全部</el-radio-button>
           <el-radio-button label="entertainment">影音</el-radio-button>
           <el-radio-button label="photos">图像</el-radio-button>
@@ -18,45 +31,44 @@
           <el-radio-button label="other">其他</el-radio-button>
         </el-radio-group>
       </div>
-      <div class="right-ops">
-         <el-button @click="refreshApps"><el-icon><Refresh /></el-icon></el-button>
-         <el-input
-          v-model="searchQuery"
-          placeholder="搜索应用..."
-          :prefix-icon="Search"
-          clearable
-          style="width: 250px"
-        />
+
+      <div class="filter-right">
+         <el-button @click="refreshApps" :loading="loading" plain size="medium">
+           <template #icon><el-icon><Refresh /></el-icon></template>
+           刷新
+         </el-button>
       </div>
     </div>
 
-    <div v-loading="loading" class="app-content">
-      <div v-if="filteredApps.length > 0" class="app-grid">
-        <el-card v-for="app in filteredApps" :key="app.id" class="app-card" shadow="hover">
-          <div class="app-card-body">
-            <div class="app-icon-wrapper">
-              <img :src="resolvePicUrl(app.logo || app.icon)" :alt="app.name" class="app-icon" @error="handleImageError">
-            </div>
-            <div class="app-info">
-              <div class="app-header-row">
-                <h3 class="app-name">{{ app.name }}</h3>
-                <el-tag size="small" effect="plain">{{ app.version }}</el-tag>
-                <el-tag v-if="isInstalled(app)" type="success" size="small" effect="dark" style="margin-left: 5px">已安装</el-tag>
+    <div class="content-wrapper">
+      <div v-loading="loading" class="scroll-container">
+        <div v-if="filteredApps.length > 0" class="app-grid">
+          <el-card v-for="app in filteredApps" :key="app.id" class="app-card" shadow="hover">
+            <div class="app-card-body">
+              <div class="app-icon-wrapper">
+                <img :src="resolvePicUrl(app.logo || app.icon)" :alt="app.name" class="app-icon" @error="handleImageError">
               </div>
-              <p class="app-desc" :title="app.description">{{ app.description }}</p>
+              <div class="app-info">
+                <div class="app-header-row">
+                  <h3 class="app-name" :title="app.name">{{ app.name }}</h3>
+                  <el-tag size="small" effect="plain">{{ app.version }}</el-tag>
+                  <el-tag v-if="isInstalled(app)" type="success" size="small" effect="dark" style="margin-left: 5px">已安装</el-tag>
+                </div>
+                <p class="app-desc" :title="app.description">{{ app.description }}</p>
+              </div>
             </div>
-          </div>
-          <div class="app-actions">
-            <el-button :type="isInstalled(app) ? 'warning' : 'primary'" plain size="small" @click="handleDeploy(app)">
-              <el-icon class="el-icon--left"><Download /></el-icon>{{ isInstalled(app) ? '新安装' : '安装' }}
-            </el-button>
-            <el-button size="small" @click="showDetail(app)">
-              <el-icon class="el-icon--left"><InfoFilled /></el-icon>详情
-            </el-button>
-          </div>
-        </el-card>
+            <div class="app-actions">
+              <el-button :type="isInstalled(app) ? 'warning' : 'primary'" plain size="small" @click="handleDeploy(app)">
+                <el-icon class="el-icon--left"><Download /></el-icon>{{ isInstalled(app) ? '新安装' : '安装' }}
+              </el-button>
+              <el-button size="small" @click="showDetail(app)">
+                <el-icon class="el-icon--left"><InfoFilled /></el-icon>详情
+              </el-button>
+            </div>
+          </el-card>
+        </div>
+        <el-empty v-else description="未找到相关应用" />
       </div>
-      <el-empty v-else description="未找到相关应用" />
     </div>
 
     <!-- 应用详情对话框 -->
@@ -235,21 +247,54 @@ const resolvePicUrl = (u) => {
 
 <style scoped>
 .app-store-view {
-  padding: 0 16px 16px 16px;
   height: 100%;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   overflow: hidden;
+  padding: 12px 24px;
 }
 
-.operation-bar {
+/* Filter Bar - Same as Compose.vue */
+.filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  gap: 10px;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
 }
+
+.filter-left, .filter-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.search-input {
+  width: 300px;
+}
+
+/* Content Wrapper - Same as Compose.vue table-wrapper */
+.content-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* App Grid */
 .app-grid {
   display: grid;
   grid-template-columns: repeat(1, 1fr);
@@ -264,19 +309,30 @@ const resolvePicUrl = (u) => {
 
 @media (min-width: 1200px) {
   .app-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 1600px) {
+  .app-grid {
     grid-template-columns: repeat(4, 1fr);
   }
 }
 
+/* App Card */
 .app-card {
   transition: all 0.3s;
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--el-border-color-lighter); /* Lighter border */
+  border-radius: 8px;
+  background: var(--el-bg-color-overlay);
 }
 
 .app-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+  box-shadow: 0 10px 20px rgba(0,0,0,0.08);
+  border-color: var(--el-color-primary-light-5);
 }
 
 .app-card-body {
@@ -289,17 +345,18 @@ const resolvePicUrl = (u) => {
   width: 60px;
   height: 60px;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .app-icon {
-  width: 100%;
-  height: 100%;
+  width: 80%;
+  height: 80%;
   object-fit: contain;
 }
 
@@ -312,22 +369,25 @@ const resolvePicUrl = (u) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
 }
 
 .app-name {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  margin-right: 8px;
 }
 
 .app-desc {
   margin: 0;
-  font-size: 12px;
-  color: #666;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -340,22 +400,25 @@ const resolvePicUrl = (u) => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid var(--el-border-color-lighter);
   padding-top: 15px;
+  margin-top: auto;
 }
 
+/* Dialog Styles */
 .app-detail-header {
   display: flex;
   gap: 20px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .detail-icon {
   width: 80px;
   height: 80px;
-  border-radius: 12px;
-  background: #f5f7fa;
-  padding: 10px;
+  border-radius: 16px;
+  background: var(--el-fill-color-light);
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .detail-info {
@@ -364,9 +427,9 @@ const resolvePicUrl = (u) => {
 
 .detail-desc {
   font-size: 14px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   line-height: 1.6;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .detail-meta {
@@ -377,8 +440,35 @@ const resolvePicUrl = (u) => {
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 13px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-lighter);
+  padding: 4px 10px;
+  border-radius: 6px;
 }
+
+.app-readme h4 {
+  font-size: 16px;
+  color: var(--el-text-color-primary);
+  margin-bottom: 12px;
+}
+
+.app-readme p {
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
+}
+
+.more-btn {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+}
+
 </style>

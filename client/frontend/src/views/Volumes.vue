@@ -1,55 +1,84 @@
 <template>
-  <div class="volumes-view compact-table">
-    <!-- 修改顶部操作栏 -->
-    <div class="operation-bar">
-      <div class="left-ops">
-        <el-button-group>
-          <el-button @click="fetchVolumes">
-            <el-icon><Refresh /></el-icon>
+  <div class="volumes-view">
+    <div class="filter-bar">
+      <div class="filter-left">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索存储卷名称..."
+          clearable
+          class="search-input"
+          size="medium"
+          @keyup.enter="fetchVolumes"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
+
+      <div class="filter-right">
+        <el-button-group class="main-actions">
+          <el-button @click="fetchVolumes" :loading="loading" plain size="medium">
+            <template #icon><el-icon><Refresh /></el-icon></template>
+            刷新
           </el-button>
-          <el-button type="primary" @click="dialogVisible = true">
-            <el-icon class="el-icon--left"><Plus /></el-icon>
-             新建卷
+          <el-button type="primary" @click="dialogVisible = true" size="medium">
+            <template #icon><el-icon><Plus /></el-icon></template>
+            新建卷
           </el-button>
         </el-button-group>
-        <el-tooltip content="清除未使用的存储卷" placement="top">
-          <el-button type="danger" plain @click="pruneVolumes">
-            <el-icon class="el-icon--left"><Delete /></el-icon>
-            清除未使用的存储卷
+
+        <el-dropdown trigger="click" @command="handleGlobalAction">
+          <el-button plain class="more-btn" size="medium">
+            更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
-        </el-tooltip>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="prune" :icon="Delete">清除未使用的存储卷</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-    <!-- 存储卷列表 -->
-    <div class="volumes-table">
+    <div class="table-wrapper">
       <el-table 
-        :data="sortedVolumes" 
-        style="width: 100%" 
-        height="100%"
-        v-loading="loading">
+        :data="paginatedVolumes" 
+        style="width: 100%; height: 100%" 
+        v-loading="loading"
+        class="main-table"
+        @sort-change="handleSortChange"
+        :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
+        :row-style="{ height: '60px' }"
+      >
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="Name" label="名称" min-width="200" show-overflow-tooltip>
+        <el-table-column prop="Name" label="名称" sortable="custom" min-width="200" show-overflow-tooltip>
           <template #default="scope">
-            <span class="volume-name">{{ scope.row.Name }}</span>
+            <div class="volume-name-cell">
+              <div class="icon-wrapper volume">
+                <el-icon><Coin /></el-icon>
+              </div>
+              <span class="volume-name-text">{{ scope.row.Name }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="Mountpoint" label="挂载点" min-width="200" show-overflow-tooltip>
+        <el-table-column prop="Mountpoint" label="挂载点" sortable="custom" min-width="200" show-overflow-tooltip>
           <template #default="scope">
             <span class="text-gray font-mono">{{ scope.row.Mountpoint }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="Driver" label="驱动" width="100" />
-        <!-- 添加使用状态列 -->
-        <el-table-column label="状态" width="120" header-align="left">
+        <el-table-column prop="Driver" label="驱动" sortable="custom" width="100" />
+        
+        <el-table-column prop="Status" label="状态" sortable="custom" width="120">
           <template #default="scope">
-            <div class="status-dot" :class="scope.row.InUse ? 'status-used' : 'status-unused'">
-              {{ scope.row.InUse ? '使用中' : '未使用' }}
+            <div class="status-indicator">
+              <span class="status-point" :class="scope.row.InUse ? 'running' : 'stopped'"></span>
+              <span>{{ scope.row.InUse ? '使用中' : '未使用' }}</span>
             </div>
           </template>
         </el-table-column>
-        <!-- 添加使用容器列 -->
-        <el-table-column label="关联容器" min-width="100">
+
+        <el-table-column prop="Containers" label="关联容器" sortable="custom" min-width="150">
           <template #default="scope">
             <div class="container-list" v-if="scope.row.Containers && Object.keys(scope.row.Containers).length">
               <el-tooltip 
@@ -57,7 +86,7 @@
                 :key="id"
                 :content="container.Name.substring(1)"
                 placement="top">
-                <el-tag size="small" effect="plain" class="container-tag">
+                <el-tag size="small" effect="light" class="container-tag">
                   {{ container.Name.substring(1) }}
                 </el-tag>
               </el-tooltip>
@@ -65,41 +94,44 @@
             <span v-else class="text-gray">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="160" header-align="left">
+        
+        <el-table-column prop="Created" label="创建时间" sortable="custom" width="160">
           <template #default="scope">
-            <div class="text-gray font-mono text-center whitespace-pre-line">
+            <div class="text-gray font-mono">
               {{ formatTimeTwoLines(scope.row.CreatedAt) }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80" fixed="right" header-align="left">
+        
+        <el-table-column label="操作" width="120" fixed="right" align="center">
           <template #default="scope">
-            <el-tooltip content="删除存储卷" placement="top">
-              <el-button 
-                link 
-                type="danger" 
-                :disabled="scope.row.InUse"
-                @click="deleteVolume(scope.row)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </el-tooltip>
+            <div class="row-ops">
+              <el-tooltip content="删除存储卷" placement="top">
+                <el-button 
+                  circle 
+                  plain
+                  type="danger" 
+                  :disabled="scope.row.InUse"
+                  @click="deleteVolume(scope.row)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
-    </div>
 
-    <!-- 分页 -->
-    <div class="pagination">
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 30, 50]"
-        layout="total, sizes, prev, pager, next"
-        :total="total"
-        size="small"
-        @size-change="handleSizeChange"
-        @current-change="handleCurrentChange"
-      />
+      <div class="pagination-bar">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 30, 50]"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="total"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
 
     <!-- 创建存储卷对话框 -->
@@ -129,7 +161,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
-import { Refresh, Plus, Delete } from '@element-plus/icons-vue'
+import { Refresh, Plus, Delete, Search, ArrowDown, Coin } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const volumes = ref([])
@@ -137,6 +169,8 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const dialogVisible = ref(false)
+const searchQuery = ref('')
+const sortState = ref({ prop: '', order: '' })
 const volumeForm = ref({
   name: '',
   driver: 'local'
@@ -151,13 +185,78 @@ const fetchVolumes = async () => {
       ...volume,
       InUse: volume.Containers && Object.keys(volume.Containers).length > 0
     })) : []
-    total.value = volumes.value.length
   } catch (error) {
     ElMessage.error('获取存储卷列表失败')
     volumes.value = []
-    total.value = 0
   } finally {
     loading.value = false
+  }
+}
+
+const handleSortChange = ({ prop, order }) => {
+  sortState.value = { prop, order }
+}
+
+const filteredVolumes = computed(() => {
+  let list = [...volumes.value] // Create a copy
+  const q = (searchQuery.value || '').trim().toLowerCase()
+  if (q) {
+    list = list.filter(v => v.Name.toLowerCase().includes(q))
+  }
+  
+  if (sortState.value.prop && sortState.value.order) {
+    const { prop, order } = sortState.value
+    list.sort((a, b) => {
+      let valA, valB
+      switch (prop) {
+        case 'Name':
+          valA = a.Name || ''
+          valB = b.Name || ''
+          break
+        case 'Mountpoint':
+          valA = a.Mountpoint || ''
+          valB = b.Mountpoint || ''
+          break
+        case 'Driver':
+          valA = a.Driver || ''
+          valB = b.Driver || ''
+          break
+        case 'Status':
+          valA = a.InUse ? 1 : 0
+          valB = b.InUse ? 1 : 0
+          break
+        case 'Containers':
+          valA = Object.keys(a.Containers || {}).length
+          valB = Object.keys(b.Containers || {}).length
+          break
+        case 'Created':
+          valA = a.CreatedAt || ''
+          valB = b.CreatedAt || ''
+          break
+        default:
+          valA = a[prop]
+          valB = b[prop]
+      }
+      if (valA < valB) return order === 'ascending' ? -1 : 1
+      if (valA > valB) return order === 'ascending' ? 1 : -1
+      return 0
+    })
+  } else {
+    list.sort((a, b) => a.Name.localeCompare(b.Name))
+  }
+  return list
+})
+
+const paginatedVolumes = computed(() => {
+  total.value = filteredVolumes.value.length
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredVolumes.value.slice(start, end)
+})
+
+const handleGlobalAction = (command) => {
+  if (command === 'prune') {
+    pruneVolumes()
   }
 }
 
@@ -215,22 +314,12 @@ const pruneVolumes = async () => {
 // 分页处理
 const handleSizeChange = (val) => {
   pageSize.value = val
-  fetchVolumes()
+  currentPage.value = 1
 }
 
 const handleCurrentChange = (val) => {
   currentPage.value = val
-  fetchVolumes()
 }
-
-// 添加计算属性处理排序
-const sortedVolumes = computed(() => {
-  return [...volumes.value].sort((a, b) => {
-    return a.Name.localeCompare(b.Name)
-  })
-})
-
-// 删除 handleSortChange 函数，因为我们使用计算属性来处理排序
 
 onMounted(() => {
   fetchVolumes()
@@ -238,89 +327,107 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 继承 layout.css 的 compact-table 样式 */
-
 .volumes-view {
   height: 100%;
+  width: 100%;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   overflow: hidden;
-  padding-right: 4px;
+  padding: 12px 24px;
 }
 
-.operation-bar {
-  margin-bottom: 16px;
+.filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
 }
 
-.volumes-table {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* 状态圆点 - 统一使用 Images.vue 的样式 */
-.status-dot {
-  display: inline-flex;
-  align-items: center;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.status-dot::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-right: 8px;
-  flex-shrink: 0;
-}
-.status-used {
-  color: var(--el-color-success);
-}
-.status-used::before {
-  background-color: var(--el-color-success);
-  box-shadow: 0 0 0 2px var(--el-color-success-light-9);
-}
-.status-unused {
-  color: var(--el-text-color-secondary);
-}
-.status-unused::before {
-  background-color: var(--el-color-info-light-3);
-}
-
-.volume-name {
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-}
-
-.text-gray {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.status-cell {
+.filter-left, .filter-right {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 16px;
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.search-input {
+  width: 300px;
+}
+
+.table-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+}
+
+.main-table {
+  flex: 1;
+}
+
+/* Custom Table Styles */
+.volume-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
   flex-shrink: 0;
+  transition: transform 0.2s;
 }
 
-.status-used {
+.volume-name-cell:hover .icon-wrapper {
+  transform: scale(1.05);
+}
+
+.icon-wrapper.volume {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+
+.volume-name-text {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.status-point {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-point.running {
   background-color: var(--el-color-success);
-  box-shadow: 0 0 0 2px var(--el-color-success-light-9);
+  box-shadow: 0 0 0 3px var(--el-color-success-light-8);
 }
 
-.status-unused {
-  background-color: var(--el-color-info-light-3);
+.status-point.stopped {
+  background-color: var(--el-text-color-secondary);
 }
 
 .container-list {
@@ -334,25 +441,43 @@ onMounted(() => {
   cursor: default;
 }
 
-/* 覆盖 Element Plus 样式 */
-:deep(.el-table__row) {
-  height: 44px;
-}
-
-:deep(.el-button--link) {
-  padding: 4px;
-  height: auto;
-}
-
-.text-center {
-  text-align: left;
-}
-
-.whitespace-pre-line {
-  white-space: pre-line;
+.text-gray {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .font-mono {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.row-ops {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Pagination */
+.pagination-bar {
+  padding: 16px 24px;
+  border-top: 1px solid var(--el-border-color-light);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Override Element Styles */
+:deep(.el-table th.el-table__cell) {
+  background-color: var(--el-fill-color-light) !important;
+}
+
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
+}
+
+.more-btn {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
 }
 </style>

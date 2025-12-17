@@ -28,6 +28,7 @@ func RegisterImageRoutes(r *gin.RouterGroup) {
 		group.POST("/pull", pullImage)
 		group.GET("/pull/progress", pullImageProgress)
 		group.GET("/proxy", getDockerProxy)
+		group.GET("/proxy/history", getDockerProxyHistory)
 		group.POST("/proxy", updateDockerProxy)
 		group.POST("/tag", tagImage)
 		group.GET("/export/:id", exportImage)
@@ -241,30 +242,7 @@ func convertRegistryToDatabase(r docker.Registry) *database.Registry {
 
 // 获取 Docker 代理配置
 func getDockerProxy(c *gin.Context) {
-	// 读取宿主机 Docker 运行时信息（通过 /var/run/docker.sock）
-	runtimeHTTP := ""
-	runtimeHTTPS := ""
-	runtimeNoProxy := ""
-	runtimeMirrors := []string{}
-	func() {
-		cli, err := docker.NewDockerClient()
-		if err != nil {
-			log.Printf("连接 Docker 失败: %v", err)
-			return
-		}
-		defer cli.Close()
-		info, err := cli.Info(context.Background())
-		if err != nil {
-			log.Printf("读取 Docker Info 失败: %v", err)
-			return
-		}
-		runtimeHTTP = info.HTTPProxy
-		runtimeHTTPS = info.HTTPSProxy
-		runtimeNoProxy = info.NoProxy
-		if info.RegistryConfig != nil && len(info.RegistryConfig.Mirrors) > 0 {
-			runtimeMirrors = info.RegistryConfig.Mirrors
-		}
-	}()
+	// 不从运行时覆盖用户设置，避免删除后又被覆盖
 
 	// 读取 daemon.json（如果容器有挂载 /etc/docker/daemon.json 则优先）
 	daemonConfig, err := docker.GetDaemonConfig()
@@ -294,56 +272,38 @@ func getDockerProxy(c *gin.Context) {
 		registries[k] = convertRegistryToDocker(v)
 	}
 
-	// 合并来源：daemon.json > runtime info > database
-	finalHTTP := ""
-	finalHTTPS := ""
-	finalNoProxy := ""
+	// 优先返回数据库中的值，不在 GET 接口中写回数据库，避免覆盖用户禁用设置
 	finalMirrors := []string{}
-	if daemonConfig.Proxies != nil {
-		finalHTTP = daemonConfig.Proxies.HTTPProxy
-		finalHTTPS = daemonConfig.Proxies.HTTPSProxy
-		finalNoProxy = daemonConfig.Proxies.NoProxy
-	}
-	if finalHTTP == "" && runtimeHTTP != "" {
-		finalHTTP = runtimeHTTP
-	}
-	if finalHTTPS == "" && runtimeHTTPS != "" {
-		finalHTTPS = runtimeHTTPS
-	}
-	if finalNoProxy == "" && runtimeNoProxy != "" {
-		finalNoProxy = runtimeNoProxy
-	}
-	if len(daemonConfig.RegistryMirrors) > 0 {
-		finalMirrors = daemonConfig.RegistryMirrors
-	} else if len(runtimeMirrors) > 0 {
-		finalMirrors = runtimeMirrors
-	} else if proxy.RegistryMirrors != "" {
+	if proxy.RegistryMirrors != "" {
 		var mirrors []string
 		_ = json.Unmarshal([]byte(proxy.RegistryMirrors), &mirrors)
 		finalMirrors = mirrors
+	} else if len(daemonConfig.RegistryMirrors) > 0 {
+		finalMirrors = daemonConfig.RegistryMirrors
 	}
-
-	enabled := (daemonConfig.Proxies != nil) || (finalHTTP != "" || finalHTTPS != "")
 
 	config := DockerConfig{
-		Enabled:         enabled,
-		HTTPProxy:       finalHTTP,
-		HTTPSProxy:      finalHTTPS,
-		NoProxy:         finalNoProxy,
+		Enabled: proxy.Enabled,
+		HTTPProxy: func() string {
+			if proxy.Enabled {
+				return proxy.HTTPProxy
+			}
+			return ""
+		}(),
+		HTTPSProxy: func() string {
+			if proxy.Enabled {
+				return proxy.HTTPSProxy
+			}
+			return ""
+		}(),
+		NoProxy: func() string {
+			if proxy.Enabled {
+				return proxy.NoProxy
+			}
+			return ""
+		}(),
 		RegistryMirrors: finalMirrors,
 		Registries:      registries,
-	}
-
-	// 保存合并后的代理配置到数据库
-	dbProxy := &database.DockerProxy{
-		Enabled:         config.Enabled,
-		HTTPProxy:       config.HTTPProxy,
-		HTTPSProxy:      config.HTTPSProxy,
-		NoProxy:         config.NoProxy,
-		RegistryMirrors: database.MarshalRegistryMirrors(config.RegistryMirrors),
-	}
-	if err := database.SaveDockerProxy(dbProxy); err != nil {
-		log.Printf("保存代理配置到数据库失败: %v", err)
 	}
 
 	c.JSON(http.StatusOK, config)
@@ -407,21 +367,53 @@ func updateDockerProxy(c *gin.Context) {
 	}
 
 	// 保存到数据库作为备用配置
-	proxy := &database.DockerProxy{
-		Enabled:         config.Enabled,
-		HTTPProxy:       config.HTTPProxy,
-		HTTPSProxy:      config.HTTPSProxy,
-		NoProxy:         config.NoProxy,
-		RegistryMirrors: database.MarshalRegistryMirrors(config.RegistryMirrors),
-	}
-
-	if err := database.SaveDockerProxy(proxy); err != nil {
-		log.Printf("保存代理配置到数据库失败: %v", err)
+	if config.Enabled {
+		proxy := &database.DockerProxy{
+			Enabled:         true,
+			HTTPProxy:       config.HTTPProxy,
+			HTTPSProxy:      config.HTTPSProxy,
+			NoProxy:         config.NoProxy,
+			RegistryMirrors: database.MarshalRegistryMirrors(config.RegistryMirrors),
+		}
+		if err := database.SaveDockerProxy(proxy); err != nil {
+			log.Printf("保存代理配置到数据库失败: %v", err)
+		}
+		_ = database.SaveProxyHistory(&database.ProxyHistory{
+			Enabled:         true,
+			HTTPProxy:       config.HTTPProxy,
+			HTTPSProxy:      config.HTTPSProxy,
+			NoProxy:         config.NoProxy,
+			RegistryMirrors: database.MarshalRegistryMirrors(config.RegistryMirrors),
+			ChangeType:      "enabled",
+		})
+	} else {
+		// 禁用代理：清除数据库中的代理配置并记录历史
+		if err := database.DeleteDockerProxy(); err != nil {
+			log.Printf("删除数据库代理配置失败: %v", err)
+		}
+		_ = database.SaveProxyHistory(&database.ProxyHistory{
+			Enabled:         false,
+			HTTPProxy:       "",
+			HTTPSProxy:      "",
+			NoProxy:         "",
+			RegistryMirrors: database.MarshalRegistryMirrors(config.RegistryMirrors),
+			ChangeType:      "disabled",
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Docker配置已更新，请运行以下命令重启 Docker 服务：\nsudo systemctl restart docker",
 	})
+}
+
+// 获取代理历史记录
+func getDockerProxyHistory(c *gin.Context) {
+	list, err := database.GetProxyHistory(20)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取历史记录失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, list)
 }
 
 // 拉取进度监听

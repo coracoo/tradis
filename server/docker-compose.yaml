@@ -1,0 +1,27 @@
+services:
+  tradis-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: coracoo/tradis-backend:v0.1
+    container_name: tradis-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-3002}:3002"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3002
+      - GIN_MODE=release
+
+  tradis-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: coracoo/tradis-frontend:v0.1
+    container_name: tradis-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - tradis-backend

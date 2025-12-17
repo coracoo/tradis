@@ -3,18 +3,30 @@
     <el-card class="login-card">
       <template #header>
         <div class="card-header">
-          <h2>Docker Manager 登录</h2>
+          <h2>Docker Manager</h2>
         </div>
       </template>
       <el-form :model="loginForm" :rules="rules" ref="loginFormRef" label-width="0px" @keyup.enter="handleLogin">
         <el-form-item prop="username">
-          <el-input v-model="loginForm.username" placeholder="用户名" prefix-icon="User" />
+          <el-input 
+            v-model="loginForm.username" 
+            placeholder="用户名" 
+            :prefix-icon="User" 
+            size="large"
+          />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="loginForm.password" type="password" placeholder="密码" prefix-icon="Lock" show-password />
+          <el-input 
+            v-model="loginForm.password" 
+            type="password" 
+            placeholder="密码" 
+            :prefix-icon="Lock" 
+            show-password 
+            size="large"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" class="login-button" :loading="loading" @click="handleLogin">
+          <el-button type="primary" class="login-button" :loading="loading" @click="handleLogin" size="large">
             登录
           </el-button>
         </el-form-item>
@@ -27,6 +39,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { User, Lock } from '@element-plus/icons-vue'
 import request from '../utils/request' // 修改为导入 axios 实例或者直接使用 index.js 导出的 api 对象
 
 const router = useRouter()
@@ -93,18 +106,30 @@ const handleLogin = async () => {
 
 .login-card {
   width: 400px;
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
 }
 
 .card-header {
   text-align: center;
+  padding: 10px 0;
 }
 
 .card-header h2 {
   margin: 0;
   color: var(--el-text-color-primary);
+  font-weight: 600;
+  font-size: 24px;
 }
 
 .login-button {
   width: 100%;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+:deep(.el-input__wrapper) {
+  border-radius: 8px;
 }
 </style>

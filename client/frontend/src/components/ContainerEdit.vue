@@ -540,3 +540,48 @@ const handleConfirm = async () => {
   cursor: pointer;
 }
 </style>
+
+<style>
+.app-dialog {
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+}
+.app-dialog .el-dialog__header {
+  padding: 20px 24px;
+  margin-right: 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.app-dialog .el-dialog__title {
+  font-weight: 600;
+  color: #1e293b;
+}
+.app-dialog .el-dialog__body {
+  padding: 24px;
+}
+.app-dialog .el-dialog__footer {
+  padding: 20px 24px;
+  border-top: 1px solid #f1f5f9;
+  background-color: #f8fafc;
+}
+.app-dialog .el-dialog__headerbtn {
+  top: 24px;
+}
+.custom-tabs.el-tabs--border-card {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  box-shadow: none;
+}
+.custom-tabs.el-tabs--border-card > .el-tabs__header {
+  background-color: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.custom-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
+  background-color: #fff;
+  border-right-color: #e2e8f0;
+  border-left-color: #e2e8f0;
+  color: #4f46e5;
+  font-weight: 600;
+}
+</style>

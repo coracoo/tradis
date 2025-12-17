@@ -23,6 +23,7 @@ const api = {
     unpause: (id) => request.post(`/containers/${id}/unpause`),
     remove: (id) => request.delete(`/containers/${id}`),
     removeContainer: (id) => request.delete(`/containers/${id}`), // 保留别名
+    stats: (id) => request.get(`/containers/${id}/stats`),
     logs: (id) => request.get(`/containers/${id}/logs`, {
       responseType: 'text',
       timeout: 0
@@ -51,7 +52,9 @@ const api = {
   networks: {
     list: () => request.get('/networks'),
     create: (data) => request.post('/networks', data),
-    remove: (id) => request.delete(`/networks/${id}`)
+    update: (id, data) => request.put(`/networks/${id}`, data),
+    remove: (id) => request.delete(`/networks/${id}`),
+    prune: () => request.post('/networks/prune')
   },
   
   system: {
@@ -65,7 +68,12 @@ const api = {
     add: (data) => request.post('/navigation', data),
     update: (id, data) => request.put(`/navigation/${id}`, data),
     delete: (id) => request.delete(`/navigation/${id}`),
-    restore: (id) => request.post(`/navigation/${id}/restore`)
+    restore: (id) => request.post(`/navigation/${id}/restore`),
+    uploadIcon: (id, file) => {
+      const form = new FormData()
+      form.append('file', file)
+      return request.post(`/navigation/${id}/icon`, form)
+    }
   }
 }
 

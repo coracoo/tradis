@@ -3,8 +3,9 @@
     v-model="dialogVisible"
     title="Docker 设置"
     width="800px"
+    class="app-dialog"
   >
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" class="settings-tabs">
       <el-tab-pane label="注册表" name="registry">
         <el-form :model="registryForm">
           <div class="registry-header">
@@ -76,6 +77,16 @@
             <el-form-item label="无需代理">
               <el-input v-model="proxyForm.no" placeholder="例如: localhost,127.0.0.1"></el-input>
             </el-form-item>
+            <el-form-item label="历史配置" v-if="proxyHistory.length">
+              <el-select v-model="selectedHistory" placeholder="选择历史代理配置填充" style="width: 100%">
+                <el-option
+                  v-for="item in proxyHistory"
+                  :key="item.id"
+                  :label="formatHistoryLabel(item)"
+                  :value="item"
+                />
+              </el-select>
+            </el-form-item>
           </template>
         </el-form>
       </el-tab-pane>
@@ -116,7 +127,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getProxy, updateProxy } from '../api/images'
+import { getProxy, getProxyHistory, updateProxy } from '../api/images'
 import { getRegistries, updateRegistries } from '../api/image_registry'  // 更新导入路径  // 添加新的导入
 
 // 删除 defineEmits 和 defineProps 的导入，因为它们是编译器宏
@@ -141,15 +152,23 @@ const proxyForm = ref({
   no: ''
 })
 
+// 历史记录
+const proxyHistory = ref([])
+const selectedHistory = ref(null)
+
 const mirrorForm = ref({
   mirrors: []
 })
 
 const defaultMirrors = [
-  { label: '阿里云', value: 'https://mirror.aliyuncs.com' },
-  { label: '腾讯云', value: 'https://mirror.ccs.tencentyun.com' },
-  { label: '网易', value: 'https://hub-mirror.c.163.com' },
-  { label: '中科大', value: 'https://docker.mirrors.ustc.edu.cn' }
+  { label: '1ms', value: 'https://docker.1ms.run' },
+  { label: '1panel', value: 'https://docker.1panel.live' },
+  { label: 'agsv', value: 'https://docker.agsv.top' },
+  { label: 'CNIX Internal', value: 'https://docker.m.ixdev.cn' },
+  { label: '耗子面板', value: 'https://hub.rat.dev' },
+  { label: '轩辕镜像', value: 'https://docker.xuanyuan.me' },
+  { label: 'DockerProxy', value: 'https://dockerproxy.net' },
+  { label: 'DaoCloud', value: 'https://docker.m.daocloud.io' }
 ]
 
 const registryForm = ref({
@@ -274,6 +293,14 @@ const loadSettings = async () => {
     
     mirrorForm.value.mirrors = proxyConfig['registry-mirrors'] || []
     
+    // 加载历史记录
+    try {
+      const history = await getProxyHistory()
+      proxyHistory.value = Array.isArray(history) ? history : []
+    } catch (e) {
+      proxyHistory.value = []
+    }
+    
     // 加载注册表配置
     const registriesData = await getRegistries()
     const registries = registriesData || {}
@@ -295,6 +322,24 @@ const loadSettings = async () => {
 }
 const editRegistry = (registry) => {
   // 实现编辑逻辑
+}
+
+// 历史选择应用
+watch(selectedHistory, (val) => {
+  if (val) {
+    proxyForm.value.enabled = true
+    proxyForm.value.http = val.http_proxy || ''
+    proxyForm.value.https = val.https_proxy || ''
+    proxyForm.value.no = val.no_proxy || ''
+  }
+})
+
+const formatHistoryLabel = (item) => {
+  const hp = item.http_proxy || ''
+  const sp = item.https_proxy || ''
+  const np = item.no_proxy || ''
+  const ct = item.change_type || ''
+  return `${ct} | HTTP: ${hp} | HTTPS: ${sp} | NO_PROXY: ${np}`
 }
 
 // 监听对话框打开

@@ -10,6 +10,7 @@ import AppStore from '../views/AppStore.vue'
 import AppDeploy from '../views/AppDeploy.vue'
 import Navigation from '../views/Navigation.vue'
 import Projects from '../views/Projects.vue'
+import Compose from '../views/Compose.vue'
 import ProjectDetail from '../views/ProjectDetail.vue'
 import DockerDetail from '../views/DockerDetail.vue'
 import Settings from '../views/Settings.vue'
@@ -75,6 +76,10 @@ const router = createRouter({
         {
           path: 'projects',
           component: Projects
+        },
+        {
+          path: 'compose',
+          component: Compose
         },
         {
           path: 'projects/:name',

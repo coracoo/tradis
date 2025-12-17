@@ -40,6 +40,10 @@
       </el-col>
     </el-row>
 
+    <el-form-item label="启用状态">
+       <el-switch v-model="form.enabled" active-text="启用" inactive-text="关闭" />
+    </el-form-item>
+
     <el-form-item label="项目描述">
       <el-input v-model="form.description" type="textarea" :rows="3" placeholder="简要描述该项目的功能" />
     </el-form-item>
@@ -357,7 +361,8 @@ const form = ref({
   screenshots: [],
   compose: '',
   tutorial: '',
-  schema: []
+  schema: [],
+  enabled: true
 })
 const newScreenshotUrl = ref('')
 
@@ -375,7 +380,8 @@ function handleReset() {
     screenshots: [],
     compose: '',
     tutorial: '',
-    schema: []
+    schema: [],
+    enabled: true
   }
   activeServices.value = []
 }

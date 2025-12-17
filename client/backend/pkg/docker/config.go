@@ -14,6 +14,8 @@ type DaemonConfig struct {
     RegistryMirrors []string     `json:"registry-mirrors,omitempty"`
     Proxies        *ProxyConfig  `json:"proxies,omitempty"`
     Registries     map[string]Registry  `json:"registries,omitempty"`
+    IPv6           bool          `json:"ipv6,omitempty"`
+    FixedCIDRv6    string        `json:"fixed-cidr-v6,omitempty"`
 }
 
 // ProxyConfig 定义代理配置结构
@@ -41,6 +43,14 @@ func UpdateDaemonConfig(config *DaemonConfig) error {
         existingConfig.RegistryMirrors = config.RegistryMirrors
     }
 
+    // 处理 IPv6 设置
+    if config.IPv6 {
+        existingConfig.IPv6 = true
+    }
+    if config.FixedCIDRv6 != "" {
+        existingConfig.FixedCIDRv6 = config.FixedCIDRv6
+    }
+
     // 处理代理配置
     if config.Proxies != nil {
         if existingConfig.Proxies == nil {
@@ -55,6 +65,9 @@ func UpdateDaemonConfig(config *DaemonConfig) error {
         if config.Proxies.NoProxy != "" {
             existingConfig.Proxies.NoProxy = config.Proxies.NoProxy
         }
+    } else {
+        // 如果传入的代理配置为 nil，表示清除代理设置
+        existingConfig.Proxies = nil
     }
 
     // 格式化 JSON 数据

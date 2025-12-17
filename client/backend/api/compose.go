@@ -510,8 +510,8 @@ func deployEvents(c *gin.Context) {
 			}
 			c.SSEvent("message", msg)
 			return true
-		case <-time.After(30 * time.Second): // 添加超时处理
-			close(doneChan) // 标记为已完成
+		case <-c.Request.Context().Done():
+			close(doneChan)
 			return false
 		}
 	})

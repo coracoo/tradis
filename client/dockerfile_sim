@@ -1,10 +1,4 @@
 FROM golang:1.22-alpine AS backend-builder
-ARG http_proxy
-ARG https_proxy
-ENV HTTP_PROXY=$http_proxy
-ENV http_proxy=$http_proxy
-ENV HTTPS_PROXY=$https_proxy
-ENV https_proxy=$https_proxy
 RUN apk add --no-cache build-base sqlite-dev
 ENV CGO_ENABLED=1
 WORKDIR /app/backend
@@ -14,25 +8,15 @@ COPY backend ./
 RUN go build -ldflags="-s -w" -o /app/bin/backend ./cmd/main.go
 
 FROM node:20-alpine AS frontend-builder
-ARG http_proxy
-ARG https_proxy
-ENV HTTP_PROXY=$http_proxy
-ENV http_proxy=$http_proxy
-ENV HTTPS_PROXY=$https_proxy
-ENV https_proxy=$https_proxy
 WORKDIR /app/client/frontend
+ARG VITE_MANAGEMENT_MODE=CS
+ENV VITE_MANAGEMENT_MODE=$VITE_MANAGEMENT_MODE
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend ./
 RUN npm run build
 
 FROM alpine:3.19
-ARG http_proxy
-ARG https_proxy
-ENV HTTP_PROXY=$http_proxy
-ENV http_proxy=$http_proxy
-ENV HTTPS_PROXY=$https_proxy
-ENV https_proxy=$https_proxy
 ENV BACKEND_PORT=8080 FRONTEND_PORT=3000
 RUN apk add --no-cache tini sqlite-libs docker-cli docker-cli-compose nginx netcat-openbsd
 WORKDIR /app
@@ -44,7 +28,8 @@ COPY start_sim.sh /app/start.sh
 RUN chmod +x /app/start.sh
 VOLUME ["/app/client/backend/data"]
 VOLUME ["/var/run/docker.sock"]
-EXPOSE 3000 8080
+VOLUME ["/etc/docker/daemon.json"]
+# EXPOSE 3000 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD sh -c 'nc -z 127.0.0.1 ${BACKEND_PORT:-8080} && nc -z 127.0.0.1 ${FRONTEND_PORT:-3000}'
 ENTRYPOINT ["/sbin/tini","-g","--"]
 CMD ["/bin/sh","/app/start.sh"]

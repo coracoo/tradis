@@ -6,9 +6,25 @@ trap 'kill $(jobs -p) 2>/dev/null || true; exit 0' TERM INT
 mkdir -p /app/client/backend/data
 BACKEND_PORT="${BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+export BACKEND_PORT
+export FRONTEND_PORT
+MODE="${VITE_MANAGEMENT_MODE:-CS}"
+# 生成运行时环境配置文件（Nginx与Vite Preview均可读取）
+mkdir -p /usr/share/nginx/html || true
+mkdir -p /app/client/frontend/dist || true
+cat > /usr/share/nginx/html/env.js <<EOF
+window.__ENV__ = { MANAGEMENT_MODE: "${MODE}" };
+EOF
+cat > /app/client/frontend/dist/env.js <<EOF
+window.__ENV__ = { MANAGEMENT_MODE: "${MODE}" };
+EOF
+echo "Runtime MANAGEMENT_MODE=${MODE}"
+
+echo "Starting with BACKEND_PORT=$BACKEND_PORT, FRONTEND_PORT=$FRONTEND_PORT"
 
 (
   while true; do
+    echo "Starting backend..."
     (cd /app/client/backend && /app/backend/backend) || true
     sleep 2
   done

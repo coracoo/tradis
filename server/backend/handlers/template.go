@@ -93,6 +93,7 @@ type Template struct {
 	Compose     string         `json:"compose"`
 	Screenshots StringArray    `json:"screenshots" gorm:"type:text"`
 	Schema      Variables      `json:"schema" gorm:"type:text"`
+	Enabled     bool           `json:"enabled" gorm:"default:true"`
 }
 
 func ListTemplates(db *gorm.DB) gin.HandlerFunc {
@@ -177,6 +178,7 @@ func UpdateTemplate(db *gorm.DB) gin.HandlerFunc {
 		existingTemplate.Compose = input.Compose
 		existingTemplate.Screenshots = input.Screenshots
 		existingTemplate.Schema = input.Schema
+		existingTemplate.Enabled = input.Enabled
 
 		if err := db.Save(&existingTemplate).Error; err != nil {
 			c.JSON(500, gin.H{"error": "更新模板失败"})

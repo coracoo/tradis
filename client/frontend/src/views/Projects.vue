@@ -1,42 +1,70 @@
 <template>
-  <div class="projects-view compact-table">
-    <div class="operation-bar">
-      <div class="left-ops">
+  <div class="projects-view">
+    <div class="filter-bar">
+      <div class="filter-left">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索项目名称..."
+          clearable
+          class="search-input"
+          size="medium"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
+      <div class="filter-right">
         <el-button-group>
-          <el-button @click="handleRefresh">
-            <el-icon><Refresh /></el-icon>
+          <el-button @click="handleRefresh" plain size="medium">
+            <template #icon><el-icon><Refresh /></el-icon></template>
+            刷新
           </el-button>
-          <el-button type="primary" @click="handleCreate">
-            <el-icon class="el-icon--left"><Plus /></el-icon>
+          <el-button type="primary" @click="handleCreate" size="medium">
+            <template #icon><el-icon><Plus /></el-icon></template>
             新建项目
           </el-button>
         </el-button-group>
       </div>
     </div>
 
-    <div class="projects-table">
+    <div class="table-wrapper">
       <el-table 
         :data="paginatedProjects" 
         style="width: 100%" 
-        height="100%"
-        v-loading="loading">
+        class="main-table"
+        v-loading="loading"
+        :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
+        :row-style="{ height: '60px' }"
+      >
         <el-table-column type="selection" width="40" align="center" header-align="left" />
-        <el-table-column prop="name" label="名称" min-width="100" show-overflow-tooltip header-align="left">
+        <el-table-column label="名称" min-width="240" show-overflow-tooltip header-align="left">
           <template #default="scope">
-            <span 
-              :class="['clickable-name', { 'is-disabled': !scope.row.path.startsWith('data/project/') }]"
-              @click="scope.row.path.startsWith('data/project/') && handleRowClick(scope.row)"
-            >
-              {{ scope.row.name }}
-            </span>
+            <div class="project-name-cell" 
+                 :class="{ 'clickable': scope.row.path.startsWith('data/project/') }"
+                 @click="scope.row.path.startsWith('data/project/') && handleRowClick(scope.row)">
+              <div class="icon-wrapper">
+                <el-icon><Folder /></el-icon>
+              </div>
+              <div class="name-info">
+                <span class="name-text">{{ scope.row.name }}</span>
+                <span class="path-text text-gray">{{ scope.row.path }}</span>
+              </div>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="containers" label="容器数量" width="100" align="center" header-align="left" />
-        <el-table-column prop="status" label="运行状态" width="100" header-align="left">
+        <el-table-column label="容器数量" width="120" align="center">
           <template #default="scope">
-            <div class="status-cell">
-              <span :class="['status-dot', scope.row.status === '运行中' ? 'status-running' : 'status-stopped']"></span>
-              {{ scope.row.status }}
+            <div class="count-badge">
+              {{ scope.row.containers || 0 }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="运行状态" width="140" header-align="left">
+          <template #default="scope">
+            <div class="status-indicator">
+              <span class="status-point" :class="scope.row.status === '运行中' ? 'running' : 'stopped'"></span>
+              <span>{{ scope.row.status }}</span>
             </div>
           </template>
         </el-table-column>
@@ -47,18 +75,12 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="path" label="项目路径" min-width="130" show-overflow-tooltip header-align="left">
+        <el-table-column label="操作" width="240" fixed="right" align="center">
           <template #default="scope">
-            <span v-if="isManagedProject(scope.row.path)" class="text-gray">{{ scope.row.path }}</span>
-            <span v-else class="text-gray">非本项目创建，请在容器管理中操作</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right" header-align="left">
-          <template #default="scope">
-            <el-button-group>
+            <div class="row-ops">
               <el-tooltip content="启动" placement="top">
                 <el-button 
-                  link
+                  circle plain size="default"
                   type="primary" 
                   @click="handleStart(scope.row)" 
                   :disabled="scope.row.status === '运行中' || !isManagedProject(scope.row.path)">
@@ -67,7 +89,7 @@
               </el-tooltip>
               <el-tooltip content="停止" placement="top">
                 <el-button 
-                  link
+                  circle plain size="default"
                   type="warning" 
                   @click="handleStop(scope.row)" 
                   :disabled="scope.row.status !== '运行中' || !isManagedProject(scope.row.path)">
@@ -75,28 +97,30 @@
                 </el-button>
               </el-tooltip>
               <el-tooltip content="编辑" placement="top">
-                <el-button link type="primary" @click="handleEdit(scope.row)" :disabled="!isManagedProject(scope.row.path)">
+                <el-button circle plain size="default" type="primary" @click="handleEdit(scope.row)" :disabled="!isManagedProject(scope.row.path)">
                   <el-icon><Edit /></el-icon>
                 </el-button>
               </el-tooltip>
-              <el-tooltip content="清除(保留文件)" placement="top">
-                <el-button link type="warning" @click="handleDown(scope.row)" :disabled="!isManagedProject(scope.row.path)">
-                  <el-icon><CircleClose /></el-icon>
+              
+              <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)">
+                <el-button circle size="default" plain class="ml-2">
+                  <el-icon><MoreFilled /></el-icon>
                 </el-button>
-              </el-tooltip>
-              <el-tooltip content="删除" placement="top">
-                <el-button link type="danger" @click="handleDelete(scope.row)" :disabled="!isManagedProject(scope.row.path)">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
-              </el-tooltip>
-            </el-button-group>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="down" :icon="CircleClose" :disabled="!isManagedProject(scope.row.path)">清除(保留文件)</el-dropdown-item>
+                    <el-dropdown-item command="delete" :icon="Delete" divided class="text-danger" :disabled="!isManagedProject(scope.row.path)">删除项目</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
     </div>
 
     <!-- 分页 -->
-    <div class="pagination">
+    <div class="pagination-bar">
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
@@ -185,7 +209,7 @@ import { ref, onMounted, shallowRef, nextTick, onBeforeUnmount, computed, watch 
 import { formatTimeTwoLines } from '../utils/format'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, InfoFilled, ArrowDown, VideoPlay, VideoPause, Edit, Delete, CircleClose } from '@element-plus/icons-vue'
+import { Plus, Refresh, InfoFilled, ArrowDown, VideoPlay, VideoPause, Edit, Delete, CircleClose, Search, Folder, MoreFilled } from '@element-plus/icons-vue'
 import * as monaco from 'monaco-editor'
 import api from '../api'
 
@@ -355,6 +379,17 @@ watch(() => projectForm.value.name, (newName) => {
 
 const projectList = ref([])
 
+const searchQuery = ref('')
+
+const filteredProjects = computed(() => {
+  if (!searchQuery.value) return projectList.value
+  const query = searchQuery.value.toLowerCase()
+  return projectList.value.filter(p => 
+    p.name.toLowerCase().includes(query) || 
+    (p.path && p.path.toLowerCase().includes(query))
+  )
+})
+
 // 分页相关变量
 const currentPage = ref(1)
 const pageSize = ref(10)
@@ -363,7 +398,7 @@ const pageSize = ref(10)
 const paginatedProjects = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
-  return projectList.value.slice(start, end)
+  return filteredProjects.value.slice(start, end)
 })
 
 // 分页处理函数
@@ -446,61 +481,66 @@ const handleSave = async () => {
   
   try {
     const encodedCompose = encodeURIComponent(projectForm.value.compose)
-    // 获取 Token
-    const token = localStorage.getItem('token')
-    // 将 Token 作为 Query 参数传递
+    const token = localStorage.getItem('token') || ''
     const eventSource = new EventSource(
       `/api/compose/deploy/events?name=${projectForm.value.name}&compose=${encodedCompose}&token=${token}`
     )
-    
-    // 添加超时处理
+
+    const logSet = new Set()
     const timeout = setTimeout(() => {
       deployLogs.value.push({
         type: 'warning',
-        message: '部署超时，请检查服务器状态'
+        message: '日志连接超时，请稍后在项目列表查看状态'
       })
       eventSource.close()
-    }, 60000) // 60秒超时
-	
+    }, 600000) // 10分钟超时
+
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        // 添加日志
-        deployLogs.value.push(data)
-      
-      // 自动滚动到底部
-      nextTick(() => {
-        if (logsContent.value) {
-          logsContent.value.scrollTop = logsContent.value.scrollHeight
+        const key = `${data.type}:${data.message}`
+        if (!logSet.has(key)) {
+          logSet.add(key)
+          deployLogs.value.push({
+            type: data.type,
+            message: data.message
+          })
         }
-      })
-      
-      if (data.type === 'success' && data.message.includes('所有服务已成功启动')) {
-        clearTimeout(timeout)
-        ElMessage.success(data.message)
-        setTimeout(() => {
-          eventSource.close()
-          dialogVisible.value = false
-          handleRefresh()
-        }, 1000)
-      } else if (data.type === 'error') {
+        nextTick(() => {
+          if (logsContent.value) {
+            logsContent.value.scrollTop = logsContent.value.scrollHeight
+          }
+        })
+        if (data.type === 'success' && data.message.includes('所有服务已成功启动')) {
           clearTimeout(timeout)
+          ElMessage.success(data.message)
+          setTimeout(() => {
+            eventSource.close()
+            dialogVisible.value = false
+            handleRefresh()
+          }, 500)
+        } else if (data.type === 'error') {
+          // 错误行直接提示，但保持连接，便于继续接收日志
           ElMessage.error(data.message)
         }
-    }catch (error) {
+      } catch (e) {
         deployLogs.value.push({
           type: 'error',
-          message: `解析服务器消息失败: ${error.message}`
+          message: `解析服务器消息失败: ${e.message}`
         })
       }
     }
-	
-	eventSource.onerror = (event) => {
+
+    eventSource.onerror = () => {
       clearTimeout(timeout)
-      deployLogs.value.push({
-        type: 'error',
-        message: '与服务器连接中断，部署可能已失败'
-      })
+      // 若已收到成功提示，则忽略断连提示
+      const hasSuccess = deployLogs.value.some(l => l.type === 'success')
+      if (!hasSuccess) {
+        deployLogs.value.push({
+          type: 'error',
+          message: '与服务器连接中断，部署可能已失败'
+        })
+      }
       eventSource.close()
     }
   } catch (error) {
@@ -584,6 +624,14 @@ const handleDelete = (row) => {
       ElMessage.error(`删除失败: ${error.message || '未知错误'}`)
     }
   }).catch(() => {})
+}
+
+const handleProjectCommand = (command, row) => {
+  if (command === 'down') {
+    handleDown(row)
+  } else if (command === 'delete') {
+    handleDelete(row)
+  }
 }
 
 // 模板选择处理函数
@@ -672,88 +720,182 @@ services:
 </script>
 
 <style scoped>
-/* 继承 layout.css 的 compact-table 样式 */
-
 .projects-view {
   height: 100%;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px 24px;
+  background-color: var(--el-bg-color-page);
 }
 
-.operation-bar {
-  margin-bottom: 16px;
+/* 顶部操作栏 */
+.filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--el-border-color-light);
 }
 
-.projects-table {
+.filter-left, .filter-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.search-input {
+  width: 300px;
+}
+
+/* 表格容器 */
+.table-wrapper {
   flex: 1;
-  min-height: 0;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color-light);
 }
 
-.clickable-name {
-  font-weight: 500;
-  color: var(--el-color-primary);
+.main-table {
+  flex: 1;
+}
+
+/* Custom Table Styles */
+.project-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  cursor: default;
+  padding: 8px 0;
+}
+
+.project-name-cell.clickable {
   cursor: pointer;
 }
 
-.clickable-name:hover {
-  text-decoration: underline;
+.project-name-cell.clickable:hover .icon-wrapper {
+  transform: scale(1.05);
 }
 
-.clickable-name.is-disabled {
-  color: var(--el-text-color-secondary);
-  cursor: not-allowed;
-}
-
-.clickable-name.is-disabled:hover {
-  text-decoration: none;
-}
-
-.text-gray {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.status-cell {
+.icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+  transition: transform 0.2s;
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
+.name-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.name-text {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+.path-text {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* Count Badge */
+.count-badge {
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+/* Status Indicator */
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.status-point {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
 }
 
-.status-running {
-  background-color: var(--el-color-success);
+.status-point.running {
+  background-color: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.2);
 }
 
-.status-stopped {
-  background-color: var(--el-color-info);
+.status-point.stopped {
+  background-color: #94a3b8;
 }
 
-/* 覆盖 Element Plus 样式 */
-:deep(.el-table__row) {
-  height: 44px;
+/* Action Buttons */
+.row-ops {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
 }
 
-:deep(.el-button--link) {
-  padding: 4px;
-  height: auto;
+.text-danger {
+  color: var(--el-color-danger);
+}
+
+.ml-2 {
+  margin-left: 8px;
+}
+
+/* Pagination */
+.pagination-bar {
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Utils */
+.text-gray {
+  color: var(--el-text-color-secondary);
+}
+
+.font-mono {
+  font-family: monospace;
+}
+
+.whitespace-pre-line {
+  white-space: pre-line;
 }
 
 /* 编辑器相关样式 */
 .compose-editor-container {
-  width: 100%; /* 确保容器占满父元素宽度 */
+  width: 100%;
   border: 1px solid var(--el-border-color);
   border-radius: 4px;
   overflow: hidden;
-  box-sizing: border-box; /* 包含边框和内边距 */
+  box-sizing: border-box;
 }
 
 .editor-toolbar {
@@ -793,15 +935,16 @@ services:
 }
 
 .logs-content {
-  height: 200px;
+  background-color: var(--el-fill-color-darker);
+  color: var(--el-text-color-primary);
+  padding: 16px;
+  border-radius: 8px;
+  font-family: monospace;
+  height: 300px;
   overflow-y: auto;
-  padding: 12px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 12px;
-  line-height: 1.5;
   white-space: pre-wrap;
+  margin-top: 16px;
+  border: 1px solid var(--el-border-color-darker);
 }
 
 .log-line {
@@ -816,9 +959,13 @@ services:
   color: #4ade80;
 }
 
-.pagination {
-  margin-top: 16px;
-  display: flex;
-  justify-content: flex-start;
+/* Override Element Styles */
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
+}
+
+:deep(.el-table th.el-table__cell) {
+  background-color: var(--el-fill-color-light) !important;
 }
 </style>

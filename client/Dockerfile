@@ -1,10 +1,10 @@
 FROM golang:1.22-alpine AS backend-builder
-ARG http_proxy
-ARG https_proxy
-ENV HTTP_PROXY=$http_proxy
-ENV http_proxy=$http_proxy
-ENV HTTPS_PROXY=$https_proxy
-ENV https_proxy=$https_proxy
+#ARG http_proxy
+#ARG https_proxy
+#ENV HTTP_PROXY=$http_proxy
+#ENV http_proxy=$http_proxy
+#ENV HTTPS_PROXY=$https_proxy
+#ENV https_proxy=$https_proxy
 RUN apk add --no-cache build-base sqlite-dev
 ENV CGO_ENABLED=1
 WORKDIR /app/backend
@@ -14,12 +14,14 @@ COPY backend ./
 RUN go build -o /app/bin/backend ./cmd/main.go
 
 FROM node:20-alpine
-ARG http_proxy
-ARG https_proxy
-ENV HTTP_PROXY=$http_proxy
-ENV http_proxy=$http_proxy
-ENV HTTPS_PROXY=$https_proxy
-ENV https_proxy=$https_proxy
+#ARG http_proxy
+#ARG https_proxy
+#ENV HTTP_PROXY=$http_proxy
+#ENV http_proxy=$http_proxy
+#ENV HTTPS_PROXY=$https_proxy
+#ENV https_proxy=$https_proxy
+ARG VITE_MANAGEMENT_MODE=CS
+ENV VITE_MANAGEMENT_MODE=$VITE_MANAGEMENT_MODE
 ENV BACKEND_PORT=8080 FRONTEND_PORT=3000
 RUN apk add --no-cache tini netcat-openbsd sqlite-libs docker-cli docker-cli-compose
 WORKDIR /app

@@ -92,6 +92,22 @@ func createTables() error {
 		return err
 	}
 
+	// 创建代理历史记录表
+	_, err = db.Exec(`
+    CREATE TABLE IF NOT EXISTS proxy_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        enabled INTEGER DEFAULT 0,
+        http_proxy TEXT,
+        https_proxy TEXT,
+        no_proxy TEXT,
+        registry_mirrors TEXT,
+        change_type TEXT,
+        changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`)
+	if err != nil {
+		return err
+	}
+
 	// 创建应用商店表
 	_, err = db.Exec(`
     CREATE TABLE IF NOT EXISTS applications (
@@ -135,6 +151,8 @@ func createTables() error {
 
 	// 尝试添加 is_deleted 列（为了兼容旧数据库）
 	_, _ = db.Exec(`ALTER TABLE navigation_items ADD COLUMN is_deleted INTEGER DEFAULT 0`)
+	// 尝试添加 icon_path 列（保存本地图标的绝对路径，便于维护）
+	_, _ = db.Exec(`ALTER TABLE navigation_items ADD COLUMN icon_path TEXT`)
 
 	// 创建全局设置表
 	_, err = db.Exec(`

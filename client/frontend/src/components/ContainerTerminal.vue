@@ -5,7 +5,7 @@
     width="80%"
     :close-on-click-modal="false"
     :before-close="handleClose"
-    class="terminal-dialog"	
+    class="terminal-dialog app-dialog"	
   >
     <div class="terminal-container">
       <!-- 左侧会话列表 + 复制/粘贴工具栏（移至列表上方） -->
@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
   min-height: 500px;
   background-color: #1e1e1e;
   padding: 5px;
-  border-radius: 4px;
+  border-radius: 8px;
   gap: 10px;
 }
 
@@ -505,7 +505,7 @@ onBeforeUnmount(() => {
   width: 250px;
   background-color: #f5f7fa;
   padding: 10px;
-  border-radius: 4px;
+  border-radius: 8px;
 }
 
 .session-list {
@@ -619,5 +619,38 @@ onBeforeUnmount(() => {
 }
 .terminal-panel .terminal-host .xterm-rows {
   padding: 0 !important;
+}
+</style>
+
+<style>
+.app-dialog {
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+}
+.app-dialog .el-dialog__header {
+  padding: 20px 24px;
+  margin-right: 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.app-dialog .el-dialog__title {
+  font-weight: 600;
+  color: #1e293b;
+}
+.app-dialog .el-dialog__body {
+  padding: 24px;
+}
+.app-dialog .el-dialog__footer {
+  padding: 20px 24px;
+  border-top: 1px solid #f1f5f9;
+  background-color: #f8fafc;
+}
+.app-dialog .el-dialog__headerbtn {
+  top: 24px;
+}
+
+/* Terminal specific overrides */
+.terminal-dialog.app-dialog .el-dialog__body {
+  padding: 10px !important;
 }
 </style>

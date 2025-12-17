@@ -3,6 +3,7 @@ package main
 import (
 	"dockerpanel/server/backend/handlers"
 	"log"
+	"os"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -11,7 +12,9 @@ import (
 )
 
 func main() {
-	db, err := gorm.Open(sqlite.Open("templates.db"), &gorm.Config{})
+	_ = os.MkdirAll("data/uploads", 0755)
+
+	db, err := gorm.Open(sqlite.Open("data/templates.db"), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect database")
 	}
@@ -23,10 +26,10 @@ func main() {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders: []string{"Origin", "Content-Type"},
+		AllowHeaders: []string{"Origin", "Content-Type", "Authorization"},
 	}))
 
-	r.Static("/uploads", "./uploads")
+	r.Static("/uploads", "./data/uploads")
 
 	api := r.Group("/api")
 	{
@@ -38,5 +41,9 @@ func main() {
 		api.POST("/upload", handlers.UploadFile)
 	}
 
-	r.Run(":3002")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3002"
+	}
+	r.Run(":" + port)
 }

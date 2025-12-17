@@ -8,6 +8,7 @@ import router from './router'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'  // 添加这行
+import '@mdi/font/css/materialdesignicons.min.css'
 
 // 配置 axios 默认值
 axios.defaults.baseURL = import.meta.env.PROD ? '' : ''  // 移除 '/api'

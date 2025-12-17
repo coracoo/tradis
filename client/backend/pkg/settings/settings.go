@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"dockerpanel/backend/pkg/database"
 	"log"
+	"os"
 	"path/filepath"
 	"strconv"
 )
@@ -95,7 +96,14 @@ func GetSettings() (Settings, error) {
 
 // GetDataDir 获取数据目录
 func GetDataDir() string {
-	return "data"
+	cwd, err := os.Getwd()
+	if err != nil {
+		if exe, eerr := os.Executable(); eerr == nil {
+			return filepath.Join(filepath.Dir(exe), "data")
+		}
+		return filepath.Join(".", "data")
+	}
+	return filepath.Join(cwd, "data")
 }
 
 // GetProjectRoot 获取项目根目录

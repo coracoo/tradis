@@ -2,7 +2,11 @@
   <header class="topbar">
     <div>
       <!-- 可以在这里添加面包屑或其他导航辅助 -->
-      <div class="title">{{ displayTitle }}</div>
+      <div v-if="typeof displayTitle === 'object'" class="title-group">
+        <div class="title">{{ displayTitle.title }}</div>
+        <div class="subtitle">{{ displayTitle.subtitle }}</div>
+      </div>
+      <div v-else class="title">{{ displayTitle }}</div>
     </div>
     <div class="actions">
       <el-tooltip content="刷新" placement="bottom">
@@ -46,21 +50,22 @@ import { useRouter } from 'vue-router'
 import { Refresh, Bell, Moon, Sunny } from '@element-plus/icons-vue'
 
 const props = defineProps({
-  title: { type: String, default: 'DockPier' }
+  title: { type: String, default: 'Dockpier' }
 })
 
 const titleMap = {
-  'overview': '仪表盘',
-  'containers': '容器管理',
-  'images': '镜像管理',
-  'volumes': '卷管理',
-  'networks': '网络管理',
-  'appstore': '应用商城',
-  'app-store': '应用商城',
-  'ports': '端口管理',
-  'projects': '项目管理',
-  'settings': '系统设置',
-  'navigation': '导航页'
+  'overview': { title: '仪表盘', subtitle: '综合展示，一目了然' },
+  'containers': { title: '容器管理', subtitle: '单独的容器详情页，就是给你看看' },
+  'images': { title: '镜像管理', subtitle: '镜像下载有问题，记得更多操作里开启代理或镜像' },
+  'volumes': { title: '卷管理', subtitle: '定期备份 volume，防止数据丢失' },
+  'networks': { title: '网络管理', subtitle: '玩 NAS 网络很重要，在这里管理' },
+  'appstore': { title: '应用商城', subtitle: '从商城里选择你喜欢的项目安装吧~' },
+  'app-store': { title: '应用商城', subtitle: '从商城里选择你喜欢的项目安装吧~' },
+  'ports': { title: '端口管理', subtitle: '强迫症最爱，用心管理你的安全端口' },
+  'projects': { title: '项目编排', subtitle: '太好了，是我最喜欢的项目管理' },
+  'compose': { title: '项目编排', subtitle: '太好了，是我最喜欢的项目管理' },
+  'settings': { title: '系统设置', subtitle: '配置通用参数，记得改密码宝子' },
+  'navigation': { title: '导航页', subtitle: '系统会自动发现 docker 端口链接' }
 }
 
 const displayTitle = computed(() => {
@@ -141,6 +146,25 @@ onMounted(() => {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   transition: opacity 0.3s;
+}
+
+.title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title-group .title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: -0.5px;
+}
+
+.title-group .subtitle {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
 }
 
 .actions {

@@ -2,15 +2,16 @@
 package api // 必须声明包名
 
 import (
-    "context"
-    "dockerpanel/backend/pkg/docker"
-    "dockerpanel/backend/pkg/database"
-    "fmt"
-    "net/http"
-    "regexp"
-    "strings"
-    "time"
-    "strconv"
+	"context"
+	"dockerpanel/backend/pkg/database"
+	"dockerpanel/backend/pkg/docker"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -36,6 +37,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup) {
 		group.DELETE("/:id", removeContainer)
 		group.GET("/:id/logs", getContainerLogs)
 		group.GET("/:id/terminal", containerTerminal)
+		group.GET("/:id/stats", getContainerStats)
 	}
 }
 
@@ -129,11 +131,71 @@ func ListContainers(c *gin.Context) {
 			"NetworkSettings": inspect.NetworkSettings, // 使用 inspect 中的网络设置
 			"HostConfig":      inspect.HostConfig,      // 添加 HostConfig
 			"RunningTime":     runningTime,
+			"Labels":          inspect.Config.Labels, // 添加 Labels，便于前端按 compose 项目分组
 		}
 		containersWithDetails = append(containersWithDetails, containerInfo)
 	}
 
 	c.JSON(http.StatusOK, containersWithDetails)
+}
+
+// 获取单个容器的资源使用情况
+func getContainerStats(c *gin.Context) {
+	id := c.Param("id")
+
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败: " + err.Error()})
+		return
+	}
+	defer cli.Close()
+
+	// 获取容器统计信息（单次快照）
+	resp, err := cli.ContainerStats(context.Background(), id, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取容器统计信息失败: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	var statsJSON types.StatsJSON
+	if err := json.NewDecoder(resp.Body).Decode(&statsJSON); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "解析容器统计信息失败: " + err.Error()})
+		return
+	}
+
+	// 计算CPU使用率
+	cpuDelta := float64(statsJSON.CPUStats.CPUUsage.TotalUsage - statsJSON.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(statsJSON.CPUStats.SystemUsage - statsJSON.PreCPUStats.SystemUsage)
+	cpuPercent := 0.0
+	if systemDelta > 0 && cpuDelta > 0 {
+		cpuPercent = (cpuDelta / systemDelta) * float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+	}
+
+	// 计算内存
+	memoryUsage := float64(statsJSON.MemoryStats.Usage)
+	memoryLimit := float64(statsJSON.MemoryStats.Limit)
+	memoryPercent := 0.0
+	if memoryLimit > 0 {
+		memoryPercent = (memoryUsage / memoryLimit) * 100.0
+	}
+
+	// 聚合网络流量（累计字节）
+	var rxBytes, txBytes uint64
+	for _, nw := range statsJSON.Networks {
+		rxBytes += nw.RxBytes
+		txBytes += nw.TxBytes
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"cpu_percent":    cpuPercent,
+		"memory_usage":   memoryUsage,
+		"memory_limit":   memoryLimit,
+		"memory_percent": memoryPercent,
+		"net_rx_bytes":   rxBytes,
+		"net_tx_bytes":   txBytes,
+		"timestamp":      time.Now().Unix(),
+	})
 }
 
 // 获取单个容器详情
@@ -389,31 +451,31 @@ func stopContainer(c *gin.Context) {
 // 删除容器
 func removeContainer(c *gin.Context) {
 
-    cli, err := docker.NewDockerClient()
+	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer cli.Close()
 
-    id := c.Param("id")
-    var hostPorts []int
-    inspect, ierr := cli.ContainerInspect(context.Background(), id)
-    if ierr == nil {
-        dedup := make(map[int]struct{})
-        for _, bindings := range inspect.NetworkSettings.Ports {
-            for _, b := range bindings {
-                if b.HostPort != "" {
-                    if p, perr := strconv.Atoi(b.HostPort); perr == nil && p > 0 {
-                        if _, ok := dedup[p]; !ok {
-                            hostPorts = append(hostPorts, p)
-                            dedup[p] = struct{}{}
-                        }
-                    }
-                }
-            }
-        }
-    }
+	id := c.Param("id")
+	var hostPorts []int
+	inspect, ierr := cli.ContainerInspect(context.Background(), id)
+	if ierr == nil {
+		dedup := make(map[int]struct{})
+		for _, bindings := range inspect.NetworkSettings.Ports {
+			for _, b := range bindings {
+				if b.HostPort != "" {
+					if p, perr := strconv.Atoi(b.HostPort); perr == nil && p > 0 {
+						if _, ok := dedup[p]; !ok {
+							hostPorts = append(hostPorts, p)
+							dedup[p] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+	}
 	timeout := 2 // 设置超时时间为 2 秒
 	err = cli.ContainerStop(context.Background(), id, container.StopOptions{
 		Timeout: &timeout,
@@ -423,23 +485,23 @@ func removeContainer(c *gin.Context) {
 		return
 	}
 
-    err = cli.ContainerRemove(context.Background(), id, types.ContainerRemoveOptions{})
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
+	err = cli.ContainerRemove(context.Background(), id, types.ContainerRemoveOptions{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-    if len(hostPorts) > 0 {
-        if tx, txErr := database.GetDB().Begin(); txErr == nil {
-            if derr := database.DeleteReservedPortsByPortsTx(tx, hostPorts); derr != nil {
-                _ = tx.Rollback()
-            } else {
-                _ = tx.Commit()
-            }
-        }
-    }
+	if len(hostPorts) > 0 {
+		if tx, txErr := database.GetDB().Begin(); txErr == nil {
+			if derr := database.DeleteReservedPortsByPortsTx(tx, hostPorts); derr != nil {
+				_ = tx.Rollback()
+			} else {
+				_ = tx.Commit()
+			}
+		}
+	}
 
-    c.JSON(http.StatusOK, gin.H{"message": "容器已删除"})
+	c.JSON(http.StatusOK, gin.H{"message": "容器已删除"})
 }
 
 // CreateContainerRequest 定义创建容器的请求结构

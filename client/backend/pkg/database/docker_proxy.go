@@ -45,8 +45,14 @@ func GetDockerProxy() (*DockerProxy, error) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// 如果没有配置，创建一个默认配置
-			return createDefaultDockerProxy()
+			// 无记录时返回空配置，不写入数据库
+			return &DockerProxy{
+				Enabled:         false,
+				HTTPProxy:       "",
+				HTTPSProxy:      "",
+				NoProxy:         "",
+				RegistryMirrors: "",
+			}, nil
 		}
 		return nil, err
 	}
@@ -95,22 +101,10 @@ func SaveDockerProxy(proxy *DockerProxy) error {
 	return err
 }
 
-// createDefaultDockerProxy 创建默认的 Docker 代理配置
-func createDefaultDockerProxy() (*DockerProxy, error) {
-	proxy := &DockerProxy{
-		Enabled:         false,
-		HTTPProxy:       "",
-		HTTPSProxy:      "",
-		NoProxy:         "",
-		RegistryMirrors: "",
-	}
-
-	err := SaveDockerProxy(proxy)
-	if err != nil {
-		return nil, err
-	}
-
-	return GetDockerProxy()
+// DeleteDockerProxy 删除当前 Docker 代理配置
+func DeleteDockerProxy() error {
+	_, err := db.Exec(`DELETE FROM docker_proxy`)
+	return err
 }
 
 // MarshalRegistryMirrors 将镜像加速器列表转换为 JSON 字符串
@@ -126,4 +120,59 @@ func MarshalRegistryMirrors(mirrors []string) string {
 	}
 
 	return string(data)
+}
+
+// ProxyHistory 记录代理变更历史
+type ProxyHistory struct {
+	ID              int64  `json:"id"`
+	Enabled         bool   `json:"enabled"`
+	HTTPProxy       string `json:"http_proxy"`
+	HTTPSProxy      string `json:"https_proxy"`
+	NoProxy         string `json:"no_proxy"`
+	RegistryMirrors string `json:"registry_mirrors"`
+	ChangeType      string `json:"change_type"`
+	ChangedAt       string `json:"changed_at"`
+}
+
+// SaveProxyHistory 写入代理历史记录
+func SaveProxyHistory(ph *ProxyHistory) error {
+	var enabled int
+	if ph.Enabled {
+		enabled = 1
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	_, err := db.Exec(`
+        INSERT INTO proxy_history (enabled, http_proxy, https_proxy, no_proxy, registry_mirrors, change_type, changed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, enabled, ph.HTTPProxy, ph.HTTPSProxy, ph.NoProxy, ph.RegistryMirrors, ph.ChangeType, now)
+	return err
+}
+
+// GetProxyHistory 获取最近的代理历史记录
+func GetProxyHistory(limit int) ([]ProxyHistory, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := db.Query(`
+        SELECT id, enabled, http_proxy, https_proxy, no_proxy, registry_mirrors, change_type, changed_at
+        FROM proxy_history
+        ORDER BY id DESC
+        LIMIT ?
+    `, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []ProxyHistory
+	for rows.Next() {
+		var ph ProxyHistory
+		var enabled int
+		if err := rows.Scan(&ph.ID, &enabled, &ph.HTTPProxy, &ph.HTTPSProxy, &ph.NoProxy, &ph.RegistryMirrors, &ph.ChangeType, &ph.ChangedAt); err != nil {
+			return nil, err
+		}
+		ph.Enabled = enabled == 1
+		list = append(list, ph)
+	}
+	return list, nil
 }

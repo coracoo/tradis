@@ -91,6 +91,8 @@ html, body, #app {
   flex-direction: column;
   /* 允许子元素（content）在溢出时正确滚动 */
   min-height: 0;
+  min-width: 0; /* 防止 flex 子项撑大容器宽度 */
+  overflow: hidden; /* 强制限制宽度不溢出 */
 }
 .content {
   flex: 1;
@@ -98,6 +100,7 @@ html, body, #app {
   overflow-x: hidden;
   padding: 16px;
   scrollbar-gutter: stable;
+  min-width: 0; /* 防止内容撑大 */
 }
 
 /* 底部状态栏 */

@@ -1,26 +1,39 @@
 <template>
   <div class="app-deploy-view">
-    <el-page-header @back="goBack" title="返回商店">
-      <template #content>
-        <span class="text-large font-600 mr-3"> 部署应用 - {{ project?.name }} </span>
-      </template>
-    </el-page-header>
+    <div class="filter-bar">
+      <div class="filter-left">
+        <el-button @click="goBack" circle plain size="small">
+          <el-icon><ArrowLeft /></el-icon>
+        </el-button>
+        <span class="page-title">部署应用 - {{ project?.name }}</span>
+      </div>
+      <div class="filter-right">
+        <el-button @click="fetchProject" plain size="medium">
+          <template #icon><el-icon><Refresh /></el-icon></template>
+          刷新
+        </el-button>
+      </div>
+    </div>
 
-    <div v-loading="loading" class="deploy-content">
-      <div v-if="project" class="deploy-container">
-        <!-- 应用基本信息卡片 -->
-        <el-card class="info-card" shadow="never">
-          <div class="app-header">
-            <img :src="resolvePicUrl(project.logo || project.icon)" class="app-icon" @error="handleImageError" />
+    <div class="content-wrapper">
+      <div v-loading="loading" class="scroll-container">
+        <div v-if="project" class="deploy-container">
+          <!-- 应用基本信息 -->
+          <div class="app-info-header">
+            <div class="app-icon-wrapper">
+              <img :src="resolvePicUrl(project.logo || project.icon)" class="app-icon" @error="handleImageError" />
+            </div>
             <div class="app-meta">
-              <h2>{{ project.name }} <el-tag>{{ project.version }}</el-tag></h2>
-              <p>{{ project.description }}</p>
+              <div class="app-title-row">
+                <h2 class="app-name">{{ project.name }}</h2>
+                <el-tag effect="dark" size="small" class="version-tag">{{ project.version }}</el-tag>
+              </div>
+              <p class="app-desc">{{ project.description }}</p>
             </div>
           </div>
-        </el-card>
 
-        <!-- 配置表单 -->
-        <el-tabs v-model="activeTab" class="deploy-tabs">
+          <!-- 配置表单 -->
+          <el-tabs v-model="activeTab" class="deploy-tabs">
         <el-tab-pane label="部署" name="deploy">
         <el-form
           ref="formRef"
@@ -268,8 +281,9 @@
                                   :key="opt" 
                                   :label="opt" 
                                   :value="opt" 
+                                  
                                 />
-                              </el-select>
+                                </el-select>
                             </el-form-item>
                           </el-col>
 
@@ -298,15 +312,16 @@
         </el-form>
         </el-tab-pane>
         <el-tab-pane label="使用教程" name="tutorial">
-          <el-card shadow="never">
-            <div v-if="project?.tutorial" class="tutorial-content" v-html="tutorialHtml"></div>
-            <div v-else class="tutorial-content">暂无使用教程</div>
-          </el-card>
+          <div class="tutorial-wrapper">
+            <div v-if="project?.tutorial" class="tutorial-content" v-html="tutorialHtml" @click="handleTutorialClick"></div>
+            <div v-else class="tutorial-content empty-tutorial">暂无使用教程</div>
+          </div>
         </el-tab-pane>
         </el-tabs>
       </div>
       <el-empty v-else description="加载应用信息失败" />
     </div>
+  </div>
 
     <!-- 部署日志对话框 -->
     <el-dialog
@@ -344,14 +359,22 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 图片预览组件 -->
+    <el-image-viewer
+      v-if="showImageViewer"
+      :url-list="previewImageList"
+      hide-on-click-modal
+      @close="closeImageViewer"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, reactive, nextTick, shallowRef, triggerRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { QuestionFilled, ArrowRight, Plus, Remove } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled, ArrowRight, ArrowLeft, Plus, Remove, Refresh, MagicStick } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox, ElImageViewer } from 'element-plus'
 import api from '../api'
 import request from '../utils/request'
 
@@ -376,6 +399,20 @@ const deploySuccess = ref(false)
 const activeTab = ref('deploy')
 const allocating = ref(false)
 const appStoreBase = ref('')
+
+// 图片预览相关
+const showImageViewer = ref(false)
+const previewImageList = ref([])
+const closeImageViewer = () => {
+  showImageViewer.value = false
+}
+const handleTutorialClick = (e) => {
+  if (e.target.tagName === 'IMG') {
+    previewImageList.value = [e.target.src]
+    showImageViewer.value = true
+  }
+}
+
 const escapeHtml = (str) => {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
@@ -838,294 +875,232 @@ onMounted(() => {
 
 <style scoped>
 .app-deploy-view {
-  padding: 20px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px 24px;
 }
 
-.deploy-content {
+.filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+.filter-left, .filter-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.page-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.content-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.app-info-header {
+  display: flex;
+  gap: 24px;
+  padding: 24px;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+/* App Icon */
+.app-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.app-icon {
+  width: 80%;
+  height: 80%;
+  object-fit: contain;
+}
+
+.app-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.app-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.app-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.app-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+/* Deploy Form Styles */
+.deploy-form {
   margin-top: 20px;
-  max-width: 1000px;
-  margin-left: 16px;
-  margin-right: 16px;
-}
-
-.info-card {
-  margin-bottom: 20px;
 }
 
 .auto-allocate-bar {
-  margin-bottom: 25px;
+  margin-bottom: 24px;
 }
 
 .allocate-alert {
-  padding: 12px 16px;
-  background-color: var(--el-color-primary-light-9);
-  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 8px;
 }
 
 .allocate-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
   margin-bottom: 4px;
 }
 
 .allocate-title {
   font-weight: 600;
   font-size: 14px;
-  color: var(--el-text-color-primary);
 }
 
-.allocate-actions {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-
-.allocate-desc {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.deploy-form {
-  background: #fff;
-  padding: 30px;
-  border-radius: 8px;
-  box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.app-icon {
-  width: 80px;
-  height: 80px;
-  border-radius: 10px;
-}
-
-.app-meta h2 {
-  margin: 0 0 10px 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.app-meta p {
-  margin: 0;
-  color: #666;
-}
-
-/* Service Collapse Styles */
 .service-collapse-container {
   border: none;
-  background: transparent;
 }
 
 .service-collapse-item {
-  margin-bottom: 24px;
-  border: 1px solid #ebeef5;
+  margin-bottom: 16px;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: #fff;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
-}
-
-/* Remove default header background and border if needed */
-:deep(.el-collapse-item__header) {
-  background-color: #f5f7fa;
-  border-bottom: 1px solid #ebeef5;
-  height: auto;
-  line-height: normal;
-  padding: 12px 20px;
-}
-
-:deep(.el-collapse-item__content) {
-  padding: 20px;
-}
-/* Ensure advanced toggle icon rotates */
-.advanced-header .el-icon {
-  transform: rotate(0deg);
-}
-.advanced-header .el-icon.is-active {
-  transform: rotate(90deg);
 }
 
 :deep(.el-collapse-item__header) {
-  background-color: #fcfcfc;
-  padding: 0 20px;
+  background-color: var(--el-fill-color-light);
+  padding: 0 16px;
+  height: 48px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
   font-weight: 600;
-  font-size: 14px;
-  height: 40px;
-  line-height: 40px;
-  border-bottom: 1px solid #ebeef5;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 :deep(.el-collapse-item__content) {
-  padding-bottom: 20px;
+  padding: 0;
 }
 
 .service-title-header {
+  flex: 1;
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  width: 100%;
+  align-items: center;
+  padding-right: 12px;
 }
 
 .service-header-left {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 12px;
 }
 
-.service-header-right {
-  display: flex;
-  align-items: center;
-}
-
-.service-name-text {
-  font-size: 14px;
-  color: #303133;
-}
-
-.service-count-tag {
-  margin-right: 15px;
-  border: none;
-  background: transparent;
-  color: #909399;
+.add-param-btn {
+  font-weight: normal;
 }
 
 .service-content {
   padding: 20px;
+  background: var(--el-bg-color);
 }
 
-.config-section {
-  margin-bottom: 10px;
-}
-
-.section-label {
-  font-size: 14px;
-  font-weight: bold;
-  color: #606266;
-  margin-bottom: 15px;
-  border-left: 3px solid #409eff;
-  padding-left: 8px;
-}
-
-/* Custom Form Row Styles */
 .form-row-custom {
   margin-bottom: 0;
   padding: 12px 0;
-  border-bottom: 1px solid #f0f2f5;
-  transition: background-color 0.2s;
-}
-
-.form-row-custom:hover {
-  background-color: #fafafa;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .form-row-custom:last-child {
   border-bottom: none;
 }
 
-.param-type-wrapper {
-  display: flex;
-  align-items: center;
-}
-
-.left-input-wrapper {
-  display: flex;
-  flex-direction: column;
-}
-
-.label-input :deep(.el-input__inner) {
-  font-weight: 500;
-  color: #606266;
-  text-align: left;
-}
-
-.help-icon {
-  cursor: pointer;
-  color: #909399;
-  font-size: 14px;
-}
-
-.help-icon:hover {
-  color: #409eff;
-}
-
-.advanced-collapse-inner {
-  margin-top: 10px;
-  border: none;
-  background: transparent;
-}
-
-.advanced-collapse-inner :deep(.el-collapse-item__header) {
-  background: transparent;
-  font-size: 14px;
-  color: #606266;
-  height: 40px;
-  line-height: 40px;
-  border-bottom: 1px dashed #dcdfe6;
-}
-
-.advanced-collapse-inner :deep(.el-collapse-item__wrap) {
-  background: transparent;
-  border: none;
-}
-
-.advanced-collapse-inner :deep(.el-collapse-item__content) {
-  padding: 15px 0;
-}
-
-.advanced-section {
-  margin-top: 15px;
-}
-
-.advanced-divider-text {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  font-size: 14px;
-  color: #909399;
-  user-select: none;
-}
-
-.advanced-divider-text:hover {
-  color: #409eff;
-}
-
-.advanced-icon {
-  margin-left: 4px;
-  transition: transform 0.3s;
-}
-
-.advanced-icon.is-active {
-  transform: rotate(90deg);
-}
-
 .form-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 15px;
-  margin-top: 30px;
-  padding-bottom: 50px;
+  gap: 12px;
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* Retain other specific styles */
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.section-label::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  background: #3b82f6;
+  margin-right: 8px;
+  border-radius: 2px;
 }
 
 /* Deploy Logs Styles */
 .deploy-logs-container {
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .logs-header {
-  padding: 10px 15px;
-  background-color: #f5f7fa;
-  border-bottom: 1px solid #dcdfe6;
-  font-weight: bold;
+  padding: 12px 16px;
+  background-color: var(--el-fill-color-lighter);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  font-weight: 600;
+  color: var(--el-text-color-regular);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1134,29 +1109,129 @@ onMounted(() => {
 .logs-content {
   height: 400px;
   overflow-y: auto;
-  padding: 10px;
-  background-color: #1e1e1e;
-  color: #fff;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
-  font-size: 12px;
+  padding: 16px;
+  background-color: var(--el-fill-color-darker);
+  color: var(--el-text-color-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .log-line {
-  margin-bottom: 4px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
-.log-line.info { color: #a8c5f5; }
-.log-line.success { color: #67c23a; }
-.log-line.warning { color: #e6a23c; }
-.log-line.error { color: #f56c6c; }
+.log-line.info { color: var(--el-color-info); }
+.log-line.success { color: var(--el-color-success); }
+.log-line.warning { color: var(--el-color-warning); }
+.log-line.error { color: var(--el-color-danger); }
 
-.status-tag {
-  margin-left: 10px;
-}
 .tutorial-content {
   line-height: 1.7;
   font-size: 14px;
+  color: #334155;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+:deep(.tutorial-content img) {
+  max-width: 70%;
+  height: auto;
+  border-radius: 8px;
+  margin: 12px 0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  cursor: zoom-in;
+  transition: transform 0.2s;
+}
+
+:deep(.tutorial-content img:hover) {
+  opacity: 0.9;
+}
+
+:deep(.tutorial-content pre) {
+  background: var(--el-fill-color-darker);
+  color: var(--el-text-color-primary);
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 16px 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+
+:deep(.tutorial-content code) {
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-regular);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+
+:deep(.tutorial-content pre code) {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+}
+
+:deep(.tutorial-content h1),
+:deep(.tutorial-content h2),
+:deep(.tutorial-content h3) {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+:deep(.tutorial-content a) {
+  color: #3b82f6;
+  text-decoration: none;
+}
+
+:deep(.tutorial-content a:hover) {
+  text-decoration: underline;
+}
+
+:deep(.tutorial-content ul) {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+:deep(.tutorial-content li) {
+  margin-bottom: 4px;
+}
+
+/* Overrides */
+:deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background-color: #e2e8f0;
+}
+
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
+}
+
+.more-btn {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+}
+
+.tutorial-wrapper {
+  padding: 24px;
+  background: var(--el-fill-color-light);
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.empty-tutorial {
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  padding: 40px;
 }
 </style>

@@ -1,174 +1,177 @@
 <template>
-  <div class="images-view compact-table">
-    <!-- 顶部操作栏 -->
-    <div class="operation-bar">
-      <el-button-group>
-        <el-button @click="fetchImages" :loading="loading">
-          <el-icon><Refresh /></el-icon>
-        </el-button>
-        <el-button type="primary" @click="pullImage">
-          <el-icon><Download /></el-icon> 拉取镜像
-        </el-button>
-        <el-button @click="importImage">
-          <el-icon><Upload /></el-icon> 导入
-        </el-button>
-        <el-button @click="settingsVisible = true">
-           <el-icon><Setting /></el-icon>
-           配置
-        </el-button>
-        <el-button type="danger" plain @click="clearImages">
-          <el-icon class="el-icon--left"><Delete /></el-icon>
-          清除未使用镜像
-        </el-button>
-      </el-button-group>
-
-      <!-- 搜索框 -->
-      <div class="search-box">
+  <div class="images-view">
+    <div class="filter-bar">
+      <div class="filter-left">
         <el-input
           v-model="searchQuery"
-          placeholder="搜索镜像名称、标签或ID"
+          placeholder="搜索镜像名称、标签 or ID..."
           clearable
-          prefix-icon="Search"
-          style="width: 300px"
-        />
+          class="search-input"
+          size="medium"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
+
+      <div class="filter-right">
+        <el-button-group class="main-actions">
+          <el-button @click="fetchImages" :loading="loading" plain size="medium">
+            <template #icon><el-icon><Refresh /></el-icon></template>
+            刷新
+          </el-button>
+          <el-button type="primary" @click="pullImage" size="medium">
+            <template #icon><el-icon><Download /></el-icon></template>
+            拉取镜像
+          </el-button>
+          <el-button @click="importImage" plain size="medium">
+            <template #icon><el-icon><Upload /></el-icon></template>
+            导入
+          </el-button>
+        </el-button-group>
+
+        <el-dropdown trigger="click" @command="handleGlobalAction">
+          <el-button plain class="more-btn" size="medium">
+            更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="settings" :icon="Setting">配置镜像加速</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="Delete" divided class="text-danger">清除未使用镜像</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-    <!-- 镜像列表 -->
-    <el-table 
-      :data="paginatedImages" 
-      style="width: 100%" 
-      height="100%"
-      v-loading="loading"
-      @sort-change="handleSortChange"
-      :default-sort="{ prop: 'RepoTags', order: 'ascending' }"
-      class="images-table"
-      :header-cell-style="{ background: 'transparent' }">
-      
-      <el-table-column type="selection" width="40" align="center" header-align="left" />
-      
-      <el-table-column 
-        label="ID" 
-        width="140" 
-        prop="Id" 
-        sortable="custom"
-        header-align="left">
-        <template #default="scope">
-          <el-tooltip :content="scope.row.Id" placement="top">
-            <span class="font-mono text-xs">{{ scope.row.Id.substring(7, 19) }}</span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
+    <div class="table-wrapper">
+      <el-table 
+        :data="paginatedImages" 
+        style="width: 100%; height: 100%" 
+        v-loading="loading"
+        @sort-change="handleSortChange"
+        :default-sort="{ prop: 'RepoTags', order: 'ascending' }"
+        class="main-table"
+        :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
+        :row-style="{ height: '60px' }"
+      >
+        <el-table-column type="selection" width="40" align="center" />
+        
+        <el-table-column 
+          label="镜像名称" 
+          prop="RepoTags" 
+          sortable="custom"
+          min-width="240"
+          show-overflow-tooltip>
+          <template #default="scope">
+            <div class="image-name-cell">
+              <div class="icon-wrapper image">
+                <el-icon><Files /></el-icon>
+              </div>
+              <div class="name-info">
+                <span class="name-text">{{ getImageName(scope.row.RepoTags?.[0]) }}</span>
+                <span class="id-text">ID: {{ scope.row.Id.substring(7, 19) }}</span>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
 
-      <el-table-column 
-        label="镜像名称" 
-        prop="RepoTags" 
-        sortable="custom"
-        min-width="200"
-        header-align="left"
-        show-overflow-tooltip>
-        <template #default="scope">
-          <span class="image-name">{{ getImageName(scope.row.RepoTags?.[0]) }}</span>
-        </template>
-      </el-table-column>
+        <el-table-column 
+          label="标签" 
+          prop="Tag"
+          sortable="custom"
+          width="180">
+          <template #default="scope">
+            <el-tag size="small" effect="light" class="image-tag">
+              {{ getImageTag(scope.row.RepoTags?.[0]) }}
+            </el-tag>
+          </template>
+        </el-table-column>
 
-      <el-table-column 
-        label="状态" 
-        min-width="160" 
-        prop="isInUse" 
-        sortable="custom"
-        header-align="left"
-        align="left">
-        <template #default="scope">
-          <div class="status-dot" :class="scope.row.isInUse ? 'status-used' : 'status-unused'">
-            {{ scope.row.isInUse ? '使用中' : '未使用' }}
-          </div>
-        </template>
-      </el-table-column>
-      
-      <el-table-column 
-        label="标签" 
-        prop="RepoTags"
-        min-width="160"
-        header-align="left">
-        <template #default="scope">
-          <el-tag size="small" effect="plain" class="image-tag">
-            {{ getImageTag(scope.row.RepoTags?.[0]) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      
-      <el-table-column 
-        label="大小" 
-        prop="Size" 
-        min-width="160"
-        sortable="custom"
-        header-align="left">
-        <template #default="scope">
-          <span class="text-gray">{{ formatSize(scope.row.Size) }}</span>
-        </template>
-      </el-table-column>
-      
-      <el-table-column 
-        label="创建时间" 
-        prop="Created" 
-        min-width="160"
-        sortable="custom"
-        header-align="left">
-        <template #default="scope">
-          <div class="text-gray font-mono text-center whitespace-pre-line">
-            {{ formatTimeTwoLines(scope.row.Created) }}
-          </div>
-        </template>
-      </el-table-column>
-      
-      <!-- 操作列 -->
-      <el-table-column label="操作" width="140" fixed="right" header-align="left">
-        <template #default="scope">
-          <div class="operation-buttons">
-            <el-tooltip content="修改标签" placement="top">
-              <el-button 
-                link 
-                type="primary" 
-                :disabled="scope.row.isInUse"
-                @click="tagImage(scope.row)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
-            </el-tooltip>
-            <el-tooltip content="导出" placement="top">
-              <el-button 
-                link 
-                type="primary" 
-                @click="exportImage(scope.row)">
-                <el-icon><Download /></el-icon>
-              </el-button>
-            </el-tooltip>
-            <el-tooltip content="删除" placement="top">
-              <el-button 
-                link 
-                type="danger" 
-                :disabled="scope.row.isInUse"
-                @click="deleteImage(scope.row)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </el-tooltip>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
+        <el-table-column 
+          label="状态" 
+          width="140" 
+          prop="isInUse" 
+          sortable="custom">
+          <template #default="scope">
+            <div class="status-indicator">
+              <span class="status-point" :class="scope.row.isInUse ? 'running' : 'stopped'"></span>
+              <span>{{ scope.row.isInUse ? '使用中' : '未使用' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        
+        <el-table-column 
+          label="大小" 
+          prop="Size" 
+          width="120"
+          sortable="custom">
+          <template #default="scope">
+            <span class="text-gray">{{ formatSize(scope.row.Size) }}</span>
+          </template>
+        </el-table-column>
+        
+        <el-table-column 
+          label="创建时间" 
+          prop="Created" 
+          width="160"
+          sortable="custom">
+          <template #default="scope">
+            <div class="text-gray font-mono">
+              {{ formatTimeTwoLines(scope.row.Created) }}
+            </div>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="操作" width="180" fixed="right" align="center">
+          <template #default="scope">
+            <div class="row-ops">
+              <el-tooltip content="修改标签" placement="top">
+                <el-button 
+                  circle 
+                  plain
+                  type="primary" 
+                  :disabled="scope.row.isInUse"
+                  @click="tagImage(scope.row)">
+                  <el-icon><Edit /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="导出" placement="top">
+                <el-button 
+                  circle 
+                  plain
+                  type="info" 
+                  @click="exportImage(scope.row)">
+                  <el-icon><Download /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="删除" placement="top">
+                <el-button 
+                  circle 
+                  plain
+                  type="danger" 
+                  :disabled="scope.row.isInUse"
+                  @click="deleteImage(scope.row)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
 
-    <!-- 分页 -->
-    <div class="pagination">
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50, 100]"
-        layout="total, sizes, prev, pager, next"
-        :total="total"
-        @size-change="handleSizeChange"
-        @current-change="handleCurrentChange"
-        size="small"
-      />
+      <div class="pagination-bar">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="total"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
 	
     <!-- 镜像加速 -->
@@ -299,7 +302,7 @@
 <script setup>
 import { ref, onMounted, h, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, UploadFilled, Download, Upload, Setting, Edit, Delete, Search } from '@element-plus/icons-vue'
+import { Refresh, UploadFilled, Download, Upload, Setting, Edit, Delete, Search, ArrowDown, Files } from '@element-plus/icons-vue'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
 import DockerSettings from '../components/DockerSettings.vue'
@@ -345,6 +348,15 @@ watch(filteredImages, (newVal) => {
   }
 })
 
+// Global Action Handler
+const handleGlobalAction = (command) => {
+  if (command === 'settings') {
+    settingsVisible.value = true
+  } else if (command === 'prune') {
+    clearImages()
+  }
+}
+
 // 添加处理镜像名称和标签的函数
 const getImageName = (repoTag) => {
   if (!repoTag) return '<none>'
@@ -360,9 +372,6 @@ const getImageTag = (repoTag) => {
 
 // 删除 proxyDialogVisible 和 proxyForm 相关代码
 const settingsVisible = ref(false)
-const showProxyDialog = () => {
-  settingsVisible.value = true
-}
 
 // 清除未使用镜像
 const clearImages = async () => {
@@ -467,6 +476,63 @@ const fetchImages = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// 排序处理
+const handleSortChange = ({ prop, order }) => {
+  if (!prop || !order) {
+    images.value = [...images.value]
+    return
+  }
+
+  images.value.sort((a, b) => {
+    let aValue, bValue
+
+    switch (prop) {
+      case 'Id':
+        aValue = a.Id
+        bValue = b.Id
+        break
+      case 'isInUse':
+        aValue = a.isInUse ? 1 : 0
+        bValue = b.isInUse ? 1 : 0
+        break
+      case 'RepoTags':
+        // 只比较镜像名称部分
+        aValue = getImageName(a.RepoTags?.[0] || '')
+        bValue = getImageName(b.RepoTags?.[0] || '')
+        break
+      case 'Tag':
+        aValue = getImageTag(a.RepoTags?.[0] || '')
+        bValue = getImageTag(b.RepoTags?.[0] || '')
+        break
+      case 'Size':
+        aValue = a.Size
+        bValue = b.Size
+        break
+      case 'Created':
+        aValue = a.Created
+        bValue = b.Created
+        break
+      default:
+        aValue = a[prop]
+        bValue = b[prop]
+    }
+
+    return order === 'ascending' ? 
+      (aValue > bValue ? 1 : -1) : 
+      (aValue < bValue ? 1 : -1)
+  })
+}
+
+// 分页处理
+const handleSizeChange = (val) => {
+  pageSize.value = val
+  currentPage.value = 1
+}
+
+const handleCurrentChange = (val) => {
+  currentPage.value = val
 }
 
 // 拉取镜像
@@ -745,7 +811,26 @@ const handlePullImage = async () => {
   }
 }
 
-// 添加修改标签相关变量
+// 导出镜像
+const exportImage = async (image) => {
+  try {
+    const token = localStorage.getItem('token') || ''
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
+    const id = image.Id
+    const url = `${baseUrl}/api/images/export/${encodeURIComponent(id)}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+    const a = document.createElement('a')
+    a.href = url
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    ElMessage.success('开始导出镜像')
+  } catch (error) {
+    console.error('导出失败:', error)
+    ElMessage.error('导出失败: ' + (error.message || '未知错误'))
+  }
+}
+
 const tagDialogVisible = ref(false)
 const tagForm = ref({
   imageId: '',
@@ -754,7 +839,6 @@ const tagForm = ref({
   tag: ''
 })
 
-// 修改标签
 const tagImage = (image) => {
   if (image.isInUse) {
     ElMessage.warning('该镜像正在被容器使用，无法修改标签')
@@ -823,27 +907,6 @@ const handleTagImage = async () => {
   }
 }
 
-
-const exportImage = async (image) => {
-  try {
-    const token = localStorage.getItem('token') || ''
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-    const id = image.Id
-    const url = `${baseUrl}/api/images/export/${encodeURIComponent(id)}${token ? `?token=${encodeURIComponent(token)}` : ''}`
-    const a = document.createElement('a')
-    a.href = url
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    ElMessage.success('开始导出镜像')
-  } catch (error) {
-    console.error('导出失败:', error)
-    ElMessage.error('导出失败: ' + (error.message || '未知错误'))
-  }
-}
-
-// 删除镜像
 const deleteImage = async (image) => {
   if (image.isInUse) {
     ElMessage.warning('该镜像正在被容器使用，无法删除')
@@ -864,145 +927,157 @@ const deleteImage = async (image) => {
   }
 }
 
-// 分页处理
-const handleSizeChange = (val) => {
-  pageSize.value = val
-  fetchImages()
-}
-
-const handleCurrentChange = (val) => {
-  currentPage.value = val
-  fetchImages()
-}
-
-// 添加排序相关变量
-const sortBy = ref('')
-const sortOrder = ref('ascending')
-
-// 添加排序处理函数
-const handleSortChange = ({ prop, order }) => {
-  if (!prop || !order) {
-    images.value = [...images.value]
-    return
-  }
-
-  // 移除空值检查，保证排序状态
-  images.value.sort((a, b) => {
-    let aValue, bValue
-
-    switch (prop) {
-      case 'Id':
-        aValue = a.Id
-        bValue = b.Id
-        break
-      case 'isInUse':
-        aValue = a.isInUse ? 1 : 0
-        bValue = b.isInUse ? 1 : 0
-        break
-      case 'RepoTags':
-        // 只比较镜像名称部分
-        aValue = getImageName(a.RepoTags?.[0] || '')
-        bValue = getImageName(b.RepoTags?.[0] || '')
-        break
-      case 'Size':
-        aValue = a.Size
-        bValue = b.Size
-        break
-      case 'Created':
-        aValue = a.Created
-        bValue = b.Created
-        break
-      default:
-        aValue = a[prop]
-        bValue = b[prop]
-    }
-
-    return order === 'ascending' ? 
-      (aValue > bValue ? 1 : -1) : 
-      (aValue < bValue ? 1 : -1)
-  })
-}
-
 onMounted(() => {
   fetchImages()
 })
 </script>
 
 <style scoped>
-/* 继承 layout.css 的 compact-table 样式 */
-
 .images-view {
   height: 100%;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* 防止撑开父容器 */
-  padding-right: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px 24px;
 }
 
-.operation-bar {
-  margin-bottom: 16px;
+.filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  
+}
+
+.filter-left, .filter-right {
+  display: flex;
+  align-items: center;
   gap: 16px;
 }
 
-.images-table {
+.search-input {
+  width: 300px;
+}
+
+.table-wrapper {
   flex: 1;
-  /* 允许表格在容器内滚动 */
-  min-height: 0; 
-  overflow: hidden; /* 确保表格不会溢出 */
-}
-
-/* 状态圆点 */
-.status-dot {
-  display: inline-flex;
-  align-items: center;
-  font-size: 13px; /* 稍微调大一点以匹配其他文本 */
-  white-space: nowrap; /* 防止换行 */
-}
-.status-dot::before {
-  content: '';
-  width: 6px; /* 调整大小 */
-  height: 6px;
-  border-radius: 50%;
-  margin-right: 8px;
-  flex-shrink: 0;
-}
-.status-used {
-  color: var(--el-color-success);
-}
-.status-used::before {
-  background-color: var(--el-color-success);
-  box-shadow: 0 0 0 2px var(--el-color-success-light-9);
-}
-.status-unused {
-  color: var(--el-text-color-secondary);
-}
-.status-unused::before {
-  background-color: var(--el-color-info-light-3);
-}
-
-.image-name {
-  font-weight: 500;
-  color: var(--el-text-color-primary);
-}
-
-.image-tag {
-  font-family: monospace;
-}
-
-.text-gray {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.operation-buttons {
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
+  flex-direction: column;
+}
+
+.main-table {
+  flex: 1;
+}
+
+/* Custom Table Styles */
+.image-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+.image-name-cell:hover .icon-wrapper {
+  transform: scale(1.05);
+}
+
+.icon-wrapper.image {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+
+.name-info {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
+.name-text {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+.id-text {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-family: monospace;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.status-point {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-point.running {
+  background-color: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.2);
+}
+
+.status-point.stopped {
+  background-color: #94a3b8;
+}
+
+.text-gray {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.text-danger {
+  color: #ef4444;
+}
+
+.row-ops {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Pagination */
+.pagination-bar {
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Pull Progress */
 .pull-progress {
   margin-top: 16px;
   padding: 12px;
@@ -1039,28 +1114,19 @@ onMounted(() => {
   width: 80px;
 }
 
-/* 覆盖 Element Plus 样式以适应紧凑视图 */
-:deep(.el-table__row) {
-  height: 44px;
-}
-:deep(.el-button--link) {
-  padding: 4px;
-  height: auto;
+/* Override Element Styles */
+:deep(.el-table th.el-table__cell) {
+  background-color: var(--el-fill-color-light) !important;
 }
 
-.text-center {
-  text-align: left;
+:deep(.el-button--medium) {
+  padding: 10px 20px;
+  height: 36px;
 }
 
-.whitespace-pre-line {
-  white-space: pre-line;
-}
-
-.font-mono {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-.text-xs {
-  font-size: 0.75rem;
-  line-height: 1rem;
+.more-btn {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
 }
 </style>

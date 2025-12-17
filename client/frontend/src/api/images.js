@@ -8,6 +8,14 @@ export const getProxy = () => {
   })
 }
 
+// 获取代理历史
+export const getProxyHistory = () => {
+  return request({
+    url: '/images/proxy/history',
+    method: 'get'
+  })
+}
+
 // 更新 Docker 配置
 export const updateProxy = (data) => {
   return request({

@@ -39,11 +39,51 @@ func main() {
 		log.Printf("初始化全局设置失败: %v", err)
 	}
 
-	// 同步宿主机 Docker 代理与镜像加速配置到数据库
+	// 同步宿主机 Docker 代理与镜像加速配置到数据库（仅在数据库为空时执行）
 	func() {
-		// 优先通过 Docker API 读取运行时信息
-		cli, err := docker.NewDockerClient()
-		if err == nil {
+		db := database.GetDB()
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM docker_proxy").Scan(&count); err != nil {
+			log.Printf("读取 docker_proxy 计数失败: %v", err)
+			return
+		}
+		if count > 0 {
+			log.Printf("检测到已有 docker_proxy 配置，跳过宿主机同步")
+			return
+		}
+		// 优先读取 daemon.json，如果读取失败或为空，再回退到 Docker 运行时 info（支持 systemd 环境代理）
+		if cfg, err := docker.GetDaemonConfig(); err == nil && (cfg.Proxies != nil || len(cfg.RegistryMirrors) > 0) {
+			proxy := &database.DockerProxy{
+				Enabled: cfg.Proxies != nil,
+				HTTPProxy: func() string {
+					if cfg.Proxies != nil {
+						return cfg.Proxies.HTTPProxy
+					}
+					return ""
+				}(),
+				HTTPSProxy: func() string {
+					if cfg.Proxies != nil {
+						return cfg.Proxies.HTTPSProxy
+					}
+					return ""
+				}(),
+				NoProxy: func() string {
+					if cfg.Proxies != nil {
+						return cfg.Proxies.NoProxy
+					}
+					return ""
+				}(),
+				RegistryMirrors: database.MarshalRegistryMirrors(cfg.RegistryMirrors),
+			}
+			if err := database.SaveDockerProxy(proxy); err != nil {
+				log.Printf("保存宿主机 Docker 代理配置失败: %v", err)
+			} else {
+				log.Printf("已同步宿主机 Docker 代理与镜像加速配置 (daemon.json)")
+			}
+			return
+		}
+		// 回退：读取 Docker 运行时信息
+		if cli, err := docker.NewDockerClient(); err == nil {
 			defer cli.Close()
 			if info, err := cli.Info(context.Background()); err == nil {
 				mirrors := []string{}
@@ -58,45 +98,11 @@ func main() {
 					RegistryMirrors: database.MarshalRegistryMirrors(mirrors),
 				}
 				if err := database.SaveDockerProxy(proxy); err != nil {
-					log.Printf("保存宿主机 Docker 代理配置失败: %v", err)
+					log.Printf("保存宿主机 Docker 运行时代理配置失败: %v", err)
 				} else {
 					log.Printf("已同步宿主机 Docker 运行时代理与镜像加速配置")
 				}
-				return
 			}
-		}
-		// 回退：读取 daemon.json
-		cfg, err := docker.GetDaemonConfig()
-		if err != nil {
-			log.Printf("读取宿主机 Docker 配置失败: %v", err)
-			return
-		}
-		proxy := &database.DockerProxy{
-			Enabled: cfg.Proxies != nil,
-			HTTPProxy: func() string {
-				if cfg.Proxies != nil {
-					return cfg.Proxies.HTTPProxy
-				}
-				return ""
-			}(),
-			HTTPSProxy: func() string {
-				if cfg.Proxies != nil {
-					return cfg.Proxies.HTTPSProxy
-				}
-				return ""
-			}(),
-			NoProxy: func() string {
-				if cfg.Proxies != nil {
-					return cfg.Proxies.NoProxy
-				}
-				return ""
-			}(),
-			RegistryMirrors: database.MarshalRegistryMirrors(cfg.RegistryMirrors),
-		}
-		if err := database.SaveDockerProxy(proxy); err != nil {
-			log.Printf("保存宿主机 Docker 代理配置失败: %v", err)
-		} else {
-			log.Printf("已同步宿主机 Docker 代理与镜像加速配置 (daemon.json)")
 		}
 	}()
 
@@ -148,6 +154,10 @@ func main() {
 	// 静态文件服务
 	// 1. 静态资源 (assets) - 对应 dist/assets 目录
 	r.Static("/assets", "./dist/assets")
+	// 1.1 兼容旧路径：上传的导航图标
+	r.Static("/uploads/icons", filepath.Join(settings.GetDataDir(), "icons"))
+	// 1.2 新路径：统一静态图片目录 /data/pic
+	r.Static("/data/pic", filepath.Join(settings.GetDataDir(), "pic"))
 
 	// 2. 根路径路由
 	r.GET("/", func(c *gin.Context) {
@@ -175,13 +185,19 @@ func main() {
 		c.File("./dist/index.html")
 	})
 
-	port := os.Getenv("BACKEND_PORT")
+	port := strings.TrimSpace(os.Getenv("BACKEND_PORT"))
+	log.Printf("[DEBUG] Env BACKEND_PORT: '%s'", port)
+
 	if port == "" {
 		port = "8080"
+		log.Printf("[DEBUG] Using default port: 8080")
 	}
+
 	bind := os.Getenv("BACKEND_BIND")
 	if bind == "" {
 		bind = fmt.Sprintf(":%s", port)
 	}
+
+	log.Printf("[DEBUG] Starting server on %s", bind)
 	r.Run(bind)
 }

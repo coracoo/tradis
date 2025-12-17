@@ -1,23 +1,25 @@
 <template>
-  <div class="container compact-table">
-    <div class="header">
-      <div class="title">
+  <div class="detail-view">
+    <div class="header-bar">
+      <div class="header-left">
         <el-button link @click="goBack">
           <el-icon><Back /></el-icon>
         </el-button>
-        {{ containerName }}
-      </div>
-      <div class="status">
-        <el-tag :type="containerStatus === '运行中' ? 'success' : 'info'">
+        <div class="title">{{ containerName }}</div>
+        <el-tag :type="containerStatus === '运行中' ? 'success' : 'info'" class="status-tag">
           {{ containerStatus }}
         </el-tag>
       </div>
-      <div class="actions">
+      <div class="header-right">
+        <el-button @click="handleRefresh" plain size="medium" class="square-btn">
+          <template #icon><el-icon><Refresh /></el-icon></template>
+        </el-button>
         <el-button-group>
           <el-button 
             type="primary" 
             :disabled="containerStatus === '运行中'"
             @click="handleStart"
+            size="medium"
           >
             启动
           </el-button>
@@ -25,12 +27,14 @@
             type="warning" 
             :disabled="containerStatus !== '运行中'"
             @click="handleStop"
+            size="medium"
           >
             停止
           </el-button>
           <el-button 
             type="primary"
             @click="handleRestart"
+            size="medium"
           >
             重启
           </el-button>
@@ -38,94 +42,99 @@
       </div>
     </div>
 
-    <div class="content">
-      <el-tabs v-model="activeTab">
-        <el-tab-pane label="基本信息" name="info">
-          <div class="info-section">
-            <div class="resource-usage">
-              <el-row :gutter="20">
-                <el-col :span="6">
-                  <div class="metric-card">
-                    <div class="metric-title">CPU</div>
-                    <div class="metric-value">{{ cpuUsage }}%</div>
-                    <div class="metric-chart">
-                      <el-progress 
-                        :percentage="cpuUsage" 
-                        :color="getProgressColor(cpuUsage)"
-                      />
-                    </div>
-                  </div>
-                </el-col>
-                <el-col :span="6">
-                  <div class="metric-card">
-                    <div class="metric-title">内存</div>
-                    <div class="metric-value">{{ memoryUsage }}MB</div>
-                    <div class="metric-chart">
-                      <el-progress 
-                        :percentage="(memoryUsage / memoryLimit) * 100" 
-                        :color="getProgressColor((memoryUsage / memoryLimit) * 100)"
-                      />
-                    </div>
-                  </div>
-                </el-col>
-                <el-col :span="6">
-                  <div class="metric-card">
-                    <div class="metric-title">网络(上传)</div>
-                    <div class="metric-value">{{ networkUp }}</div>
-                  </div>
-                </el-col>
-                <el-col :span="6">
-                  <div class="metric-card">
-                    <div class="metric-title">网络(下载)</div>
-                    <div class="metric-value">{{ networkDown }}</div>
-                  </div>
-                </el-col>
-              </el-row>
-            </div>
+    <div class="content-wrapper">
+      <div class="scroll-content">
+        <div class="content-inner">
+          <el-tabs v-model="activeTab" class="detail-tabs">
+            <el-tab-pane label="基本信息" name="info">
+              <div class="info-section">
+                <div class="resource-usage">
+                  <el-row :gutter="20">
+                    <el-col :span="6">
+                      <div class="metric-card">
+                        <div class="metric-title">CPU</div>
+                        <div class="metric-value">{{ cpuUsage }}%</div>
+                        <div class="metric-chart">
+                          <el-progress 
+                            :percentage="cpuUsage" 
+                            :color="getProgressColor(cpuUsage)"
+                          />
+                        </div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="metric-card">
+                        <div class="metric-title">内存</div>
+                        <div class="metric-value">{{ memoryUsage }}MB</div>
+                        <div class="metric-chart">
+                          <el-progress 
+                            :percentage="(memoryUsage / memoryLimit) * 100" 
+                            :color="getProgressColor((memoryUsage / memoryLimit) * 100)"
+                          />
+                        </div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="metric-card">
+                        <div class="metric-title">网络(上传)</div>
+                        <div class="metric-value">{{ networkUp }}</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="metric-card">
+                        <div class="metric-title">网络(下载)</div>
+                        <div class="metric-value">{{ networkDown }}</div>
+                      </div>
+                    </el-col>
+                  </el-row>
+                </div>
 
-            <div class="detail-info">
-              <el-descriptions :column="2" border>
-                <el-descriptions-item label="容器名称">{{ containerName }}</el-descriptions-item>
-                <el-descriptions-item label="镜像">{{ imageInfo }}</el-descriptions-item>
-                <el-descriptions-item label="创建时间">{{ createTime }}</el-descriptions-item>
-                <el-descriptions-item label="运行时长">{{ uptime }}</el-descriptions-item>
-                <el-descriptions-item label="端口映射">{{ ports }}</el-descriptions-item>
-                <el-descriptions-item label="存储卷">{{ volumes }}</el-descriptions-item>
-                <el-descriptions-item label="网络">{{ networks }}</el-descriptions-item>
-                <el-descriptions-item label="重启策略">{{ restartPolicy }}</el-descriptions-item>
-              </el-descriptions>
-            </div>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="日志" name="logs">
-          <div class="logs-container">
-            <div class="logs-header">
-              <div class="logs-options">
-                <el-switch
-                  v-model="autoScroll"
-                  active-text="自动滚动"
-                />
-                <el-input
-                  v-model="logFilter"
-                  placeholder="过滤日志"
-                  style="width: 200px"
-                >
-                  <template #prefix>
-                    <el-icon><Search /></el-icon>
-                  </template>
-                </el-input>
+                <div class="detail-info">
+                  <el-descriptions :column="2" border>
+                    <el-descriptions-item label="容器名称">{{ containerName }}</el-descriptions-item>
+                    <el-descriptions-item label="镜像">{{ imageInfo }}</el-descriptions-item>
+                    <el-descriptions-item label="创建时间">{{ createTime }}</el-descriptions-item>
+                    <el-descriptions-item label="运行时长">{{ uptime }}</el-descriptions-item>
+                    <el-descriptions-item label="端口映射">{{ ports }}</el-descriptions-item>
+                    <el-descriptions-item label="存储卷">{{ volumes }}</el-descriptions-item>
+                    <el-descriptions-item label="网络">{{ networks }}</el-descriptions-item>
+                    <el-descriptions-item label="重启策略">{{ restartPolicy }}</el-descriptions-item>
+                  </el-descriptions>
+                </div>
               </div>
-              <el-button @click="handleClearLogs">清空日志</el-button>
-            </div>
-            <div class="logs-content" ref="logsRef">
-              <pre v-for="(log, index) in filteredLogs" 
-                   :key="index" 
-                   :class="getLogClass(log)">{{ log.content }}</pre>
-            </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+            </el-tab-pane>
+
+            <el-tab-pane label="日志" name="logs">
+              <div class="logs-container">
+                <div class="logs-header">
+                  <div class="logs-options">
+                    <el-switch
+                      v-model="autoScroll"
+                      active-text="自动滚动"
+                    />
+                    <el-input
+                      v-model="logFilter"
+                      placeholder="过滤日志"
+                      style="width: 200px"
+                      size="medium"
+                    >
+                      <template #prefix>
+                        <el-icon><Search /></el-icon>
+                      </template>
+                    </el-input>
+                  </div>
+                  <el-button @click="handleClearLogs" size="medium">清空日志</el-button>
+                </div>
+                <div class="logs-content" ref="logsRef">
+                  <pre v-for="(log, index) in filteredLogs" 
+                       :key="index" 
+                       :class="getLogClass(log)">{{ log.content }}</pre>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -134,7 +143,7 @@
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Back, Search } from '@element-plus/icons-vue'
+import { Back, Search, Refresh } from '@element-plus/icons-vue'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
 
@@ -165,8 +174,12 @@ const autoScroll = ref(true)
 const logFilter = ref('')
 const logs = ref([])
 const logsRef = ref(null)
-let logWebSocket = null
+let logStreamController = null
 let refreshTimer = null
+let statsTimer = null
+let prevRxBytes = null
+let prevTxBytes = null
+let prevTs = null
 
 // 计算属性和方法
 const filteredLogs = computed(() => {
@@ -195,6 +208,18 @@ const formatBytes = (bytes) => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+const handleRefresh = async () => {
+  loading.value = true
+  try {
+    await fetchContainerDetail()
+    ElMessage.success('刷新成功')
+  } catch (error) {
+    ElMessage.error('刷新失败')
+  } finally {
+    loading.value = false
+  }
 }
 
 // 获取容器详情
@@ -310,9 +335,11 @@ const fetchContainerDetail = async () => {
   }
 }
 
-// 操作方法
+// 返回按钮：根据管理模式跳转到对应页面（distributed: /containers，centralized: /compose）
 const goBack = () => {
-  router.push('/containers')
+  const mode = ((window.__ENV__ && window.__ENV__.MANAGEMENT_MODE) || import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toLowerCase()
+  const isCS = mode === 'centralized' || mode === 'cs'
+  router.push(isCS ? '/compose' : '/containers')
 }
 
 const handleStart = async () => {
@@ -353,73 +380,283 @@ const handleClearLogs = () => {
   logs.value = []
 }
 
-// 初始化 WebSocket 连接获取日志（示例）
-const initLogWebSocket = () => {
+// 启动日志流（复用 ContainerLogs.vue 的逻辑）
+const startLogsStream = async () => {
   if (!containerId.value) return
-  // 实现 WebSocket 连接逻辑...
+  try {
+    // 关闭已有流
+    if (logStreamController) {
+      try { logStreamController.abort() } catch {}
+      logStreamController = null
+    }
+    logs.value = []
+    logStreamController = new AbortController()
+    const token = localStorage.getItem('token')
+    const resp = await fetch(`/api/containers/${containerId.value}/logs`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+      signal: logStreamController.signal,
+    })
+    if (!resp.ok) {
+      ElMessage.error('日志获取失败')
+      return
+    }
+    const reader = resp.body?.getReader()
+    const decoder = new TextDecoder('utf-8')
+    if (!reader) return
+    while (true) {
+      let value
+      try {
+        const r = await reader.read()
+        if (r.done) break
+        value = r.value
+      } catch (err) {
+        if (err?.name === 'AbortError') {
+          return
+        }
+        throw err
+      }
+      const chunk = decoder.decode(value, { stream: true })
+      // 按行拆分并推入日志
+      const lines = chunk.split('\n').filter(l => l.length > 0)
+      for (const line of lines) {
+        const lower = line.toLowerCase()
+        const level = lower.includes('error') || lower.includes('err') ? 'error'
+                    : lower.includes('warn') ? 'warning'
+                    : 'info'
+        logs.value.push({ content: line, level })
+      }
+      if (autoScroll.value && logsRef.value) {
+        nextTick(() => {
+          logsRef.value.scrollTop = logsRef.value.scrollHeight
+        })
+      }
+    }
+    // flush
+    const rest = decoder.decode()
+    if (rest) {
+      const lines = rest.split('\n').filter(l => l.length > 0)
+      for (const line of lines) {
+        logs.value.push({ content: line, level: 'info' })
+      }
+    }
+  } catch (e) {
+    console.error('日志流错误:', e)
+    if (e?.name !== 'AbortError') {
+      ElMessage.error('日志获取失败')
+    }
+  }
 }
+
+// 获取资源使用情况
+const fetchContainerStats = async () => {
+  if (!containerId.value) return
+  try {
+    const res = await api.containers.stats(containerId.value)
+    const data = res.data || res
+    const ts = data.timestamp || Math.floor(Date.now() / 1000)
+    // CPU
+    cpuUsage.value = Math.max(0, Math.min(100, Number(data.cpu_percent || 0)))
+    // Memory (MB)
+    memoryUsage.value = Number(((data.memory_usage || 0) / (1024 * 1024)).toFixed(2))
+    memoryLimit.value = Number(((data.memory_limit || 0) / (1024 * 1024)).toFixed(2))
+    // Network rate (B/s)
+    const rx = Number(data.net_rx_bytes || 0)
+    const tx = Number(data.net_tx_bytes || 0)
+    if (prevRxBytes != null && prevTxBytes != null && prevTs != null) {
+      const dt = Math.max(1, (ts - prevTs)) // 秒
+      const upRate = (tx - prevTxBytes) / dt
+      const downRate = (rx - prevRxBytes) / dt
+      networkUp.value = `${formatBytes(upRate)}/s`
+      networkDown.value = `${formatBytes(downRate)}/s`
+    }
+    prevRxBytes = rx
+    prevTxBytes = tx
+    prevTs = ts
+  } catch (e) {
+    console.error('获取资源统计失败:', e)
+  }
+}
+
+// 监听标签页切换，进入“日志”时拉取日志
+watch(activeTab, (tab) => {
+  if (tab === 'logs') {
+    startLogsStream()
+  } else {
+    if (logStreamController) {
+      try { logStreamController.abort() } catch {}
+      logStreamController = null
+    }
+  }
+})
 
 onMounted(() => {
   fetchContainerDetail()
-  refreshTimer = setInterval(fetchContainerDetail, 5000)
+  refreshTimer = setInterval(fetchContainerDetail, 10000)
+  statsTimer = setInterval(fetchContainerStats, 5000)
+  // 如果默认展示日志标签页，则立即启动日志
+  if (activeTab.value === 'logs') {
+    startLogsStream()
+  }
 })
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
-  if (logWebSocket) logWebSocket.close()
+  if (statsTimer) clearInterval(statsTimer)
+  if (logStreamController) {
+    try { logStreamController.abort() } catch {}
+    logStreamController = null
+  }
 })
 </script>
 
 <style scoped>
-.container { padding: 0; }
+.detail-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px 24px;
+}
 
-.header { display: flex; align-items: center; margin-bottom: 12px; gap: 12px; }
+.header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  padding: 12px 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  flex-shrink: 0;
+}
 
-.title { display: flex; align-items: center; font-size: 18px; font-weight: bold; gap: 8px; }
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 
-.content {
-  background: #fff;
-  border-radius: 4px;
+.title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-tag {
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 28px;
+  line-height: 26px;
+  font-weight: 500;
+}
+
+.square-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.content-wrapper {
+  flex: 1;
+  overflow: hidden;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll-content {
+  flex: 1;
+  overflow-y: auto;
   padding: 20px;
 }
 
-.metric-card {
-  background: #f5f7fa;
-  padding: 15px;
-  border-radius: 4px;
+.content-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* 覆盖 el-tabs 样式 */
+:deep(.el-tabs__header) {
   margin-bottom: 20px;
+}
+
+:deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background-color: var(--el-border-color-lighter);
+}
+
+:deep(.el-tabs__item) {
+  font-size: 15px;
+  color: var(--el-text-color-secondary);
+  font-weight: 500;
+}
+
+:deep(.el-tabs__item.is-active) {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+:deep(.el-tabs__active-bar) {
+  background-color: var(--el-color-primary);
+  height: 2px;
+}
+
+.metric-card {
+  background: var(--el-fill-color-light);
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .metric-title {
   font-size: 14px;
-  color: #606266;
-  margin-bottom: 10px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 8px;
+  font-weight: 500;
 }
 
 .metric-value {
   font-size: 24px;
-  font-weight: bold;
-  margin-bottom: 10px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 12px;
 }
 
 .detail-info {
-  margin-top: 20px;
+  margin-top: 24px;
+  background: var(--el-bg-color);
 }
 
 .logs-container {
   height: 600px;
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .logs-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px;
-  background: #f5f7fa;
-  border: 1px solid #dcdfe6;
-  border-bottom: none;
+  padding: 12px 16px;
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .logs-options {
@@ -432,10 +669,11 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   background: #1e1e1e;
-  color: #fff;
-  padding: 10px;
-  font-family: monospace;
-  border: 1px solid #dcdfe6;
+  color: #e2e8f0;
+  padding: 16px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .logs-content pre {
@@ -445,14 +683,14 @@ onUnmounted(() => {
 }
 
 .logs-content .error {
-  color: #ff4949;
+  color: #ef4444;
 }
 
 .logs-content .warning {
-  color: #e6a23c;
+  color: #f59e0b;
 }
 
 .logs-content .info {
-  color: #67c23a;
+  color: #22c55e;
 }
 </style>

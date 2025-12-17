@@ -13,6 +13,12 @@ const service = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   config => {
+    // 如果是 FormData，移除默认的 JSON Content-Type，让浏览器自动设置带 boundary 的头
+    if (config.data instanceof FormData) {
+      if (config.headers && config.headers['Content-Type']) {
+        delete config.headers['Content-Type']
+      }
+    }
     // 自动添加 Token
     const token = localStorage.getItem('token')
     if (token) {
@@ -55,11 +61,16 @@ service.interceptors.response.use(
     
       switch (status) {
         case 401:
-          errorMessage = '登录已过期，请重新登录'
-          // 清除 token 并跳转到登录页
-          localStorage.removeItem('token')
-          if (window.location.pathname !== '/login') {
-            window.location.href = '/login'
+          if (error.config?.url && error.config.url.includes('/auth/login')) {
+            errorMessage = '账号或密码错误'
+          } else if (data && (data.error === 'Invalid username or password')) {
+            errorMessage = '账号或密码错误'
+          } else {
+            errorMessage = '登录已过期，请重新登录'
+            localStorage.removeItem('token')
+            if (window.location.pathname !== '/login') {
+              window.location.href = '/login'
+            }
           }
           break
         case 404:
