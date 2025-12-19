@@ -147,7 +147,7 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="260" align="center">
+                <el-table-column label="操作" width="260" fixed="left" align="center">
                   <template #default="scope">
                     <div class="op-buttons">
                       <el-tooltip content="终端" placement="top" :show-after="500">
@@ -191,7 +191,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="项目 / 容器名称" min-width="300" sortable="custom" prop="name">
+        <el-table-column label="项目/容器名称" min-width="200" sortable="custom" prop="name">
           <template #default="scope">
             <div class="project-name-cell" @click="handleNameClick(scope.row)">
               <div class="icon-wrapper" :class="scope.row.type">
@@ -206,7 +206,16 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="项目路径" min-width="280" header-align="left" sortable="custom" prop="path">
+
+        <el-table-column label="容器数量" min-width="120" align="left" sortable="custom" prop="count">
+          <template #default="scope">
+            <div class="count-badge">
+              {{ scope.row.containers?.length || 0 }}
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="项目路径" min-width="180" header-align="left" sortable="custom" prop="path">
           <template #default="scope">
             <div class="path-text text-gray" v-if="scope.row.type === 'compose'">
               {{ isManagedProject(scope.row.path) ? scope.row.path : '非本项目管理Compose' }}
@@ -215,15 +224,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="服务数量" width="120" align="center" sortable="custom" prop="count">
-          <template #default="scope">
-            <div class="count-badge">
-              {{ scope.row.containers?.length || 0 }}
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="创建时间" min-width="160" header-align="left" sortable="custom" prop="createTime">
+        <el-table-column label="创建时间" min-width="140" header-align="left" sortable="custom" prop="createTime">
           <template #default="scope">
             <div class="text-gray font-mono whitespace-pre-line" v-if="scope.row.type === 'compose'">
               {{ formatTimeTwoLines(scope.row.createTime) }}
@@ -234,7 +235,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="运行状态" width="160" sortable="custom" prop="status">
+        <el-table-column label="运行状态" width="120" sortable="custom" prop="status">
           <template #default="scope">
             <div class="status-indicator">
               <span class="status-point" :class="{
@@ -247,7 +248,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="240" fixed="right" align="center">
+        <el-table-column label="操作" width="240" fixed="left" align="center">
           <template #default="scope">
             <div class="row-ops" v-if="scope.row.type === 'compose'">
               <el-tooltip content="启动项目" placement="top">
@@ -309,23 +310,123 @@
       v-model="logDialogVisible"
       :container="currentContainer"
     />
+
+    <el-dialog
+      :title="dialogTitle"
+      v-model="dialogVisible"
+      width="1200px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      class="project-dialog"
+      append-to-body
+      @close="handleDialogClose"
+    >
+      <div class="project-dialog-body">
+        <div class="project-form-column">
+          <el-form :model="projectForm" label-width="100px" class="compact-form">
+            <el-form-item label="项目名称" required>
+              <el-input v-model="projectForm.name" placeholder="请输入项目名称" />
+            </el-form-item>
+            <el-form-item label="存放路径" required>
+              <el-input v-model="projectForm.path" placeholder="自动生成" readonly>
+                <template #append>
+                  <el-tooltip content="项目将存放在 project 目录下">
+                    <el-icon><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </template>
+              </el-input>
+            </el-form-item>
+            <el-form-item label="Compose" required>
+              <div class="compose-editor-container">
+                <div class="editor-toolbar">
+                  <span class="file-name">docker-compose.yml</span>
+                  <el-dropdown trigger="click">
+                    <el-button size="small" link type="primary">
+                      插入模板<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item @click="() => handleTemplateSelect('nginx')">Nginx</el-dropdown-item>
+                        <el-dropdown-item @click="() => handleTemplateSelect('mysql')">MySQL</el-dropdown-item>
+                        <el-dropdown-item @click="() => handleTemplateSelect('redis')">Redis</el-dropdown-item>
+                        <el-dropdown-item @click="() => handleTemplateSelect('wordpress')">WordPress</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
+                <div ref="editorContainer" class="monaco-editor-wrapper"></div>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-checkbox v-model="projectForm.autoStart">创建完成后立即运行</el-checkbox>
+            </el-form-item>
+          </el-form>
+        </div>
+        <div class="project-logs-column">
+          <div class="deploy-logs">
+            <div class="logs-header">
+              <span>部署日志</span>
+            </div>
+            <div ref="logsContent" class="logs-content">
+              <div v-if="deployLogs.length === 0" class="log-empty">
+                暂无部署日志，点击“立即部署”后将在此展示实时输出。
+              </div>
+              <div
+                v-else
+                v-for="(log, index) in deployLogs"
+                :key="index"
+                :class="['log-line', log.type]"
+              >
+                {{ log.message }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSaveProject">立即部署</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, nextTick, shallowRef, onBeforeUnmount, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Plus, Refresh, Remove, Search, VideoPlay, VideoPause, Edit, Delete, CircleClose,
-  Folder, Box, Platform, Connection, MoreFilled, ArrowDown, Document, Monitor
+  Folder, Box, Platform, Connection, MoreFilled, ArrowDown, Document, Monitor, InfoFilled
 } from '@element-plus/icons-vue'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
 import ContainerLogs from '../components/ContainerLogs.vue'
+let monaco = null
+const loadMonaco = async () => {
+  if (monaco) return monaco
+  await new Promise((resolve) => {
+    if (window.monaco) return resolve()
+    const script = document.createElement('script')
+    script.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs/loader.js'
+    script.onload = () => {
+      window.require.config({
+        paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs' }
+      })
+      window.require(['vs/editor/editor.main'], () => resolve())
+    }
+    document.head.appendChild(script)
+  })
+  monaco = window.monaco
+  return monaco
+}
 
 const router = useRouter()
+const route = useRoute()
+const managementMode = (import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toUpperCase()
 const loading = ref(false)
 const statusFilter = ref('')
 const searchQuery = ref('')
@@ -349,6 +450,67 @@ const pageSize = ref(10)
 const terminalDialogVisible = ref(false)
 const logDialogVisible = ref(false)
 const currentContainer = ref(null)
+
+const dialogVisible = ref(false)
+const dialogTitle = ref('新建项目')
+const logsContent = ref(null)
+const deployLogs = ref([])
+const projectForm = ref({
+  name: '',
+  path: '',
+  compose: '',
+  autoStart: true
+})
+
+const editorInstance = shallowRef(null)
+const editorContainer = ref(null)
+
+const editorOptions = {
+  value: '',
+  language: 'yaml',
+  theme: 'vs',
+  automaticLayout: true,
+  minimap: { enabled: false },
+  lineNumbers: 'on',
+  roundedSelection: false,
+  scrollBeyondLastLine: false,
+  fontSize: 14,
+  tabSize: 2,
+  renderWhitespace: 'all',
+  readOnly: false,
+  contextmenu: true,
+  selectOnLineNumbers: true,
+  multiCursorModifier: 'alt',
+  wordWrap: 'on',
+  dragAndDrop: true,
+  formatOnPaste: true,
+  mouseWheelZoom: true,
+  folding: true,
+  links: true,
+  copyWithSyntaxHighlighting: true
+}
+
+const initEditor = async () => {
+  if (editorContainer.value) {
+    if (editorInstance.value) {
+      editorInstance.value.dispose()
+    }
+    await loadMonaco()
+    editorInstance.value = monaco.editor.create(editorContainer.value, editorOptions)
+    editorInstance.value.onDidChangeModelContent(() => {
+      projectForm.value.compose = editorInstance.value.getValue()
+    })
+    editorInstance.value.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      handleSaveProject()
+    })
+  }
+}
+
+onBeforeUnmount(() => {
+  if (editorInstance.value) {
+    editorInstance.value.dispose()
+  }
+})
 
 const refreshAll = async () => {
   loading.value = true
@@ -433,6 +595,24 @@ const refreshAll = async () => {
   }
 }
 
+const normalizeComposeName = (name) => {
+  const lower = String(name || '').toLowerCase()
+  const sanitized = lower.replace(/[^a-z0-9_-]/g, '')
+  const trimmed = sanitized.replace(/^[^a-z0-9]+/, '')
+  return trimmed || 'project'
+}
+
+watch(
+  () => projectForm.value.name,
+  (newName) => {
+    if (dialogTitle.value === '新建项目') {
+      const basePath = 'project'
+      const normalized = normalizeComposeName(newName)
+      projectForm.value.path = normalized ? `${basePath}/${normalized}` : basePath
+    }
+  }
+)
+
 const filteredItems = computed(() => {
   let list = items.value.slice()
   const q = (searchQuery.value || '').trim().toLowerCase()
@@ -503,7 +683,25 @@ const handleCurrentChange = (val) => {
   currentPage.value = val
 }
 
-const goCreateProject = () => router.push('/projects')
+const handleDialogClose = () => {
+  dialogVisible.value = false
+  deployLogs.value = []
+}
+
+const goCreateProject = () => {
+  dialogTitle.value = '新建项目'
+  projectForm.value = {
+    name: '',
+    path: '',
+    compose: '',
+    autoStart: true
+  }
+  dialogVisible.value = true
+  deployLogs.value = []
+  nextTick(() => {
+    initEditor()
+  })
+}
 
 const handleGlobalAction = (cmd) => {
   if (cmd === 'prune') pruneContainers()
@@ -678,14 +876,246 @@ const openLogs = (container) => {
   logDialogVisible.value = true
 }
 
-const isManagedProject = (path) => {
-  if (!path) return false
-  if (String(path).startsWith('data/project/')) return true
-  const normalizedPath = String(path).replace(/\\/g, '/')
-  return normalizedPath.includes('/data/project/')
+const handleTemplateSelect = (command) => {
+  let template = ''
+  switch (command) {
+    case 'nginx':
+      template = `version: '3'
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./data:/usr/share/nginx/html
+    environment:
+      - TZ=Asia/Shanghai
+    restart: always`
+      break
+    case 'mysql':
+      template = `version: '3'
+services:
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=mydb
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/var/lib/mysql
+    restart: always`
+      break
+    case 'redis':
+      template = `version: '3'
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data:/data
+    command: redis-server --appendonly yes
+    restart: always`
+      break
+    case 'wordpress':
+      template = `version: '3'
+services:
+  wordpress:
+    image: wordpress:latest
+    ports:
+      - "80:80"
+    environment:
+      - WORDPRESS_DB_HOST=db
+      - WORDPRESS_DB_USER=wordpress
+      - WORDPRESS_DB_PASSWORD=wordpress
+      - WORDPRESS_DB_NAME=wordpress
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./wordpress:/var/www/html
+    depends_on:
+      - db
+    restart: always
+  
+  db:
+    image: mysql:5.7
+    environment:
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_USER=wordpress
+      - MYSQL_PASSWORD=wordpress
+      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./db:/var/lib/mysql
+    restart: always`
+      break
+  }
+
+  if (editorInstance.value && template) {
+    editorInstance.value.setValue(template)
+  }
 }
 
-onMounted(refreshAll)
+const isManagedProject = (path) => {
+  if (!path) return false
+  if (String(path).startsWith('project/')) return true
+  const normalizedPath = String(path).replace(/\\/g, '/')
+  return normalizedPath.includes('project/')
+}
+
+const handleSaveProject = async () => {
+  if (!projectForm.value.name || !projectForm.value.compose) {
+    ElMessage.warning('请填写必要信息')
+    return
+  }
+
+  const normalizedName = normalizeComposeName(projectForm.value.name)
+
+  if (normalizedName !== projectForm.value.name) {
+    try {
+      await ElMessageBox.confirm(
+        `当前项目名称 "${projectForm.value.name}" 包含 Docker Compose 不支持的字符，将使用规范化名称 "${normalizedName}" 作为项目名进行部署（目录及项目列表将以该名称显示）。是否继续？`,
+        '项目名称规范化',
+        {
+          confirmButtonText: '继续部署',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } catch (e) {
+      return
+    }
+    projectForm.value.name = normalizedName
+  }
+
+  const exists = items.value.some(i => i.type === 'compose' && i.name === projectForm.value.name)
+  if (exists) {
+    ElMessage.warning('该项目名称已存在，请使用其他名称')
+    return
+  }
+
+  deployLogs.value = []
+
+  try {
+    if (!projectForm.value.compose.includes('services:')) {
+      throw new Error('YAML格式错误：缺少services定义')
+    }
+    if (projectForm.value.compose.includes('/binsh')) {
+      deployLogs.value.push({
+        type: 'warning',
+        message: '警告：检测到可能的路径错误，"/binsh" 应该为 "/bin/sh"'
+      })
+      projectForm.value.compose = projectForm.value.compose.replace(/\/binsh\b/g, '/bin/sh')
+    }
+  } catch (error) {
+    deployLogs.value.push({
+      type: 'error',
+      message: `配置验证失败: ${error.message}`
+    })
+    ElMessage.error(`配置验证失败: ${error.message}`)
+    return
+  }
+
+  try {
+    const encodedCompose = encodeURIComponent(projectForm.value.compose)
+    const token = localStorage.getItem('token') || ''
+    const eventSource = new EventSource(
+      `/api/compose/deploy/events?name=${projectForm.value.name}&compose=${encodedCompose}&token=${token}`
+    )
+
+    const logSet = new Set()
+    const timeout = setTimeout(() => {
+      deployLogs.value.push({
+        type: 'warning',
+        message: '日志连接超时，请稍后在项目列表查看状态'
+      })
+      eventSource.close()
+    }, 600000)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const key = `${data.type}:${data.message}`
+        if (!logSet.has(key)) {
+          logSet.add(key)
+          deployLogs.value.push({
+            type: data.type,
+            message: data.message
+          })
+        }
+        nextTick(() => {
+          if (logsContent.value) {
+            logsContent.value.scrollTop = logsContent.value.scrollHeight
+          }
+        })
+        if (data.type === 'success' && data.message.includes('所有服务已成功启动')) {
+          clearTimeout(timeout)
+          ElMessage.success(data.message)
+          setTimeout(() => {
+            eventSource.close()
+            dialogVisible.value = false
+            refreshAll()
+          }, 500)
+        } else if (data.type === 'error') {
+          ElMessage.error(data.message)
+        }
+      } catch (e) {
+        deployLogs.value.push({
+          type: 'error',
+          message: `解析服务器消息失败: ${e.message}`
+        })
+      }
+    }
+
+    eventSource.onerror = () => {
+      clearTimeout(timeout)
+      const hasSuccess = deployLogs.value.some(l => l.type === 'success')
+      if (!hasSuccess) {
+        deployLogs.value.push({
+          type: 'error',
+          message: '与服务器连接中断，部署可能已失败'
+        })
+      }
+      eventSource.close()
+    }
+  } catch (error) {
+    deployLogs.value.push({
+      type: 'error',
+      message: `部署失败: ${error.message || '未知错误'}`
+    })
+    ElMessage.error(`部署失败: ${error.message || '未知错误'}`)
+  }
+}
+
+onMounted(() => {
+  const q = route.query.status
+  if (typeof q === 'string') {
+    if (q === 'running') {
+      statusFilter.value = '运行中'
+    } else if (q === 'stopped') {
+      statusFilter.value = '已停止'
+    } else {
+      statusFilter.value = ''
+    }
+  }
+  refreshAll()
+})
+
+watch(
+  () => route.query.status,
+  (val) => {
+    if (typeof val === 'string') {
+      if (val === 'running') {
+        statusFilter.value = '运行中'
+      } else if (val === 'stopped') {
+        statusFilter.value = '已停止'
+      } else {
+        statusFilter.value = ''
+      }
+    }
+  }
+)
 </script>
 
 <style scoped>
@@ -733,6 +1163,87 @@ onMounted(refreshAll)
 .main-table {
   flex: 1;
   min-height: 0;
+}
+
+.project-dialog-body {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.project-form-column {
+  flex: 3;
+  min-width: 0;
+}
+
+.project-logs-column {
+  flex: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.compose-editor-container {
+  width: 100%;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color);
+}
+
+.file-name {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  font-family: monospace;
+}
+
+.monaco-editor-wrapper {
+  height: 400px;
+  width: 100%;
+}
+
+.deploy-logs {
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.logs-header {
+  padding: 8px 12px;
+  background-color: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.logs-content {
+  background-color: var(--el-fill-color-darker);
+  color: var(--el-text-color-primary);
+  padding: 16px;
+  font-family: monospace;
+  height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.log-line {
+  margin-bottom: 2px;
+}
+
+.log-empty {
+  color: var(--el-text-color-secondary);
 }
 
 /* Custom Table Styles */
@@ -797,13 +1308,7 @@ onMounted(refreshAll)
 }
 
 .count-badge {
-  background: var(--el-fill-color-lighter);
-  color: var(--el-text-color-regular);
-  padding: 4px 12px;
-  border-radius: 16px;
-  font-size: 14px;
-  font-weight: 600;
-  display: inline-block;
+  font-size: 12px;
 }
 
 .status-indicator {

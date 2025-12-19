@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"dockerpanel/backend/pkg/database"
 	"dockerpanel/backend/pkg/docker"
 	"dockerpanel/backend/pkg/system"
 	"encoding/json"
@@ -27,6 +28,10 @@ func RegisterSystemRoutes(r *gin.RouterGroup) {
 		group.GET("/info", getSystemInfo)
 		group.GET("/stats", getSystemStats)
 		group.GET("/events", getSystemEvents)
+		group.POST("/notifications", addNotification)
+		group.GET("/notifications", getNotifications)
+		group.DELETE("/notifications/:id", deleteNotification)
+		group.POST("/notifications/read", markNotificationsRead)
 	}
 }
 
@@ -40,11 +45,15 @@ func getSystemInfo(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	// 获取Docker信息
 	info, err := cli.Info(context.Background())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取Docker信息失败: " + err.Error()})
 		return
+	}
+
+	versionInfo, err := cli.ServerVersion(context.Background())
+	if err != nil {
+		versionInfo = types.Version{}
 	}
 
 	// 获取数据卷列表以统计数量
@@ -91,24 +100,26 @@ func getSystemInfo(c *gin.Context) {
 
 	// 构建响应
 	response := gin.H{
-		"ServerVersion": info.ServerVersion,
-		"NCPU":          info.NCPU,
-		"MemTotal":      memInfo.Total,
-		"MemUsage":      memInfo.Used,
-		"DiskTotal":     diskInfo.Total,
-		"DiskUsage":     diskInfo.Used,
-		"CpuUsage":      cpuPercent[0],
-		"SystemTime":    info.SystemTime,
-		"SystemUptime":  uptime,
-		"OS":            runtime.GOOS,
-		"Arch":          runtime.GOARCH,
-		"Containers":    info.Containers,
+		"ServerVersion":     info.ServerVersion,
+		"DockerVersion":     versionInfo.Version,
+		"DockerAPIVersion":  versionInfo.APIVersion,
+		"NCPU":              info.NCPU,
+		"MemTotal":          memInfo.Total,
+		"MemUsage":          memInfo.Used,
+		"DiskTotal":         diskInfo.Total,
+		"DiskUsage":         diskInfo.Used,
+		"CpuUsage":          cpuPercent[0],
+		"SystemTime":        info.SystemTime,
+		"SystemUptime":      uptime,
+		"OS":                runtime.GOOS,
+		"Arch":              runtime.GOARCH,
+		"Containers":        info.Containers,
 		"ContainersRunning": info.ContainersRunning,
 		"ContainersPaused":  info.ContainersPaused,
 		"ContainersStopped": info.ContainersStopped,
-		"Images":        info.Images,
-		"Volumes":       volumeCount,
-		"Networks":      networkCount,
+		"Images":            info.Images,
+		"Volumes":           volumeCount,
+		"Networks":          networkCount,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -300,4 +311,70 @@ func getSystemEvents(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, eventList)
+}
+
+type notificationRequest struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+func addNotification(c *gin.Context) {
+	var req notificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification"})
+		return
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message is required"})
+		return
+	}
+	n := &database.Notification{
+		Type:    req.Type,
+		Message: message,
+		Read:    false,
+	}
+	if err := database.SaveNotification(n); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存通知失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, n)
+}
+
+func getNotifications(c *gin.Context) {
+	limitStr := c.Query("limit")
+	limit := 50
+	if limitStr != "" {
+		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	list, err := database.GetNotifications(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取通知失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+func deleteNotification(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	if err := database.DeleteNotification(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除通知失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func markNotificationsRead(c *gin.Context) {
+	if err := database.MarkAllNotificationsRead(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "标记通知已读失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }

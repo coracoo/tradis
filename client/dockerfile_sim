@@ -17,7 +17,8 @@ COPY frontend ./
 RUN npm run build
 
 FROM alpine:3.19
-ENV BACKEND_PORT=8080 FRONTEND_PORT=3000
+ENV BACKEND_PORT=8080
+## FRONTEND_PORT=3000
 RUN apk add --no-cache tini sqlite-libs docker-cli docker-cli-compose nginx netcat-openbsd
 WORKDIR /app
 COPY --from=backend-builder /app/bin/backend /app/backend/backend
@@ -30,6 +31,7 @@ VOLUME ["/app/client/backend/data"]
 VOLUME ["/var/run/docker.sock"]
 VOLUME ["/etc/docker/daemon.json"]
 # EXPOSE 3000 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD sh -c 'nc -z 127.0.0.1 ${BACKEND_PORT:-8080} && nc -z 127.0.0.1 ${FRONTEND_PORT:-3000}'
+# HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD sh -c 'nc -z 127.0.0.1 ${BACKEND_PORT:-8080} && nc -z 127.0.0.1 ${FRONTEND_PORT:-3000}'
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD sh -c 'nc -z 127.0.0.1 ${BACKEND_PORT:-8080}'
 ENTRYPOINT ["/sbin/tini","-g","--"]
 CMD ["/bin/sh","/app/start.sh"]

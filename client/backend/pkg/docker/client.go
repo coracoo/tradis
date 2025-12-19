@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -261,8 +262,31 @@ func parsePorts(ports []string) nat.PortMap {
 	return portMap
 }
 
+func detectDockerAPIVersion() (string, error) {
+	cmd := exec.Command("docker", "version", "--format", "{{.Server.APIVersion}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	version := strings.TrimSpace(string(output))
+	if version == "" || version == "<no value>" {
+		return "", fmt.Errorf("docker cli returned empty api version")
+	}
+	return version, nil
+}
+
 // 修改构造函数返回自定义Client
 func NewDockerClient() (*Client, error) {
+	if apiVersion, err := detectDockerAPIVersion(); err == nil && apiVersion != "" {
+		cli, err := client.NewClientWithOpts(
+			client.WithHost("unix:///var/run/docker.sock"),
+			client.WithVersion(apiVersion),
+		)
+		if err == nil {
+			return &Client{cli}, nil
+		}
+	}
+
 	cli, err := client.NewClientWithOpts(
 		client.WithHost("unix:///var/run/docker.sock"),
 		client.WithAPIVersionNegotiation(),

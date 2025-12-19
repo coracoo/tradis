@@ -177,6 +177,7 @@ const logsRef = ref(null)
 let logStreamController = null
 let refreshTimer = null
 let statsTimer = null
+let statsEventSource = null
 let prevRxBytes = null
 let prevTxBytes = null
 let prevTs = null
@@ -329,6 +330,10 @@ const fetchContainerDetail = async () => {
     // 这里简单设置一些默认值，实际应该从后端获取实时状态
     // memoryLimit.value = data.HostConfig.Memory || 0 // Docker API 这里的单位可能是字节
     
+    // 获取到容器ID后，启动资源统计流
+    try {
+      startStatsStream()
+    } catch {}
   } catch (error) {
     console.error('获取容器详情失败:', error)
     ElMessage.error('获取容器详情失败')
@@ -489,10 +494,71 @@ watch(activeTab, (tab) => {
   }
 })
 
+// 启动资源统计 SSE 流
+const startStatsStream = () => {
+  // 若已有定时器或流，先清理
+  if (statsTimer) {
+    try { clearInterval(statsTimer) } catch {}
+    statsTimer = null
+  }
+  if (statsEventSource) {
+    try { statsEventSource.close() } catch {}
+    statsEventSource = null
+  }
+  if (!containerId.value) return
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/containers/${containerId.value}/stats/stream?token=${encodeURIComponent(token)}`
+  try {
+    statsEventSource = new EventSource(url)
+    statsEventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const ts = data.timestamp || Math.floor(Date.now() / 1000)
+        cpuUsage.value = Math.max(0, Math.min(100, Number(data.cpu_percent || 0)))
+        memoryUsage.value = Number(((data.memory_usage || 0) / (1024 * 1024)).toFixed(2))
+        memoryLimit.value = Number(((data.memory_limit || 0) / (1024 * 1024)).toFixed(2))
+        // 使用后端提供的速率，如无则回退本地计算
+        if (typeof data.up_rate === 'number' && typeof data.down_rate === 'number') {
+          networkUp.value = `${formatBytes(data.up_rate)}/s`
+          networkDown.value = `${formatBytes(data.down_rate)}/s`
+        } else {
+          const rx = Number(data.net_rx_bytes || 0)
+          const tx = Number(data.net_tx_bytes || 0)
+          if (prevRxBytes != null && prevTxBytes != null && prevTs != null) {
+            const dt = Math.max(1, (ts - prevTs))
+            const upRate = (tx - prevTxBytes) / dt
+            const downRate = (rx - prevRxBytes) / dt
+            networkUp.value = `${formatBytes(upRate)}/s`
+            networkDown.value = `${formatBytes(downRate)}/s`
+          }
+          prevRxBytes = rx
+          prevTxBytes = tx
+          prevTs = ts
+        }
+      } catch (e) {
+        // 忽略单次解析错误
+      }
+    }
+    statsEventSource.onerror = () => {
+      // 流错误时，回退为轮询模式
+      try { statsEventSource.close() } catch {}
+      statsEventSource = null
+      if (!statsTimer) {
+        statsTimer = setInterval(fetchContainerStats, 5000)
+      }
+    }
+  } catch (e) {
+    // 创建流失败时，回退轮询
+    if (!statsTimer) {
+      statsTimer = setInterval(fetchContainerStats, 5000)
+    }
+  }
+}
+
 onMounted(() => {
   fetchContainerDetail()
   refreshTimer = setInterval(fetchContainerDetail, 10000)
-  statsTimer = setInterval(fetchContainerStats, 5000)
+  // SSE 启动在 fetchContainerDetail 完成后调用
   // 如果默认展示日志标签页，则立即启动日志
   if (activeTab.value === 'logs') {
     startLogsStream()
@@ -502,6 +568,10 @@ onMounted(() => {
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   if (statsTimer) clearInterval(statsTimer)
+  if (statsEventSource) {
+    try { statsEventSource.close() } catch {}
+    statsEventSource = null
+  }
   if (logStreamController) {
     try { logStreamController.abort() } catch {}
     logStreamController = null

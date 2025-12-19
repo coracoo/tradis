@@ -14,12 +14,43 @@
           <el-icon><Refresh /></el-icon>
         </el-button>
       </el-tooltip>
-      
-      <el-tooltip content="消息通知" placement="bottom">
-        <el-button circle text @click="showNotifications">
-          <el-icon><Bell /></el-icon>
-        </el-button>
-      </el-tooltip>
+
+      <div class="notification-area">
+        <el-tooltip content="消息通知" placement="bottom">
+          <div class="notification-wrapper">
+            <el-button circle text @click="showNotifications">
+              <el-icon><Bell /></el-icon>
+            </el-button>
+            <span v-if="hasUnreadNotifications" class="notification-dot"></span>
+          </div>
+        </el-tooltip>
+        <div v-if="notificationPanelVisible" class="notification-panel">
+          <div class="notification-header">
+            <span class="header-title">消息中心</span>
+          </div>
+          <div v-if="!notifications.length" class="notification-empty">
+            暂无消息
+          </div>
+          <div v-else class="notification-list">
+            <div
+              v-for="(item, index) in notifications.slice(0, 10)"
+              :key="item.id || index"
+              class="notification-item"
+            >
+              <div class="item-time">{{ item.time }}</div>
+              <div class="item-message">{{ item.message }}</div>
+              <el-button
+                text
+                type="danger"
+                size="small"
+                @click.stop="handleDeleteNotification(item)"
+              >
+                删除
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <el-tooltip :content="isDark ? '切换到亮色模式' : '切换到暗色模式'" placement="bottom">
         <el-button circle text @click="toggleTheme">
@@ -44,11 +75,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { Refresh, Bell, Moon, Sunny } from '@element-plus/icons-vue'
-
+import api from '../api'
+import request from '../utils/request'
 const props = defineProps({
   title: { type: String, default: 'Dockpier' }
 })
@@ -75,10 +107,57 @@ const displayTitle = computed(() => {
 })
 
 const isDark = ref(false)
+const notifications = ref([])
+const notificationPanelVisible = ref(false)
 
-// 切换消息中心
+let imageUpdateTimer = null
+let imageUpdateLastKey = ''
+const imageUpdateNotifiedTags = new Set()
+const DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES = 30
+const deletedTempIds = new Set()
+
+const hasNotifications = computed(() => notifications.value.length > 0)
+const hasUnreadNotifications = computed(() => notifications.value.some((n) => !n.read))
+
+const markAllNotificationsRead = async () => {
+  if (!notifications.value.length) {
+    return
+  }
+  notifications.value = notifications.value.map((n) => ({ ...n, read: true }))
+  try {
+    await api.system.markNotificationsRead()
+  } catch (e) {
+    console.error('标记通知已读失败:', e)
+  }
+}
+
+const handleDeleteNotification = async (item) => {
+  const id = item.dbId || item.id
+  if (!item.dbId && item.tempId) {
+    deletedTempIds.add(item.tempId)
+    notifications.value = notifications.value.filter((n) => n !== item)
+    return
+  }
+  notifications.value = notifications.value.filter((n) => n !== item)
+  if (!id) {
+    return
+  }
+  try {
+    await api.system.deleteNotification(id)
+  } catch (e) {
+    console.error('删除通知失败:', e)
+  }
+}
+
 const showNotifications = () => {
-  ElMessage.info('暂无新消息')
+  if (!notifications.value.length) {
+    ElMessage.info('暂无新消息')
+    return
+  }
+  notificationPanelVisible.value = !notificationPanelVisible.value
+  if (notificationPanelVisible.value) {
+    markAllNotificationsRead()
+  }
 }
 
 // 跳转个人中心
@@ -109,10 +188,186 @@ const toggleTheme = () => {
   window.dispatchEvent(new Event('theme-change'))
 }
 
+const handleNotification = (event) => {
+  const detail = event.detail || {}
+  const type = detail.type || 'info'
+  const message = detail.message || ''
+  if (!message) {
+    return
+  }
+  if (detail.tempId && detail.dbId) {
+    const idx = notifications.value.findIndex((n) => n.tempId === detail.tempId || n.id === detail.tempId)
+    if (idx >= 0) {
+      const existing = notifications.value[idx]
+      const next = {
+        ...existing,
+        id: detail.dbId,
+        dbId: detail.dbId,
+        tempId: detail.tempId,
+        time: detail.createdAt || existing.time || new Date().toLocaleTimeString(),
+        read: typeof detail.read === 'boolean' ? detail.read : existing.read
+      }
+      notifications.value.splice(idx, 1, next)
+      if (deletedTempIds.has(detail.tempId)) {
+        deletedTempIds.delete(detail.tempId)
+        notifications.value = notifications.value.filter((n) => n !== next)
+        api.system.deleteNotification(detail.dbId).catch((e) => {
+          console.error('删除通知失败:', e)
+        })
+      }
+      return
+    }
+  }
+
+  const time = detail.createdAt || detail.time || new Date().toLocaleTimeString()
+  const dbId = detail.dbId || (typeof detail.id === 'number' ? detail.id : null)
+  const tempId = detail.tempId || (!dbId ? (typeof detail.id === 'string' ? detail.id : null) : null)
+  notifications.value.unshift({
+    id: dbId || tempId || Date.now(),
+    dbId,
+    tempId,
+    type,
+    message,
+    time,
+    read: !!detail.read
+  })
+  if (notifications.value.length > 50) {
+    notifications.value.pop()
+  }
+  if (type === 'success') {
+    ElMessage.success(message)
+  } else if (type === 'error') {
+    ElMessage.error(message)
+  } else if (type === 'warning') {
+    ElMessage.warning(message)
+  } else {
+    ElMessage.info(message)
+  }
+}
+
+const loadNotifications = async () => {
+  try {
+    const list = await api.system.getNotifications({ limit: 50 })
+    if (Array.isArray(list)) {
+      notifications.value = list.map((item) => ({
+        id: item.id,
+        dbId: item.id,
+        tempId: null,
+        type: item.type || 'info',
+        message: item.message,
+        time: item.created_at || item.time || '',
+        read: !!item.read
+      }))
+    }
+  } catch (e) {
+    console.error('加载通知失败:', e)
+  }
+}
+
+const handleDocumentClick = (event) => {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) {
+    return
+  }
+  if (!target.closest('.notification-area')) {
+    notificationPanelVisible.value = false
+  }
+}
+
+const sendHeaderNotification = async (type, message) => {
+  try {
+    const saved = await api.system.addNotification({ type, message })
+    handleNotification({
+      detail: {
+        type,
+        message,
+        dbId: saved?.id,
+        createdAt: saved?.created_at,
+        read: saved?.read
+      }
+    })
+  } catch (e) {
+    console.error('保存通知失败:', e)
+    handleNotification({ detail: { type, message } })
+  }
+}
+
+const checkImageUpdatesGlobal = async () => {
+  try {
+    const res = await api.images.getUpdateStatus()
+    const data = res.data || res
+    const updates = Array.isArray(data.updates) ? data.updates : []
+    const tags = []
+    updates.forEach((item) => {
+      if (item && item.repoTag) {
+        tags.push(item.repoTag)
+      }
+    })
+    if (!tags.length) {
+      return
+    }
+  const newTags = tags.filter(tag => !imageUpdateNotifiedTags.has(tag))
+  newTags.forEach(tag => imageUpdateNotifiedTags.add(tag))
+  if (!newTags.length) {
+    return
+  }
+  const key = newTags.slice().sort().join(',')
+  if (key === imageUpdateLastKey) {
+    return
+  }
+  imageUpdateLastKey = key
+  const displayTags = newTags.slice(0, 3).join('、')
+  const suffix = newTags.length > 3 ? ` 等 ${newTags.length} 个` : ''
+  const message = `${displayTags}${suffix}镜像有新版本，去及时查看`
+  // 已有数据库状态标记（/images/updates/status），不再重复推送通知
+  } catch (e) {
+    console.error('全局检测镜像更新失败:', e)
+  }
+}
+
+const startImageUpdateTimer = (minutes) => {
+  if (imageUpdateTimer) {
+    clearInterval(imageUpdateTimer)
+    imageUpdateTimer = null
+  }
+  const m = typeof minutes === 'number' && minutes > 0 ? minutes : DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES
+  imageUpdateTimer = setInterval(() => {
+    checkImageUpdatesGlobal()
+  }, m * 60 * 1000)
+}
+
+const initImageUpdateTimer = async () => {
+  try {
+    const res = await request.get('/settings/global')
+    let minutes = DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES
+    if (res && typeof res.imageUpdateIntervalMinutes === 'number' && res.imageUpdateIntervalMinutes > 0) {
+      minutes = res.imageUpdateIntervalMinutes
+    }
+    startImageUpdateTimer(minutes)
+  } catch (e) {
+    console.error('加载镜像更新检查间隔失败:', e)
+    startImageUpdateTimer(DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES)
+  }
+}
+
 onMounted(() => {
   initTheme()
-  // 监听外部（如设置页面）的主题变更
   window.addEventListener('theme-change', initTheme)
+  window.addEventListener('dockpier-notification', handleNotification)
+  document.addEventListener('click', handleDocumentClick)
+  loadNotifications()
+  checkImageUpdatesGlobal()
+  initImageUpdateTimer()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('theme-change', initTheme)
+  window.removeEventListener('dockpier-notification', handleNotification)
+  document.removeEventListener('click', handleDocumentClick)
+   if (imageUpdateTimer) {
+    clearInterval(imageUpdateTimer)
+    imageUpdateTimer = null
+  }
 })
 </script>
 
@@ -171,6 +426,88 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.notification-area {
+  position: relative;
+}
+
+.notification-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.notification-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--el-color-danger);
+}
+
+.notification-panel {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  width: 320px;
+  max-height: 360px;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  padding: 12px 16px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+}
+
+.notification-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.notification-empty {
+  padding: 12px 0;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
+
+.notification-list {
+  margin-top: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.notification-item {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+}
+
+.notification-item:last-child {
+  border-bottom: none;
+}
+
+.item-time {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 2px;
+}
+
+.item-message {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  line-height: 1.4;
 }
 
 .user-avatar {

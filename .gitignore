@@ -9,9 +9,6 @@
 .env
 
 # Dev & Tools
-.devlogs
-.devpids
-.idea
 .trae
 .scripts.nouse
 

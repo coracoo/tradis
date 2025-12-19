@@ -41,8 +41,8 @@
         <el-table-column label="名称" min-width="240" show-overflow-tooltip header-align="left">
           <template #default="scope">
             <div class="project-name-cell" 
-                 :class="{ 'clickable': scope.row.path.startsWith('data/project/') }"
-                 @click="scope.row.path.startsWith('data/project/') && handleRowClick(scope.row)">
+                 :class="{ 'clickable': scope.row.path.startsWith('project/') }"
+                 @click="scope.row.path.startsWith('project/') && handleRowClick(scope.row)">
               <div class="icon-wrapper">
                 <el-icon><Folder /></el-icon>
               </div>
@@ -133,63 +133,78 @@
       />
     </div>
 
-    <!-- 新建/编辑项目对话框 -->
     <el-dialog
       :title="dialogTitle"
       v-model="dialogVisible"
-      width="800px"
+      width="1200px"
       :close-on-click-modal="false"
       :close-on-press-escape="false"
       class="project-dialog"
       append-to-body
       @close="handleDialogClose"
     >
-      <el-form :model="projectForm" label-width="100px" class="compact-form">
-        <el-form-item label="项目名称" required>
-          <el-input v-model="projectForm.name" placeholder="请输入项目名称" />
-        </el-form-item>
-        <el-form-item label="存放路径" required>
-          <el-input v-model="projectForm.path" placeholder="自动生成" readonly>
-            <template #append>
-              <el-tooltip content="项目将存放在 data/project 目录下">
-                <el-icon><InfoFilled /></el-icon>
-              </el-tooltip>
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item label="Compose" required>
-          <div class="compose-editor-container">
-            <div class="editor-toolbar">
-              <span class="file-name">docker-compose.yml</span>
-              <el-dropdown @command="handleTemplateSelect" trigger="click">
-                <el-button size="small" link type="primary">
-                  插入模板<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="nginx">Nginx</el-dropdown-item>
-                    <el-dropdown-item command="mysql">MySQL</el-dropdown-item>
-                    <el-dropdown-item command="redis">Redis</el-dropdown-item>
-                    <el-dropdown-item command="wordpress">WordPress</el-dropdown-item>
-                  </el-dropdown-menu>
+      <div class="project-dialog-body">
+        <div class="project-form-column">
+          <el-form :model="projectForm" label-width="100px" class="compact-form">
+            <el-form-item label="项目名称" required>
+              <el-input v-model="projectForm.name" placeholder="请输入项目名称" />
+            </el-form-item>
+            <el-form-item label="存放路径" required>
+              <el-input v-model="projectForm.path" placeholder="自动生成" readonly>
+                <template #append>
+                  <el-tooltip content="项目将存放在 project 目录下">
+                    <el-icon><InfoFilled /></el-icon>
+                  </el-tooltip>
                 </template>
-              </el-dropdown>
-            </div>
-            <div ref="editorContainer" class="monaco-editor-wrapper"></div>
-          </div>
-        </el-form-item>
-        <el-form-item>
-          <el-checkbox v-model="projectForm.autoStart">创建完成后立即运行</el-checkbox>
-        </el-form-item>
-      </el-form>
-      <!-- 添加部署日志区域 -->
-      <div v-if="deployLogs.length > 0" class="deploy-logs">
-        <div class="logs-header">
-          <span>部署日志</span>
+              </el-input>
+            </el-form-item>
+            <el-form-item label="Compose" required>
+              <div class="compose-editor-container">
+                <div class="editor-toolbar">
+                  <span class="file-name">docker-compose.yml</span>
+                  <el-dropdown @command="handleTemplateSelect" trigger="click">
+                    <el-button size="small" link type="primary">
+                      插入模板<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="nginx">Nginx</el-dropdown-item>
+                        <el-dropdown-item command="mysql">MySQL</el-dropdown-item>
+                        <el-dropdown-item command="redis">Redis</el-dropdown-item>
+                        <el-dropdown-item command="wordpress">WordPress</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
+                <div ref="editorContainer" class="monaco-editor-wrapper"></div>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-checkbox v-model="projectForm.autoStart">创建完成后立即运行</el-checkbox>
+            </el-form-item>
+          </el-form>
         </div>
-        <div ref="logsContent" class="logs-content">
-          <div v-for="(log, index) in deployLogs" :key="index" :class="['log-line', log.type]">
-            {{ log.message }}
+        <div class="project-logs-column">
+          <div class="deploy-logs">
+            <div class="logs-header">
+              <span>部署日志</span>
+            </div>
+            <div ref="logsContent" class="logs-content">
+              <div
+                v-if="deployLogs.length === 0"
+                class="log-empty"
+              >
+                暂无部署日志，点击“立即部署”后将在此展示实时输出。
+              </div>
+              <div
+                v-else
+                v-for="(log, index) in deployLogs"
+                :key="index"
+                :class="['log-line', log.type]"
+              >
+                {{ log.message }}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -217,11 +232,11 @@ import api from '../api'
 const isManagedProject = (path) => {
   if (!path) return false
   // 检查相对路径
-  if (path.startsWith('data/project/')) return true
+  if (path.startsWith('project/')) return true
   // 检查绝对路径（包含 data/project 目录）
   // 兼容 Windows 反斜杠
   const normalizedPath = path.replace(/\\/g, '/')
-  return normalizedPath.includes('/data/project/')
+  return normalizedPath.includes('project/')
 }
 
 // 编辑器配置——新增
@@ -254,7 +269,6 @@ const editorOptions = {
   copyWithSyntaxHighlighting: true
 }
 
-// 编辑器配置——初始化
 const initEditor = () => {
   if (editorContainer.value) {
     // 如果已存在编辑器实例，先销毁
@@ -309,7 +323,6 @@ const handleDialogClose = () => {
   deployLogs.value = []
 }
 
-// 修改对话框显示处理
 const handleCreate = () => {
   dialogTitle.value = '新建项目'
   projectForm.value = {
@@ -369,11 +382,18 @@ const projectForm = ref({
   autoStart: true
 })
 
-// 监听项目名称变化，自动更新路径
+const normalizeComposeName = (name) => {
+  const lower = String(name || '').toLowerCase()
+  const sanitized = lower.replace(/[^a-z0-9_-]/g, '')
+  const trimmed = sanitized.replace(/^[^a-z0-9]+/, '')
+  return trimmed || 'project'
+}
+
 watch(() => projectForm.value.name, (newName) => {
   if (dialogTitle.value === '新建项目') {
-    const basePath = 'data/project'
-    projectForm.value.path = newName ? `${basePath}/${newName}` : basePath
+    const basePath = 'project'
+    const normalized = normalizeComposeName(newName)
+    projectForm.value.path = normalized ? `${basePath}/${normalized}` : basePath
   }
 })
 
@@ -411,15 +431,32 @@ const handleCurrentChange = (val) => {
   currentPage.value = val
 }
 
-// 修改保存方法，确保正确处理日志
 const handleSave = async () => {
   if (!projectForm.value.name || !projectForm.value.compose) {
     ElMessage.warning('请填写必要信息')
     return
   }
 
-  // 检查项目名称是否已存在 (仅新建时)
   if (dialogTitle.value === '新建项目') {
+    const normalizedName = normalizeComposeName(projectForm.value.name)
+
+    if (normalizedName !== projectForm.value.name) {
+      try {
+        await ElMessageBox.confirm(
+          `当前项目名称 "${projectForm.value.name}" 包含 Docker Compose 不支持的字符，将使用规范化名称 "${normalizedName}" 作为项目名进行部署（目录及项目列表将以该名称显示）。是否继续？`,
+          '项目名称规范化',
+          {
+            confirmButtonText: '继续部署',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+      } catch (e) {
+        return
+      }
+      projectForm.value.name = normalizedName
+    }
+
     const exists = projectList.value.some(p => p.name === projectForm.value.name)
     if (exists) {
       ElMessage.warning('该项目名称已存在，请使用其他名称')
@@ -918,12 +955,31 @@ services:
   width: 100%;
 }
 
-/* 部署日志样式 */
+.project-dialog-body {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.project-form-column {
+  flex: 3;
+  min-width: 0;
+}
+
+.project-logs-column {
+  flex: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .deploy-logs {
-  margin-top: 16px;
   border: 1px solid var(--el-border-color);
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .logs-header {
@@ -938,17 +994,18 @@ services:
   background-color: var(--el-fill-color-darker);
   color: var(--el-text-color-primary);
   padding: 16px;
-  border-radius: 8px;
   font-family: monospace;
   height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
-  margin-top: 16px;
-  border: 1px solid var(--el-border-color-darker);
 }
 
 .log-line {
   margin-bottom: 2px;
+}
+
+.log-empty {
+  color: var(--el-text-color-secondary);
 }
 
 .log-line.error {

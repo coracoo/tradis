@@ -5,15 +5,20 @@ import (
 	"context"
 	"dockerpanel/backend/pkg/database"
 	"dockerpanel/backend/pkg/docker"
+	"dockerpanel/backend/pkg/settings"
+	"dockerpanel/backend/pkg/system"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -25,6 +30,10 @@ func RegisterImageRoutes(r *gin.RouterGroup) {
 	{
 		group.GET("", listImages)
 		group.DELETE("/:id", removeImage)
+		group.GET("/updates", checkImageUpdates)
+		group.GET("/updates/status", listStoredImageUpdates)
+		group.POST("/updates/clear", clearImageUpdate)
+		group.POST("/updates/apply", applyImageUpdates)
 		group.POST("/pull", pullImage)
 		group.GET("/pull/progress", pullImageProgress)
 		group.GET("/proxy", getDockerProxy)
@@ -607,7 +616,14 @@ func removeImage(c *gin.Context) {
 	defer cli.Close()
 
 	id := c.Param("id")
-	_, err = cli.ImageRemove(context.Background(), id, types.ImageRemoveOptions{
+	repoTag := c.Query("repoTag")
+
+	target := id
+	if repoTag != "" {
+		target = repoTag
+	}
+
+	_, err = cli.ImageRemove(context.Background(), target, types.ImageRemoveOptions{
 		Force:         true,
 		PruneChildren: true,
 	})
@@ -696,4 +712,413 @@ func exportImage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("写入响应失败: %v", err)})
 		return
 	}
+}
+
+type imageUpdateInfo struct {
+	RepoTag      string `json:"repoTag"`
+	LocalDigest  string `json:"localDigest"`
+	RemoteDigest string `json:"remoteDigest"`
+}
+
+type imageUpdateCheckResult struct {
+	Updates      []imageUpdateInfo
+	TotalImages  int
+	FoundUpdates int
+	RemoteErrors int
+	WriteErrors  int
+	Duration     time.Duration
+}
+
+var imageUpdateLastRun int64
+
+func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
+	start := time.Now()
+	result := imageUpdateCheckResult{}
+
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		return result, err
+	}
+	defer cli.Close()
+
+	images, err := cli.ImageList(ctx, types.ImageListOptions{})
+	if err != nil {
+		return result, err
+	}
+	result.TotalImages = len(images)
+
+	if err := database.ClearImageUpdates(); err != nil {
+		return result, err
+	}
+
+	var updates []imageUpdateInfo
+	remoteErrors := 0
+	writeErrors := 0
+
+	for _, img := range images {
+		localDigest := ""
+		if len(img.RepoDigests) > 0 {
+			parts := strings.SplitN(img.RepoDigests[0], "@", 2)
+			if len(parts) == 2 {
+				localDigest = parts[1]
+			}
+		}
+
+		for _, tag := range img.RepoTags {
+			if tag == "<none>:<none>" {
+				continue
+			}
+			if localDigest == "" {
+				continue
+			}
+			remoteDigest, derr := getDockerHubDigest(tag)
+			if derr != nil {
+				remoteErrors++
+				log.Printf("获取远端镜像摘要失败 repoTag=%s: %v", tag, derr)
+				continue
+			}
+			if remoteDigest == "" || remoteDigest == localDigest {
+				continue
+			}
+			updates = append(updates, imageUpdateInfo{
+				RepoTag:      tag,
+				LocalDigest:  localDigest,
+				RemoteDigest: remoteDigest,
+			})
+
+			if err := database.SaveImageUpdate(&database.ImageUpdate{
+				RepoTag:      tag,
+				ImageID:      img.ID,
+				LocalDigest:  localDigest,
+				RemoteDigest: remoteDigest,
+			}); err != nil {
+				writeErrors++
+				log.Printf("写入 image_updates 失败 repoTag=%s: %v", tag, err)
+			}
+		}
+	}
+
+	result.Updates = updates
+	result.FoundUpdates = len(updates)
+	result.RemoteErrors = remoteErrors
+	result.WriteErrors = writeErrors
+	result.Duration = time.Since(start)
+
+	return result, nil
+}
+
+func StartImageUpdateScheduler() {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			s, err := settings.GetSettings()
+			if err != nil {
+				log.Printf("读取镜像更新设置失败: %v", err)
+				continue
+			}
+			interval := s.ImageUpdateIntervalMinutes
+			if interval <= 0 {
+				interval = 30
+			}
+
+			last := time.Unix(atomic.LoadInt64(&imageUpdateLastRun), 0)
+			if !last.IsZero() && time.Since(last) < time.Duration(interval)*time.Minute {
+				continue
+			}
+
+			ctx := context.Background()
+			result, cerr := runImageUpdateCheck(ctx)
+			now := time.Now()
+			atomic.StoreInt64(&imageUpdateLastRun, now.Unix())
+
+			if cerr != nil {
+				system.LogSimpleEvent("error", fmt.Sprintf("自动镜像更新检测失败: %v", cerr))
+				continue
+			}
+
+			if result.WriteErrors > 0 {
+				system.LogSimpleEvent("error", fmt.Sprintf(
+					"自动镜像更新检测部分失败: 总镜像 %d, 可更新 %d, 写库失败 %d, 远端错误 %d, 耗时 %.1fs",
+					result.TotalImages,
+					result.FoundUpdates,
+					result.WriteErrors,
+					result.RemoteErrors,
+					result.Duration.Seconds(),
+				))
+				continue
+			}
+
+			system.LogSimpleEvent("info", fmt.Sprintf(
+				"自动镜像更新检测完成: 总镜像 %d, 可更新 %d, 远端错误 %d, 耗时 %.1fs",
+				result.TotalImages,
+				result.FoundUpdates,
+				result.RemoteErrors,
+				result.Duration.Seconds(),
+			))
+		}
+	}()
+}
+
+func checkImageUpdates(c *gin.Context) {
+	result, err := runImageUpdateCheck(context.Background())
+	if err != nil {
+		system.LogSimpleEvent("error", fmt.Sprintf("手动镜像更新检测失败: %v", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if result.WriteErrors > 0 {
+		system.LogSimpleEvent("error", fmt.Sprintf(
+			"手动镜像更新检测部分失败: 总镜像 %d, 可更新 %d, 写库失败 %d, 远端错误 %d, 耗时 %.1fs",
+			result.TotalImages,
+			result.FoundUpdates,
+			result.WriteErrors,
+			result.RemoteErrors,
+			result.Duration.Seconds(),
+		))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("写入镜像更新记录失败: %d 条", result.WriteErrors)})
+		return
+	}
+	system.LogSimpleEvent("info", fmt.Sprintf(
+		"手动镜像更新检测完成: 总镜像 %d, 可更新 %d, 远端错误 %d, 耗时 %.1fs",
+		result.TotalImages,
+		result.FoundUpdates,
+		result.RemoteErrors,
+		result.Duration.Seconds(),
+	))
+	c.JSON(http.StatusOK, gin.H{"updates": result.Updates})
+}
+
+func listStoredImageUpdates(c *gin.Context) {
+	items, err := database.GetAllImageUpdates()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var updates []imageUpdateInfo
+	for _, item := range items {
+		updates = append(updates, imageUpdateInfo{
+			RepoTag:      item.RepoTag,
+			LocalDigest:  item.LocalDigest,
+			RemoteDigest: item.RemoteDigest,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"updates": updates})
+}
+
+func clearImageUpdate(c *gin.Context) {
+	var req struct {
+		RepoTag string `json:"repoTag"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.RepoTag == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repoTag is required"})
+		return
+	}
+	if err := database.DeleteImageUpdateByRepoTag(req.RepoTag); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func applyImageUpdates(c *gin.Context) {
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer cli.Close()
+
+	items, err := database.GetAllImageUpdates()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	usedImageIDs := make(map[string]bool)
+	usedImageTags := make(map[string]bool)
+	for _, ctr := range containers {
+		if ctr.ImageID != "" {
+			usedImageIDs[ctr.ImageID] = true
+		}
+		if ctr.Image != "" {
+			usedImageTags[ctr.Image] = true
+		}
+	}
+
+	total := len(items)
+	attempted := 0
+	success := 0
+	failed := 0
+	skippedUsed := 0
+	var failedTags []string
+
+	for _, item := range items {
+		used := false
+		if item.ImageID != "" && usedImageIDs[item.ImageID] {
+			used = true
+		}
+		if usedImageTags[item.RepoTag] {
+			used = true
+		}
+		if used {
+			skippedUsed++
+			continue
+		}
+
+		attempted++
+
+		reader, err := cli.ImagePull(context.Background(), item.RepoTag, types.ImagePullOptions{})
+		if err != nil {
+			failed++
+			failedTags = append(failedTags, item.RepoTag)
+			continue
+		}
+		_, _ = io.Copy(io.Discard, reader)
+		reader.Close()
+
+		success++
+		_ = database.DeleteImageUpdateByRepoTag(item.RepoTag)
+	}
+
+	if failed > 0 {
+		system.LogSimpleEvent("warning", fmt.Sprintf(
+			"批量镜像更新完成: 待更新 %d, 实际尝试 %d, 成功 %d, 失败 %d, 跳过使用中 %d",
+			total,
+			attempted,
+			success,
+			failed,
+			skippedUsed,
+		))
+	} else {
+		system.LogSimpleEvent("success", fmt.Sprintf(
+			"批量镜像更新完成: 待更新 %d, 实际尝试 %d, 成功 %d, 跳过使用中 %d",
+			total,
+			attempted,
+			success,
+			skippedUsed,
+		))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":       total,
+		"attempted":   attempted,
+		"success":     success,
+		"failed":      failed,
+		"skippedUsed": skippedUsed,
+		"failedTags":  failedTags,
+	})
+}
+
+func getDockerHubDigest(repoTag string) (string, error) {
+	name, tag := parseImageName(repoTag)
+	if name == "" {
+		return "", fmt.Errorf("invalid image")
+	}
+	if !isDockerHubImage(name) {
+		return "", fmt.Errorf("unsupported registry")
+	}
+
+	path := name
+	if !strings.Contains(name, "/") {
+		path = "library/" + name
+	}
+
+	values := url.Values{}
+	values.Set("service", "registry.docker.io")
+	values.Set("scope", fmt.Sprintf("repository:%s:pull", path))
+
+	tokenURL := "https://auth.docker.io/token?" + values.Encode()
+
+	resp, err := http.Get(tokenURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token request failed: %s", resp.Status)
+	}
+
+	var tokenResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", err
+	}
+	if tokenResp.Token == "" {
+		return "", fmt.Errorf("empty token")
+	}
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://registry-1.docker.io/v2/%s/manifests/%s", path, tag), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tokenResp.Token)
+	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+
+	client := &http.Client{}
+	resp2, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("manifest request failed: %s", resp2.Status)
+	}
+
+	digest := resp2.Header.Get("Docker-Content-Digest")
+	if digest == "" {
+		var body struct {
+			Config struct {
+				Digest string `json:"digest"`
+			} `json:"config"`
+		}
+		if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
+			return "", err
+		}
+		digest = body.Config.Digest
+	}
+
+	return digest, nil
+}
+
+func parseImageName(repoTag string) (string, string) {
+	if repoTag == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(repoTag, ":", 2)
+	if len(parts) == 1 {
+		return parts[0], "latest"
+	}
+	if parts[1] == "" {
+		return parts[0], "latest"
+	}
+	return parts[0], parts[1]
+}
+
+func isDockerHubImage(name string) bool {
+	if name == "" {
+		return false
+	}
+	segments := strings.Split(name, "/")
+	if len(segments) == 1 {
+		return true
+	}
+	host := segments[0]
+	if strings.Contains(host, ".") || strings.Contains(host, ":") || host == "localhost" {
+		return false
+	}
+	return true
 }

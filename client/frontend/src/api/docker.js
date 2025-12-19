@@ -1,38 +1,38 @@
-import axios from 'axios'
+import request from '../utils/request'
 
 const api = {
   // 容器相关接口
   containers: {
-    list: () => axios.get('/api/containers'),
-    create: (data) => axios.post('/api/containers/create', data),
-    start: (id) => axios.post(`/api/containers/${id}/start`),
-    stop: (id) => axios.post(`/api/containers/${id}/stop`),
-    restart: (id) => axios.post(`/api/containers/${id}/restart`),
-    remove: (id) => axios.delete(`/api/containers/${id}`),
-    logs: (id) => axios.get(`/api/containers/${id}/logs`),
-    stats: (id) => axios.get(`/api/containers/${id}/stats`)
+    list: () => request.get('/containers'),
+    create: (data) => request.post('/containers/create', data),
+    start: (id) => request.post(`/containers/${id}/start`),
+    stop: (id) => request.post(`/containers/${id}/stop`),
+    restart: (id) => request.post(`/containers/${id}/restart`),
+    remove: (id) => request.delete(`/containers/${id}`),
+    logs: (id) => request.get(`/containers/${id}/logs`),
+    stats: (id) => request.get(`/containers/${id}/stats`)
   },
 
   // 镜像相关接口
   images: {
-    list: () => axios.get('/api/images'),
-    pull: (data) => axios.post('/api/images/pull', data),
-    remove: (id) => axios.delete(`/api/images/${id}`),
-    build: (data) => axios.post('/api/images/build', data)
+    list: () => request.get('/images'),
+    pull: (data) => request.post('/images/pull', data),
+    remove: (id) => request.delete(`/images/${id}`),
+    build: (data) => request.post('/images/build', data)
   },
 
   // 网络相关接口
   networks: {
-    list: () => axios.get('/api/networks'),
-    create: (data) => axios.post('/api/networks', data),
-    remove: (id) => axios.delete(`/api/networks/${id}`)
+    list: () => request.get('/networks'),
+    create: (data) => request.post('/networks', data),
+    remove: (id) => request.delete(`/networks/${id}`)
   },
 
   // 数据卷相关接口
   volumes: {
-    list: () => axios.get('/api/volumes'),
-    create: (data) => axios.post('/api/volumes', data),
-    remove: (name) => axios.delete(`/api/volumes/${name}`)
+    list: () => request.get('/volumes'),
+    create: (data) => request.post('/volumes', data),
+    remove: (name) => request.delete(`/volumes/${name}`)
   }
 }
 

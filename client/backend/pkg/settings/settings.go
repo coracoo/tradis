@@ -9,12 +9,13 @@ import (
 	"strconv"
 )
 
-type Settings struct {
-	LanUrl            string `json:"lanUrl"`
-	WanUrl            string `json:"wanUrl"`
-	AppStoreServerUrl string `json:"appStoreServerUrl"`
-	AllocPortStart    int    `json:"allocPortStart"`
-	AllocPortEnd      int    `json:"allocPortEnd"`
+ type Settings struct {
+	LanUrl                    string `json:"lanUrl"`
+	WanUrl                    string `json:"wanUrl"`
+	AppStoreServerUrl         string `json:"appStoreServerUrl"`
+	AllocPortStart            int    `json:"allocPortStart"`
+	AllocPortEnd              int    `json:"allocPortEnd"`
+	ImageUpdateIntervalMinutes int    `json:"imageUpdateIntervalMinutes"`
 }
 
 // InitSettingsTable 初始化设置表
@@ -56,6 +57,9 @@ func InitSettingsTable() error {
 	if err := insertDefault("alloc_port_end", "30000"); err != nil {
 		return err
 	}
+	if err := insertDefault("image_update_interval_minutes", "30"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -90,6 +94,7 @@ func GetSettings() (Settings, error) {
 
 	s.AllocPortStart = parseInt(getValue("alloc_port_start"), 20000)
 	s.AllocPortEnd = parseInt(getValue("alloc_port_end"), 30000)
+	s.ImageUpdateIntervalMinutes = parseInt(getValue("image_update_interval_minutes"), 30)
 
 	return s, nil
 }
@@ -108,7 +113,8 @@ func GetDataDir() string {
 
 // GetProjectRoot 获取项目根目录
 func GetProjectRoot() string {
-	return filepath.Join(GetDataDir(), "project")
+	parent := filepath.Dir(GetDataDir())
+	return filepath.Join(parent, "project")
 }
 
 // GetAppStoreBasePath 获取应用商店基础路径
@@ -152,6 +158,9 @@ func UpdateSettings(s Settings) error {
 		return err
 	}
 	if err := update("alloc_port_end", strconv.Itoa(s.AllocPortEnd)); err != nil {
+		return err
+	}
+	if err := update("image_update_interval_minutes", strconv.Itoa(s.ImageUpdateIntervalMinutes)); err != nil {
 		return err
 	}
 

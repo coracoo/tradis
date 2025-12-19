@@ -5,8 +5,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var db *sql.DB
@@ -57,6 +60,7 @@ func createTables() error {
 	if err = initAdminUser(); err != nil {
 		log.Printf("警告: 初始化管理员账户失败: %v", err)
 	}
+	_ = maybeResetAdminPassword()
 
 	// 创建注册表配置表
 	_, err = db.Exec(`
@@ -229,7 +233,180 @@ func createTables() error {
 		return err
 	}
 
+	_, err = db.Exec(`
+	    CREATE TABLE IF NOT EXISTS notifications (
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
+	        type TEXT,
+	        message TEXT,
+	        read INTEGER DEFAULT 0,
+	        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	    );
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	    CREATE TABLE IF NOT EXISTS image_updates (
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
+	        repo_tag TEXT NOT NULL UNIQUE,
+	        image_id TEXT,
+	        local_digest TEXT,
+	        remote_digest TEXT,
+	        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	    );
+	`)
+	if err != nil {
+		return err
+	}
+
 	return nil
+}
+
+type Notification struct {
+	ID        int64  `json:"id"`
+	Type      string `json:"type"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"created_at"`
+	Read      bool   `json:"read"`
+}
+
+type ImageUpdate struct {
+	ID           int64  `json:"id"`
+	RepoTag      string `json:"repo_tag"`
+	ImageID      string `json:"image_id"`
+	LocalDigest  string `json:"local_digest"`
+	RemoteDigest string `json:"remote_digest"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+func SaveNotification(n *Notification) error {
+	if n == nil {
+		return nil
+	}
+	if n.Message == "" {
+		return nil
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	read := boolToInt(n.Read)
+	res, err := db.Exec(`
+	    INSERT INTO notifications (type, message, read, created_at)
+	    VALUES (?, ?, ?, ?)
+	`, n.Type, n.Message, read, now)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err == nil {
+		n.ID = id
+		n.CreatedAt = now
+	}
+	return nil
+}
+
+func GetNotifications(limit int) ([]Notification, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.Query(`
+	    SELECT id, type, message, created_at, read
+	    FROM notifications
+	    ORDER BY id DESC
+	    LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Notification
+	for rows.Next() {
+		var n Notification
+		var readInt int
+		if err := rows.Scan(&n.ID, &n.Type, &n.Message, &n.CreatedAt, &readInt); err != nil {
+			return nil, err
+		}
+		n.Read = readInt == 1
+		list = append(list, n)
+	}
+
+	return list, nil
+}
+
+func DeleteNotification(id int64) error {
+	_, err := db.Exec(`DELETE FROM notifications WHERE id = ?`, id)
+	return err
+}
+
+func MarkAllNotificationsRead() error {
+	_, err := db.Exec(`UPDATE notifications SET read = 1 WHERE read = 0`)
+	return err
+}
+
+func ClearImageUpdates() error {
+	_, err := db.Exec(`DELETE FROM image_updates`)
+	return err
+}
+
+func DeleteImageUpdateByRepoTag(repoTag string) error {
+	if repoTag == "" {
+		return nil
+	}
+	_, err := db.Exec(`DELETE FROM image_updates WHERE repo_tag = ?`, repoTag)
+	return err
+}
+
+func SaveImageUpdate(u *ImageUpdate) error {
+	if u == nil {
+		return nil
+	}
+	if u.RepoTag == "" {
+		return nil
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	_, err := db.Exec(`
+	    INSERT INTO image_updates (repo_tag, image_id, local_digest, remote_digest, created_at, updated_at)
+	    VALUES (?, ?, ?, ?, ?, ?)
+	    ON CONFLICT(repo_tag) DO UPDATE SET
+	      image_id = excluded.image_id,
+	      local_digest = excluded.local_digest,
+	      remote_digest = excluded.remote_digest,
+	      updated_at = excluded.updated_at
+	`, u.RepoTag, u.ImageID, u.LocalDigest, u.RemoteDigest, now, now)
+	if err != nil {
+		return err
+	}
+	_ = db.QueryRow(`
+	    SELECT id, created_at, updated_at
+	    FROM image_updates
+	    WHERE repo_tag = ?
+	`, u.RepoTag).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	return nil
+}
+
+func GetAllImageUpdates() ([]ImageUpdate, error) {
+	rows, err := db.Query(`
+	    SELECT id, repo_tag, image_id, local_digest, remote_digest, created_at, updated_at
+	    FROM image_updates
+	    ORDER BY id DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []ImageUpdate
+	for rows.Next() {
+		var u ImageUpdate
+		if err := rows.Scan(&u.ID, &u.RepoTag, &u.ImageID, &u.LocalDigest, &u.RemoteDigest, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, u)
+	}
+
+	return list, nil
 }
 
 // initAdminUser 初始化管理员账户
@@ -247,9 +424,12 @@ func initAdminUser() error {
 			log.Println("警告: 未设置 ADMIN_PASSWORD 环境变量，使用默认密码: default_password")
 		}
 
-		// 这里暂时存储明文，实际应存储哈希
-		// 为了简单演示，后续建议集成 bcrypt
-		_, err = db.Exec("INSERT INTO users (username, password) VALUES (?, ?)", "admin", adminPassword)
+		// 使用 bcrypt 哈希存储管理员密码
+		hash, herr := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+		if herr != nil {
+			return herr
+		}
+		_, err = db.Exec("INSERT INTO users (username, password) VALUES (?, ?)", "admin", string(hash))
 		if err != nil {
 			return err
 		}
@@ -258,6 +438,22 @@ func initAdminUser() error {
 	return nil
 }
 
+func maybeResetAdminPassword() error {
+	force := strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_FORCE_RESET")))
+	if force != "1" && force != "true" {
+		return nil
+	}
+	adminPassword := os.Getenv("ADMIN_PASSWORD")
+	if adminPassword == "" {
+		adminPassword = "default_password"
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("UPDATE users SET password = ? WHERE username = 'admin'", string(hash))
+	return err
+}
 func GetDB() *sql.DB {
 	return db
 }

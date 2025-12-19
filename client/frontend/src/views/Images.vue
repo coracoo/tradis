@@ -37,6 +37,9 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="bulk-update" :icon="Download">
+                一键更新未使用镜像
+              </el-dropdown-item>
               <el-dropdown-item command="settings" :icon="Setting">配置镜像加速</el-dropdown-item>
               <el-dropdown-item command="prune" :icon="Delete" divided class="text-danger">清除未使用镜像</el-dropdown-item>
             </el-dropdown-menu>
@@ -58,12 +61,7 @@
       >
         <el-table-column type="selection" width="40" align="center" />
         
-        <el-table-column 
-          label="镜像名称" 
-          prop="RepoTags" 
-          sortable="custom"
-          min-width="240"
-          show-overflow-tooltip>
+        <el-table-column label="镜像名称" prop="RepoTags" min-width="200" sortable="custom" show-overflow-tooltip>
           <template #default="scope">
             <div class="image-name-cell">
               <div class="icon-wrapper image">
@@ -77,46 +75,43 @@
           </template>
         </el-table-column>
 
-        <el-table-column 
-          label="标签" 
-          prop="Tag"
-          sortable="custom"
-          width="180">
+        <el-table-column label="标签" prop="Tag" min-width="160" sortable="custom" >
           <template #default="scope">
-            <el-tag size="small" effect="light" class="image-tag">
-              {{ getImageTag(scope.row.RepoTags?.[0]) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column 
-          label="状态" 
-          width="140" 
-          prop="isInUse" 
-          sortable="custom">
-          <template #default="scope">
-            <div class="status-indicator">
-              <span class="status-point" :class="scope.row.isInUse ? 'running' : 'stopped'"></span>
-              <span>{{ scope.row.isInUse ? '使用中' : '未使用' }}</span>
+            <div class="tag-cell">
+              <el-tag size="small" effect="light" class="image-tag">
+                {{ getImageTag(scope.row.RepoTags?.[0]) }}
+              </el-tag>
             </div>
           </template>
         </el-table-column>
         
-        <el-table-column 
-          label="大小" 
-          prop="Size" 
-          width="120"
-          sortable="custom">
+        <el-table-column label="可更新" prop="Updatable" min-width="140" sortable="custom">
+          <template #default="scope">
+            <div class="tag-cell">
+              <el-button
+                v-if="isImageUpdatable(scope.row)"
+                type="primary"
+                text
+                size="small"
+                class="update-link"
+                :loading="isImageUpdating(scope.row)"
+                :disabled="isImageUpdating(scope.row)"
+                @click="updateImage(scope.row)"
+              >
+                点击更新
+              </el-button>
+              <span v-else class="text-gray">-</span>
+            </div>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="大小" prop="Size" min-width="120" sortable="custom">
           <template #default="scope">
             <span class="text-gray">{{ formatSize(scope.row.Size) }}</span>
           </template>
         </el-table-column>
         
-        <el-table-column 
-          label="创建时间" 
-          prop="Created" 
-          width="160"
-          sortable="custom">
+        <el-table-column label="创建时间" prop="Created" min-width="140" sortable="custom">
           <template #default="scope">
             <div class="text-gray font-mono">
               {{ formatTimeTwoLines(scope.row.Created) }}
@@ -124,7 +119,16 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="180" fixed="right" align="center">
+        <el-table-column label="使用状态" prop="isInUse" min-width="120" sortable="custom">
+          <template #default="scope">
+            <div class="status-indicator">
+              <span class="status-point" :class="scope.row.isInUse ? 'running' : 'stopped'"></span>
+              <span>{{ scope.row.isInUse ? '使用中' : '未使用' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="220" fixed="left" align="center">
           <template #default="scope">
             <div class="row-ops">
               <el-tooltip content="修改标签" placement="top">
@@ -300,7 +304,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, h, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, h, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, UploadFilled, Download, Upload, Setting, Edit, Delete, Search, ArrowDown, Files } from '@element-plus/icons-vue'
 import api from '../api'
@@ -354,6 +358,8 @@ const handleGlobalAction = (command) => {
     settingsVisible.value = true
   } else if (command === 'prune') {
     clearImages()
+  } else if (command === 'bulk-update') {
+    handleBulkUpdate()
   }
 }
 
@@ -370,10 +376,68 @@ const getImageTag = (repoTag) => {
   return parts[1] || 'latest'
 }
 
+const normalizeImageTag = (repoTag) => {
+  if (!repoTag || repoTag === '<none>:<none>') {
+    return repoTag || ''
+  }
+  const parts = repoTag.split(':')
+  const namePart = parts[0] || ''
+  const tagPart = parts[1] || 'latest'
+  const segments = namePart.split('/')
+  let name = namePart
+  if (segments.length > 1) {
+    const host = segments[0]
+    if (host.includes('.') || host.includes(':') || host === 'localhost') {
+      name = segments.slice(1).join('/')
+    }
+  }
+  return `${name}:${tagPart}`
+}
+
 // 删除 proxyDialogVisible 和 proxyForm 相关代码
 const settingsVisible = ref(false)
 
-// 清除未使用镜像
+const updateStatusMap = ref({})
+const updateRepoMap = ref({})
+const updatingMap = ref({})
+const bulkUpdating = ref(false)
+let updateTimer = null
+
+const normalizeUpdateStatusMap = (raw) => {
+  const normalized = {}
+  if (!raw) {
+    return normalized
+  }
+  if (Array.isArray(raw)) {
+    raw.forEach((tag) => {
+      if (typeof tag === 'string') {
+        const t = normalizeImageTag(tag)
+        if (t && t !== '<none>:<none>') {
+          normalized[t] = true
+        }
+      }
+    })
+    return normalized
+  }
+  if (typeof raw === 'object') {
+    Object.keys(raw).forEach((key) => {
+      const value = raw[key]
+      const t = normalizeImageTag(key)
+      if (!t || t === '<none>:<none>') {
+        return
+      }
+      if (typeof value === 'boolean') {
+        if (value) {
+          normalized[t] = true
+        }
+      } else if (value) {
+        normalized[t] = true
+      }
+    })
+  }
+  return normalized
+}
+
 const clearImages = async () => {
   try {
     await ElMessageBox.confirm(
@@ -417,56 +481,61 @@ const formatSize = (size) => {
   return (size / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i]
 }
 
-// 修改获取镜像列表的函数，添加更详细的错误处理
 const fetchImages = async () => {
   loading.value = true
   try {
     const imagesData = await api.images.list()
-    const containersData = await api.containers.list({ all: true })
+    const containersData = await api.containers.list()
     
-    // 获取使用中的镜像信息
-    const usedImages = new Set()
-    
-    // 添加空值检查
+    const usedImageTags = new Set()
+    const usedImageIds = new Set()
+
     if (containersData && Array.isArray(containersData)) {
       containersData.forEach(container => {
-        if (container && container.Image) {
-          const imageName = container.Image
-          // 如果镜像名称中没有标签，添加 :latest
-          usedImages.add(imageName.includes(':') ? imageName : `${imageName}:latest`)
+        if (container) {
+          if (container.Image) {
+            const imageName = container.Image
+            if (imageName.includes(':')) {
+              usedImageTags.add(imageName)
+            } else {
+              usedImageTags.add(`${imageName}:latest`)
+            }
+          }
+          if (container.ImageID) {
+            usedImageIds.add(container.ImageID)
+          }
         }
       })
     }
     
-    // 处理镜像数据，将每个标签作为单独的行
     const processedImages = []
     if (imagesData && Array.isArray(imagesData)) {
       imagesData.forEach(image => {
+        const fullId = image.Id || ''
+        const usedById = fullId && usedImageIds.has(fullId)
+
         if (!image.RepoTags || image.RepoTags.length === 0 || (image.RepoTags.length === 1 && image.RepoTags[0] === '<none>:<none>')) {
           processedImages.push({
             ...image,
             RepoTags: ['<none>:<none>'],
-            isInUse: false
+            isInUse: !!usedById
           })
         } else {
           image.RepoTags.forEach(tag => {
+            const usedByTag = usedImageTags.has(tag)
             processedImages.push({
               ...image,
               RepoTags: [tag],
-              isInUse: usedImages.has(tag)
+              isInUse: !!usedById || usedByTag
             })
           })
         }
       })
     }
     
-    // 打印处理后的镜像数据，用于调试
-    console.log('处理后的镜像数据:', processedImages)
-    
     images.value = processedImages
     total.value = processedImages.length
     
-    // 添加默认排序
     handleSortChange({ prop: 'RepoTags', order: 'ascending' })
   } catch (error) {
     console.error('获取镜像列表错误:', error)
@@ -496,6 +565,10 @@ const handleSortChange = ({ prop, order }) => {
       case 'isInUse':
         aValue = a.isInUse ? 1 : 0
         bValue = b.isInUse ? 1 : 0
+        break
+      case 'Updatable':
+        aValue = isImageUpdatable(a) ? 1 : 0
+        bValue = isImageUpdatable(b) ? 1 : 0
         break
       case 'RepoTags':
         // 只比较镜像名称部分
@@ -890,7 +963,10 @@ const handleTagImage = async () => {
           }
         )
         
-        await api.images.remove(tagForm.value.currentTag)
+        await api.images.remove({
+          id: tagForm.value.imageId,
+          repoTag: tagForm.value.currentTag
+        })
         ElMessage.success('已删除原标签')
       } catch (e) {
         // 用户选择保留原标签
@@ -917,7 +993,11 @@ const deleteImage = async (image) => {
     await ElMessageBox.confirm('确定要删除该镜像吗？', '警告', {
       type: 'warning'
     })
-    await api.images.remove(image.Id)
+    const repoTag = image.RepoTags?.[0] || ''
+    const payload = repoTag && repoTag !== '<none>:<none>'
+      ? { id: image.Id, repoTag }
+      : image.Id
+    await api.images.remove(payload)
     ElMessage.success('镜像已删除')
     fetchImages()
   } catch (error) {
@@ -927,8 +1007,193 @@ const deleteImage = async (image) => {
   }
 }
 
+const isImageUpdatable = (image) => {
+  const originalTag = image.RepoTags?.[0] || ''
+  if (!originalTag || originalTag === '<none>:<none>') {
+    return false
+  }
+  const tag = normalizeImageTag(originalTag)
+  const repo = getImageName(tag)
+  if (repo && updateRepoMap.value[repo]) {
+    return true
+  }
+  if (updateStatusMap.value[tag]) {
+    return true
+  }
+  if (updateStatusMap.value[originalTag]) {
+    return true
+  }
+  return false
+}
+
+const isImageUpdating = (image) => {
+  const tag = image.RepoTags?.[0] || ''
+  if (!tag) {
+    return false
+  }
+  return !!updatingMap.value[tag]
+}
+
+const pushNotification = (type, message) => {
+  const tempId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const time = new Date().toLocaleTimeString()
+  try {
+    window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type, message, tempId, time, read: false } }))
+  } catch (e) {
+    console.error('发送通知失败:', e)
+  }
+  api.system.addNotification({ type, message }).then((saved) => {
+    if (!saved || !saved.id) {
+      return
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('dockpier-notification', {
+        detail: {
+          type,
+          message,
+          tempId,
+          dbId: saved.id,
+          createdAt: saved.created_at,
+          read: !!saved.read
+        }
+      }))
+    } catch (e) {
+      console.error('发送通知失败:', e)
+    }
+  }).catch((err) => {
+    console.error('保存通知失败:', err)
+  })
+}
+
+const rebuildUpdateRepoMap = () => {
+  const source = updateStatusMap.value || {}
+  const repoMap = {}
+  Object.keys(source).forEach((tag) => {
+    if (!tag || tag === '<none>:<none>') {
+      return
+    }
+    const normalizedTag = normalizeImageTag(tag)
+    const repo = getImageName(normalizedTag)
+    if (repo) {
+      repoMap[repo] = true
+    }
+  })
+  updateRepoMap.value = repoMap
+}
+
+const checkImageUpdates = async () => {
+  try {
+    const res = await api.images.getUpdateStatus()
+    const data = res.data || res
+    const updates = Array.isArray(data.updates) ? data.updates : []
+    const raw = {}
+    updates.forEach((item) => {
+      if (item && item.repoTag) {
+        raw[item.repoTag] = true
+      }
+    })
+    const normalized = normalizeUpdateStatusMap(raw)
+    updateStatusMap.value = normalized
+    rebuildUpdateRepoMap()
+  } catch (error) {
+    console.error('加载镜像更新状态失败:', error)
+  }
+}
+
+const handleBulkUpdate = async () => {
+  if (bulkUpdating.value) {
+    return
+  }
+  try {
+    bulkUpdating.value = true
+    const res = await api.images.applyUpdates()
+    const data = res.data || res
+    const total = data.total || 0
+    const attempted = data.attempted || 0
+    const success = data.success || 0
+    const failed = data.failed || 0
+    const skippedUsed = data.skippedUsed || 0
+    const message = `完成了 ${success}/${attempted}/${total} 镜像更新，跳过使用中镜像 ${skippedUsed} 个`
+    pushNotification('success', message)
+    if (failed > 0 && Array.isArray(data.failedTags) && data.failedTags.length) {
+      const list = data.failedTags.slice(0, 5).join('、')
+      const more = data.failedTags.length > 5 ? ` 等 ${data.failedTags.length} 个` : ''
+      const failMsg = `以下镜像更新失败：${list}${more}`
+      pushNotification('error', failMsg)
+    }
+    await checkImageUpdates()
+    await fetchImages()
+  } catch (e) {
+    console.error('一键更新镜像失败:', e)
+    ElMessage.error('一键更新镜像失败: ' + (e.message || '未知错误'))
+  } finally {
+    bulkUpdating.value = false
+  }
+}
+
+const updateImage = async (image) => {
+  const tag = image.RepoTags?.[0] || ''
+  if (!tag || tag === '<none>:<none>') {
+    ElMessage.warning('该镜像没有有效标签，无法更新')
+    return
+  }
+  if (image.isInUse) {
+    ElMessage.warning('该镜像正在被容器使用，请在项目编排或容器页面中执行升级')
+    pushNotification('warning', `${tag} 镜像正在被容器使用，请从项目编排或容器页面中升级`)
+    return
+  }
+  if (isImageUpdating(image)) {
+    ElMessage.info(`镜像 ${tag} 正在更新中，请稍候`)
+    return
+  }
+  try {
+    updatingMap.value = {
+      ...updatingMap.value,
+      [tag]: true
+    }
+    ElMessage.info(`开始更新镜像 ${tag}`)
+    pushNotification('info', `${tag} 镜像开始更新`)
+    await api.images.pull({ name: tag, registry: '' })
+    ElMessage.success(`镜像 ${tag} 已更新到最新版本`)
+    pushNotification('success', `${tag} 镜像更新成功`)
+    try {
+      await api.images.clearUpdate({ repoTag: tag })
+    } catch (e) {
+      console.error('清除镜像更新记录失败:', e)
+    }
+    try {
+      const normalizedTag = normalizeImageTag(tag)
+      const map = { ...updateStatusMap.value }
+      delete map[tag]
+      delete map[normalizedTag]
+      updateStatusMap.value = map
+      rebuildUpdateRepoMap()
+    } catch (e) {
+      console.error('本地更新状态清理失败:', e)
+    }
+    try {
+      await checkImageUpdates()
+    } catch (e) {
+      console.error('刷新镜像更新状态失败:', e)
+    }
+    await fetchImages()
+  } catch (error) {
+    console.error('更新镜像失败:', error)
+    ElMessage.error('更新镜像失败: ' + (error.message || '未知错误'))
+    pushNotification('error', `${tag} 镜像更新失败`)
+  } finally {
+    const map = { ...updatingMap.value }
+    delete map[tag]
+    updatingMap.value = map
+  }
+}
+
 onMounted(() => {
   fetchImages()
+  checkImageUpdates()
+})
+
+onUnmounted(() => {
 })
 </script>
 
@@ -1047,6 +1312,17 @@ onMounted(() => {
 
 .status-point.stopped {
   background-color: #94a3b8;
+}
+
+.tag-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-link {
+  padding: 0;
+  font-size: 12px;
 }
 
 .text-gray {

@@ -7,6 +7,7 @@ import (
 	"dockerpanel/backend/pkg/docker"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -38,6 +39,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup) {
 		group.GET("/:id/logs", getContainerLogs)
 		group.GET("/:id/terminal", containerTerminal)
 		group.GET("/:id/stats", getContainerStats)
+		group.GET("/:id/stats/stream", streamContainerStats)
 	}
 }
 
@@ -124,14 +126,15 @@ func ListContainers(c *gin.Context) {
 			"Id":              container.ID,
 			"Names":           container.Names,
 			"Image":           container.Image,
+			"ImageID":         inspect.Image,
 			"State":           container.State,
 			"Status":          container.Status,
 			"Created":         container.Created,
 			"Ports":           formattedPorts,
-			"NetworkSettings": inspect.NetworkSettings, // 使用 inspect 中的网络设置
-			"HostConfig":      inspect.HostConfig,      // 添加 HostConfig
+			"NetworkSettings": inspect.NetworkSettings,
+			"HostConfig":      inspect.HostConfig,
 			"RunningTime":     runningTime,
-			"Labels":          inspect.Config.Labels, // 添加 Labels，便于前端按 compose 项目分组
+			"Labels":          inspect.Config.Labels,
 		}
 		containersWithDetails = append(containersWithDetails, containerInfo)
 	}
@@ -196,6 +199,116 @@ func getContainerStats(c *gin.Context) {
 		"net_tx_bytes":   txBytes,
 		"timestamp":      time.Now().Unix(),
 	})
+}
+
+// 流式推送容器资源使用情况 (SSE)
+func streamContainerStats(c *gin.Context) {
+	id := c.Param("id")
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		c.String(http.StatusInternalServerError, "data: %s\n\n", `{"error":"连接Docker失败"}`)
+		return
+	}
+	defer cli.Close()
+
+	resp, err := cli.ContainerStats(context.Background(), id, true)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "data: %s\n\n", `{"error":"获取容器统计信息失败"}`)
+		return
+	}
+	defer resp.Body.Close()
+
+	dec := json.NewDecoder(resp.Body)
+	var prevTime time.Time
+	var prevRx, prevTx uint64
+	first := true
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		default:
+		}
+
+		var statsJSON types.StatsJSON
+		if err := dec.Decode(&statsJSON); err != nil {
+			if err == io.EOF {
+				return
+			}
+			// 解析失败，结束流
+			return
+		}
+
+		cpuDelta := float64(statsJSON.CPUStats.CPUUsage.TotalUsage - statsJSON.PreCPUStats.CPUUsage.TotalUsage)
+		systemDelta := float64(statsJSON.CPUStats.SystemUsage - statsJSON.PreCPUStats.SystemUsage)
+		cpuPercent := 0.0
+		if systemDelta > 0 && cpuDelta > 0 {
+			cpuPercent = (cpuDelta / systemDelta) * float64(len(statsJSON.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+		}
+
+		memoryUsage := float64(statsJSON.MemoryStats.Usage)
+		memoryLimit := float64(statsJSON.MemoryStats.Limit)
+		memoryPercent := 0.0
+		if memoryLimit > 0 {
+			memoryPercent = (memoryUsage / memoryLimit) * 100.0
+		}
+
+		var rxBytes, txBytes uint64
+		for _, nw := range statsJSON.Networks {
+			rxBytes += nw.RxBytes
+			txBytes += nw.TxBytes
+		}
+
+		// 读取时间
+		now := time.Now()
+		if !statsJSON.Read.IsZero() {
+			now = statsJSON.Read
+		}
+
+		var upRate, downRate float64
+		if !first && !prevTime.IsZero() {
+			dt := now.Sub(prevTime).Seconds()
+			if dt < 1 {
+				dt = 1
+			}
+			upRate = float64(txBytes-prevTx) / dt
+			downRate = float64(rxBytes-prevRx) / dt
+		} else {
+			upRate = 0
+			downRate = 0
+			first = false
+		}
+
+		prevRx = rxBytes
+		prevTx = txBytes
+		prevTime = now
+
+		payload := map[string]interface{}{
+			"cpu_percent":    cpuPercent,
+			"memory_usage":   memoryUsage,
+			"memory_limit":   memoryLimit,
+			"memory_percent": memoryPercent,
+			"net_rx_bytes":   rxBytes,
+			"net_tx_bytes":   txBytes,
+			"up_rate":        upRate,
+			"down_rate":      downRate,
+			"timestamp":      now.Unix(),
+		}
+
+		b, _ := json.Marshal(payload)
+		c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+		if f, ok := c.Writer.(http.Flusher); ok {
+			f.Flush()
+		} else {
+			c.Writer.Flush()
+		}
+	}
 }
 
 // 获取单个容器详情

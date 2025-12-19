@@ -59,6 +59,15 @@
           <div class="help-text">用于自动生成外网访问的容器导航链接。</div>
         </el-form-item>
 
+        <el-form-item label="镜像更新检查间隔（分钟）">
+          <el-input-number
+            v-model="settingsForm.imageUpdateIntervalMinutes"
+            :min="5"
+            :max="720"
+          />
+          <div class="help-text">控制全局镜像更新检测的时间间隔，默认 30 分钟。</div>
+        </el-form-item>
+
         <!--<el-form-item label="应用商城服务器地址">
           <el-input 
             v-model="settingsForm.appStoreServerUrl" 
@@ -124,7 +133,8 @@ const settingsForm = ref({
   lanUrl: '',
   wanUrl: '',
   appStoreServerUrl: '',
-  socketProxyEnabled: false
+  socketProxyEnabled: false,
+  imageUpdateIntervalMinutes: 30
 })
 const loading = ref(false)
 const urlLoading = ref(false)
@@ -140,6 +150,9 @@ onMounted(async () => {
       settingsForm.value.lanUrl = res.lanUrl || ''
       settingsForm.value.wanUrl = res.wanUrl || ''
       settingsForm.value.appStoreServerUrl = res.appStoreServerUrl || ''
+      if (typeof res.imageUpdateIntervalMinutes === 'number' && res.imageUpdateIntervalMinutes > 0) {
+        settingsForm.value.imageUpdateIntervalMinutes = res.imageUpdateIntervalMinutes
+      }
       if (res.allocPortStart) allocSettings.value.start = res.allocPortStart
       if (res.allocPortEnd) allocSettings.value.end = res.allocPortEnd
     }
@@ -163,6 +176,9 @@ const handleRefresh = async () => {
       settingsForm.value.lanUrl = res.lanUrl || ''
       settingsForm.value.wanUrl = res.wanUrl || ''
       settingsForm.value.appStoreServerUrl = res.appStoreServerUrl || ''
+      if (typeof res.imageUpdateIntervalMinutes === 'number' && res.imageUpdateIntervalMinutes > 0) {
+        settingsForm.value.imageUpdateIntervalMinutes = res.imageUpdateIntervalMinutes
+      }
       if (res.allocPortStart) allocSettings.value.start = res.allocPortStart
       if (res.allocPortEnd) allocSettings.value.end = res.allocPortEnd
     }
@@ -188,7 +204,8 @@ const saveServerSettings = async () => {
       wanUrl: settingsForm.value.wanUrl,
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
       allocPortStart: allocSettings.value.start,
-      allocPortEnd: allocSettings.value.end
+      allocPortEnd: allocSettings.value.end,
+      imageUpdateIntervalMinutes: settingsForm.value.imageUpdateIntervalMinutes
     })
     ElMessage.success('配置已保存')
   } catch (error) {
@@ -249,7 +266,8 @@ const saveAllocSettings = async () => {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
       allocPortStart: allocSettings.value.start,
-      allocPortEnd: allocSettings.value.end
+      allocPortEnd: allocSettings.value.end,
+      imageUpdateIntervalMinutes: settingsForm.value.imageUpdateIntervalMinutes
     })
     ElMessage.success('端口分配范围已保存')
   } catch (error) {

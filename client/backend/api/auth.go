@@ -3,12 +3,15 @@ package api
 import (
 	"database/sql"
 	"dockerpanel/backend/pkg/database"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
@@ -51,12 +54,44 @@ func login(c *gin.Context) {
 	var storedPassword string
 	err := db.QueryRow("SELECT password FROM users WHERE username = ?", req.Username).Scan(&storedPassword)
 
-	if err == sql.ErrNoRows || storedPassword != req.Password {
+	if err == sql.ErrNoRows {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
+	}
+
+	// Debug: 观测密码存储形态（前缀与长度）
+	func() {
+		if storedPassword == "" {
+			log.Printf("[AUTH] user=%s no password stored", req.Username)
+		} else {
+			prefix := storedPassword
+			if len(prefix) > 7 {
+				prefix = prefix[:7]
+			}
+			log.Printf("[AUTH] user=%s stored pw len=%d prefix=%s", req.Username, len(storedPassword), prefix)
+		}
+	}()
+
+	// 使用 bcrypt 校验密码；若不是哈希（兼容旧数据），进行明文比较并升级为哈希
+	if strings.HasPrefix(storedPassword, "$2a$") || strings.HasPrefix(storedPassword, "$2b$") || strings.HasPrefix(storedPassword, "$2y$") {
+		if bcrypt.CompareHashAndPassword([]byte(storedPassword), []byte(req.Password)) != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+			return
+		}
+	} else {
+		// 旧明文密码
+		if storedPassword != req.Password {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+			return
+		}
+		// 升级为哈希
+		newHash, herr := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if herr == nil {
+			_, _ = db.Exec("UPDATE users SET password = ? WHERE username = ?", string(newHash), req.Username)
+		}
 	}
 
 	// Create JWT token
@@ -91,12 +126,19 @@ func changePassword(c *gin.Context) {
 		return
 	}
 
-	if currentPassword != req.OldPassword {
+	// 验证旧密码
+	if bcrypt.CompareHashAndPassword([]byte(currentPassword), []byte(req.OldPassword)) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Old password incorrect"})
 		return
 	}
 
-	_, err = db.Exec("UPDATE users SET password = ? WHERE username = ?", req.NewPassword, username)
+	// 哈希新密码并更新
+	newHash, herr := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if herr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash new password"})
+		return
+	}
+	_, err = db.Exec("UPDATE users SET password = ? WHERE username = ?", string(newHash), username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
 		return

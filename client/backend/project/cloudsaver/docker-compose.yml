@@ -1,0 +1,10 @@
+services:
+    cloudsaver:
+        container_name: cloud-saver
+        image: jiangrui1994/cloudsaver:latest
+        ports:
+            - 10005:8008
+        restart: unless-stopped
+        volumes:
+            - ./data:/app/data
+version: "3"

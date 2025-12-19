@@ -80,7 +80,8 @@ func handleContainerEvent(cli *client.Client, event events.Message) {
 		}
 
 		// 处理容器端口映射和导航注册
-		processContainer(container.ID, container.Name, container.NetworkSettings.Ports)
+		title := buildTitle(container.Name, container.Config.Labels)
+		processContainer(container.ID, title, container.NetworkSettings.Ports)
 
 	case "destroy", "die":
 		// Remove navigation item if it was auto-created for this container
@@ -92,6 +93,7 @@ func handleContainerEvent(cli *client.Client, event events.Message) {
 func updateNavigationForContainer(container types.Container) {
 	// 容器名称通常以 / 开头，去除它
 	name := strings.TrimPrefix(container.Names[0], "/")
+	title := buildTitle(name, container.Labels)
 
 	// 从 Ports 中提取映射信息
 	// ContainerList 返回的 Ports 结构与 Inspect 不同，需要转换或直接使用
@@ -126,13 +128,11 @@ func updateNavigationForContainer(container types.Container) {
 	}
 
 	if firstPublicPort != "" {
-		registerNavigation(container.ID, name, firstPublicPort)
+		registerNavigation(container.ID, title, firstPublicPort)
 	}
 }
 
-func processContainer(containerID, containerName string, ports nat.PortMap) { // nat.PortMap 简化表示
-	// containerName 可能包含 /
-	name := strings.TrimPrefix(containerName, "/")
+func processContainer(containerID, title string, ports nat.PortMap) { // nat.PortMap 简化表示
 
 	var firstPublicPort string
 
@@ -146,11 +146,11 @@ func processContainer(containerID, containerName string, ports nat.PortMap) { //
 	}
 
 	if firstPublicPort != "" {
-		registerNavigation(containerID, name, firstPublicPort)
+		registerNavigation(containerID, title, firstPublicPort)
 	}
 }
 
-func registerNavigation(containerID, name, publicPort string) {
+func registerNavigation(containerID, title, publicPort string) {
 	// 获取全局配置的 LanUrl 和 WanUrl
 	lanBaseUrl := settings.GetLanUrl()
 	wanBaseUrl := settings.GetWanUrl()
@@ -183,9 +183,11 @@ func registerNavigation(containerID, name, publicPort string) {
 	var existingID int
 	err := db.QueryRow("SELECT id FROM navigation_items WHERE container_id = ?", containerID).Scan(&existingID)
 
-	title := name
 	icon := "mdi-docker" // 默认图标
 	category := "默认"
+	if strings.TrimSpace(title) == "" {
+		title = containerID
+	}
 
 	if err == sql.ErrNoRows {
 		// Create new
@@ -194,9 +196,9 @@ func registerNavigation(containerID, name, publicPort string) {
 			title, finalUrl, lanUrl, wanUrl, icon, category, containerID,
 		)
 		if err != nil {
-			log.Printf("Failed to auto-register navigation for %s: %v", name, err)
+			log.Printf("Failed to auto-register navigation for %s: %v", title, err)
 		} else {
-			log.Printf("Auto-registered navigation for %s -> LAN: %s, WAN: %s", name, lanUrl, wanUrl)
+			log.Printf("Auto-registered navigation for %s -> LAN: %s, WAN: %s", title, lanUrl, wanUrl)
 		}
 	} else if err == nil {
 		// Update existing
@@ -205,7 +207,7 @@ func registerNavigation(containerID, name, publicPort string) {
 			title, finalUrl, lanUrl, wanUrl, icon, category, existingID,
 		)
 		if err != nil {
-			log.Printf("Failed to update navigation for %s: %v", name, err)
+			log.Printf("Failed to update navigation for %s: %v", title, err)
 		}
 	}
 }
@@ -216,4 +218,13 @@ func removeNavigationForContainer(containerID string) {
 	if err != nil {
 		log.Printf("Failed to remove navigation for container %s: %v", containerID, err)
 	}
+}
+
+func buildTitle(name string, labels map[string]string) string {
+	project := strings.TrimSpace(labels["com.docker.compose.project"])
+	service := strings.TrimSpace(labels["com.docker.compose.service"])
+	if project != "" && service != "" {
+		return fmt.Sprintf("%s-%s", project, service)
+	}
+	return strings.TrimPrefix(name, "/")
 }

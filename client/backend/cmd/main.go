@@ -108,6 +108,7 @@ func main() {
 
 	// 启动 Docker 事件日志记录器
 	system.StartEventLogger()
+	api.StartImageUpdateScheduler()
 
 	r := gin.Default()
 

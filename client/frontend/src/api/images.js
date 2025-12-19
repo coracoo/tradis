@@ -33,9 +33,17 @@ const imagesApi = {
       method: 'get'
     })
   },
-  remove: (id) => {
+  remove: (payload) => {
+    if (typeof payload === 'string') {
+      return request({
+        url: `/images/${encodeURIComponent(payload)}`,
+        method: 'delete'
+      })
+    }
+    const id = payload && payload.id ? encodeURIComponent(payload.id) : ''
+    const repoTag = payload && payload.repoTag ? `?repoTag=${encodeURIComponent(payload.repoTag)}` : ''
     return request({
-      url: `/images/${id}`,
+      url: `/images/${id}${repoTag}`,
       method: 'delete'
     })
   },
@@ -94,7 +102,37 @@ const imagesApi = {
       url: '/images/prune',
       method: 'post'
     })
+  },
+
+  checkUpdates: () => {
+    return request({
+      url: '/images/updates',
+      method: 'get'
+    })
+  },
+
+  getUpdateStatus: () => {
+    return request({
+      url: '/images/updates/status',
+      method: 'get'
+    })
+  },
+
+  clearUpdate: (data) => {
+    return request({
+      url: '/images/updates/clear',
+      method: 'post',
+      data
+    })
+  },
+
+  applyUpdates: () => {
+    return request({
+      url: '/images/updates/apply',
+      method: 'post',
+      timeout: 600000
+    })
   }
-}
+} 
 
 export default imagesApi

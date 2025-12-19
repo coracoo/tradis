@@ -60,7 +60,11 @@ const api = {
   system: {
     info: () => request.get('/system/info'),
     stats: () => request.get('/system/stats'),
-    events: () => request.get('/system/events')
+    events: () => request.get('/system/events'),
+    addNotification: (data) => request.post('/system/notifications', data),
+    getNotifications: (params) => request.get('/system/notifications', { params }),
+    deleteNotification: (id) => request.delete(`/system/notifications/${id}`),
+    markNotificationsRead: () => request.post('/system/notifications/read')
   },
 
   navigation: {

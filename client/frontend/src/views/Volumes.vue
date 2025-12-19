@@ -52,7 +52,7 @@
         :row-style="{ height: '60px' }"
       >
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="Name" label="名称" sortable="custom" min-width="200" show-overflow-tooltip>
+        <el-table-column prop="Name" label="卷名称" sortable="custom" min-width="240" show-overflow-tooltip>
           <template #default="scope">
             <div class="volume-name-cell">
               <div class="icon-wrapper volume">
@@ -62,23 +62,10 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="Mountpoint" label="挂载点" sortable="custom" min-width="200" show-overflow-tooltip>
-          <template #default="scope">
-            <span class="text-gray font-mono">{{ scope.row.Mountpoint }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="Driver" label="驱动" sortable="custom" width="100" />
-        
-        <el-table-column prop="Status" label="状态" sortable="custom" width="120">
-          <template #default="scope">
-            <div class="status-indicator">
-              <span class="status-point" :class="scope.row.InUse ? 'running' : 'stopped'"></span>
-              <span>{{ scope.row.InUse ? '使用中' : '未使用' }}</span>
-            </div>
-          </template>
-        </el-table-column>
 
-        <el-table-column prop="Containers" label="关联容器" sortable="custom" min-width="150">
+        <!--<el-table-column prop="Driver" label="驱动" sortable="custom" min-width="100" />-->
+        
+        <el-table-column prop="Containers" label="关联容器" sortable="custom" min-width="80">
           <template #default="scope">
             <div class="container-list" v-if="scope.row.Containers && Object.keys(scope.row.Containers).length">
               <el-tooltip 
@@ -94,6 +81,12 @@
             <span v-else class="text-gray">-</span>
           </template>
         </el-table-column>
+
+        <el-table-column prop="Mountpoint" label="挂载点" sortable="custom" min-width="200" show-overflow-tooltip>
+          <template #default="scope">
+            <span class="text-gray font-mono">{{ scope.row.Mountpoint }}</span>
+          </template>
+        </el-table-column>
         
         <el-table-column prop="Created" label="创建时间" sortable="custom" width="160">
           <template #default="scope">
@@ -103,7 +96,16 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="120" fixed="right" align="center">
+        <el-table-column prop="Status" label="状态" sortable="custom" width="120">
+          <template #default="scope">
+            <div class="status-indicator">
+              <span class="status-point" :class="scope.row.InUse ? 'running' : 'stopped'"></span>
+              <span>{{ scope.row.InUse ? '使用中' : '未使用' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="120" fixed="left" align="center">
           <template #default="scope">
             <div class="row-ops">
               <el-tooltip content="删除存储卷" placement="top">
@@ -140,11 +142,11 @@
         <el-form-item label="名称">
           <el-input v-model="volumeForm.name" placeholder="存储卷名称" />
         </el-form-item>
-        <el-form-item label="驱动">
+        <!--<el-form-item label="驱动">
           <el-select v-model="volumeForm.driver" placeholder="选择驱动" style="width: 100%">
             <el-option label="local" value="local" />
           </el-select>
-        </el-form-item>
+        </el-form-item>-->
       </el-form>
       <template #footer>
         <span class="dialog-footer">
@@ -378,6 +380,7 @@ onMounted(() => {
   align-items: center;
   gap: 16px;
   padding: 8px 0;
+  min-width: 0;
 }
 
 .icon-wrapper {
@@ -405,6 +408,11 @@ onMounted(() => {
   font-weight: 600;
   color: var(--el-text-color-primary);
   font-size: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-indicator {

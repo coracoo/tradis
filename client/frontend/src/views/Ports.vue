@@ -120,7 +120,7 @@
                :data="udpItems" 
                style="width: 100%; height: 100%" 
                v-loading="loading" 
-               :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600, fontSize: '14px', height: '50px' }"
+               :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
                :row-style="{ height: '50px' }"
              >
                <el-table-column prop="port" label="端口号" width="100">

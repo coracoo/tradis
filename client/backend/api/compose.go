@@ -1,31 +1,31 @@
 package api
 
 import (
-    "bufio"
-    "context"
-    "fmt"
-    "io"
-    "net/http"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "sort"
-    "strings"
-    "time"
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
-    "github.com/docker/docker/api/types"
-    "github.com/docker/docker/api/types/filters"
-    "github.com/docker/docker/client"
-    "github.com/gin-gonic/gin"
-    "gopkg.in/yaml.v3"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
+	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 
-    "dockerpanel/backend/pkg/settings"
-    "dockerpanel/backend/pkg/database"
+	"dockerpanel/backend/pkg/database"
+	"dockerpanel/backend/pkg/settings"
 )
 
 // getProjectsBaseDir 获取项目根目录
 func getProjectsBaseDir() string {
-	return filepath.Join(settings.GetDataDir(), "project")
+	return settings.GetProjectRoot()
 }
 
 // ComposeProject 定义项目结构
@@ -37,6 +37,49 @@ type ComposeProject struct {
 	Containers int       `json:"containers"`
 	Status     string    `json:"status"`
 	CreateTime time.Time `json:"createTime"`
+}
+
+// findComposeFile 在项目目录中查找可用的 compose 配置文件
+func findComposeFile(projectDir string) (string, error) {
+	// 优先匹配常见的 docker compose 文件名
+	candidates := []string{
+		"docker-compose.yaml",
+		"docker-compose.yml",
+		"compose.yml",
+		"compose.yml",
+	}
+
+	for _, name := range candidates {
+		path := filepath.Join(projectDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+
+	// 兜底：在目录中查找任意 *.yaml / *.yml 文件
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return "", err
+	}
+
+	matched := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		lower := strings.ToLower(name)
+		if strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml") {
+			matched = append(matched, name)
+		}
+	}
+
+	if len(matched) == 0 {
+		return "", os.ErrNotExist
+	}
+
+	sort.Strings(matched)
+	return filepath.Join(projectDir, matched[0]), nil
 }
 
 // RegisterComposeRoutes 注册路由
@@ -263,19 +306,26 @@ func listProjects(c *gin.Context) {
 			}
 
 			// 如果是 AppStore 部署的应用，虽然目录存在，但可能因为 compose label 问题没被识别
-			// 这里我们信任 data/project 下的目录结构
+			// 这里我们信任 project 下的目录结构
 			if _, err := os.Stat(projectPath); err == nil {
 				// 目录存在，确认为本项目
 			} else if workingDir := container.Labels["com.docker.compose.project.working_dir"]; workingDir != "" {
 				// 外部项目
 				projectPath = workingDir
 			} else {
-				// 既不在 data/project，也没有 working_dir label，跳过或者标记为外部
+				// 既不在 project，也没有 working_dir label，跳过或者标记为外部
 				// continue
 			}
 
+			// 显示名称：如果项目目录在受管项目根目录下，则优先使用目录名（兼容 AppStore 模板名）
+			displayName := projectName
+			projectRoot := getProjectsBaseDir()
+			if rel, err := filepath.Rel(projectRoot, projectPath); err == nil && !strings.HasPrefix(rel, "..") {
+				displayName = filepath.Base(projectPath)
+			}
+
 			projects[projectName] = &ComposeProject{
-				Name:       projectName,
+				Name:       displayName,
 				Path:       projectPath,
 				Containers: 0,
 				Status:     "已停止",
@@ -292,8 +342,7 @@ func listProjects(c *gin.Context) {
 		}
 	}
 
-	// 补充扫描 data/project 目录下的项目
-	// 即使没有运行容器，也应该显示在列表中
+	// 补充扫描项目根目录下的项目，即使没有运行容器，也应该显示在列表中
 	projectBaseDir := getProjectsBaseDir()
 	entries, err := os.ReadDir(projectBaseDir)
 	if err == nil {
@@ -302,15 +351,26 @@ func listProjects(c *gin.Context) {
 				continue
 			}
 			projectName := entry.Name()
+			projectDir := filepath.Join(projectBaseDir, projectName)
+
+			// 如果该目录路径已经被某个项目使用（例如通过容器 label 推导出来），则不再重复创建项目
+			alreadyUsed := false
+			for _, p := range projects {
+				if filepath.Clean(p.Path) == filepath.Clean(projectDir) {
+					alreadyUsed = true
+					break
+				}
+			}
+			if alreadyUsed {
+				continue
+			}
+
 			if _, exists := projects[projectName]; !exists {
-				// 检查是否存在 docker-compose.yml
-				composePath := filepath.Join(projectBaseDir, projectName, "docker-compose.yml")
-				if _, err := os.Stat(composePath); err == nil {
-					// 只有存在 compose 文件的才认为是有效项目
+				if _, err := findComposeFile(projectDir); err == nil {
 					info, _ := entry.Info()
 					projects[projectName] = &ComposeProject{
 						Name:       projectName,
-						Path:       filepath.Join(projectBaseDir, projectName),
+						Path:       projectDir,
 						Containers: 0,
 						Status:     "已停止",
 						CreateTime: info.ModTime(), // 使用目录修改时间作为创建时间
@@ -327,14 +387,14 @@ func listProjects(c *gin.Context) {
 	cwd, _ := os.Getwd()
 
 	for _, project := range projects {
-		// 尝试读取 compose 文件
-		composePath := filepath.Join(project.Path, "docker-compose.yml")
-		if data, err := os.ReadFile(composePath); err == nil {
-			project.Compose = string(data)
+		if composePath, err := findComposeFile(project.Path); err == nil {
+			if data, err := os.ReadFile(composePath); err == nil {
+				project.Compose = string(data)
+			}
 		}
 
 		// 将绝对路径转换为相对路径 (相对于程序运行目录)
-		// 这样可以保留 data/project/ 前缀，方便前端识别
+		// 这样可以保留 project/ 前缀，方便前端识别
 		if relPath, err := filepath.Rel(cwd, project.Path); err == nil {
 			project.Path = filepath.ToSlash(relPath)
 		}
@@ -659,28 +719,28 @@ func downProject(c *gin.Context) {
 // 2. 扫描并强制删除所有带有 com.docker.compose.project=name 标签的残留容器
 // 3. 删除项目文件目录
 func removeProject(c *gin.Context) {
-    name := c.Param("name")
-    projectDir := filepath.Join(getProjectsBaseDir(), name)
+	name := c.Param("name")
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
-    // 清理资源
-    if err := cleanProjectResources(name); err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
+	// 清理资源
+	if err := cleanProjectResources(name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-    if tx, err := database.GetDB().Begin(); err == nil {
-        if derr := database.DeleteReservedPortsByOwnerTx(tx, name); derr != nil {
-            _ = tx.Rollback()
-        } else {
-            _ = tx.Commit()
-        }
-    }
+	if tx, err := database.GetDB().Begin(); err == nil {
+		if derr := database.DeleteReservedPortsByOwnerTx(tx, name); derr != nil {
+			_ = tx.Rollback()
+		} else {
+			_ = tx.Commit()
+		}
+	}
 
-    // 4. 删除项目目录
-    if err := os.RemoveAll(projectDir); err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "删除项目目录失败: " + err.Error()})
-        return
-    }
+	// 4. 删除项目目录
+	if err := os.RemoveAll(projectDir); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除项目目录失败: " + err.Error()})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "项目已删除"})
 }
@@ -773,14 +833,14 @@ func getComposeLogs(c *gin.Context) {
 func getProjectYaml(c *gin.Context) {
 	name := c.Param("name")
 
-	// 检查项目目录是否在根目录下
-	// 这里假设所有项目都应该在 data/project 目录下
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
-	yamlPath := filepath.Join(projectDir, "docker-compose.yml")
-
-	// 检查文件是否存在
-	if _, err := os.Stat(yamlPath); os.IsNotExist(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "项目文件不在根目录下，无法查看"})
+	yamlPath, err := findComposeFile(projectDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "未找到可用的 compose 配置文件，支持: *.yaml, *.yml, docker-compose.yaml, docker-compose.yml"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "扫描配置文件失败: " + err.Error()})
 		return
 	}
 
@@ -809,7 +869,16 @@ func saveProjectYaml(c *gin.Context) {
 	}
 
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
-	yamlPath := filepath.Join(projectDir, "docker-compose.yml")
+	yamlPath, err := findComposeFile(projectDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 如果不存在任何 YAML 文件，则默认写入 docker-compose.yml
+			yamlPath = filepath.Join(projectDir, "docker-compose.yml")
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "扫描配置文件失败: " + err.Error()})
+			return
+		}
+	}
 
 	// 保存 YAML 文件
 	if err := os.WriteFile(yamlPath, []byte(data.Content), 0644); err != nil {

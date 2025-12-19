@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -287,4 +288,29 @@ func readLogsFromFile(path string, logs *[]LogEntry) {
 			*logs = append(*logs, entry)
 		}
 	}
+}
+
+func LogSimpleEvent(eventType string, message string) {
+	t := strings.ToLower(eventType)
+	typeClass := "info"
+	switch t {
+	case "success":
+		typeClass = "success"
+	case "warning":
+		typeClass = "warning"
+	case "error":
+		typeClass = "danger"
+	default:
+		t = "info"
+		typeClass = "info"
+	}
+	entry := LogEntry{
+		ID:        fmt.Sprintf("custom-%d", time.Now().UnixNano()),
+		Type:      t,
+		TypeClass: typeClass,
+		Time:      time.Now().Format("15:04:05"),
+		Message:   message,
+		Timestamp: time.Now().Unix(),
+	}
+	appendLog(entry)
 }

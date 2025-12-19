@@ -53,7 +53,7 @@
         :row-style="{ height: '60px' }"
       >
         
-        <el-table-column prop="Name" label="名称" sortable="custom" min-width="200" header-align="left">
+        <el-table-column prop="Name" label="网络名称" sortable="custom" min-width="200" header-align="left">
           <template #default="scope">
             <div class="network-name-cell">
               <div class="icon-wrapper network">
@@ -68,27 +68,13 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="Driver" label="驱动模式" sortable="custom" width="120" header-align="left">
+        <el-table-column prop="Driver" label="类型" sortable="custom" width="120" header-align="left">
           <template #default="scope">
             <el-tag size="default" effect="light" class="driver-tag">{{ scope.row.Driver }}</el-tag>
           </template>
         </el-table-column>
         
-        <el-table-column prop="Subnet" label="子网 / 网关" min-width="240" sortable="custom" header-align="left">
-          <template #default="scope">
-            <div class="network-config-info font-mono">
-              <div v-if="scope.row.IPAM?.Config?.[0]?.Subnet" class="config-row">
-                <span class="label">Subnet:</span> <span class="value">{{ scope.row.IPAM.Config[0].Subnet }}</span>
-              </div>
-              <div v-if="scope.row.IPAM?.Config?.[0]?.Gateway" class="config-row">
-                <span class="label">Gateway:</span> <span class="value">{{ scope.row.IPAM.Config[0].Gateway }}</span>
-              </div>
-              <div v-if="!scope.row.IPAM?.Config?.length" class="text-gray">-</div>
-            </div>
-          </template>
-        </el-table-column>
-        
-        <el-table-column prop="Containers" label="连接容器" min-width="200" sortable="custom" header-align="left">
+        <el-table-column prop="Containers" label="关联容器" min-width="200" sortable="custom" header-align="left">
           <template #default="scope">
             <template v-if="scope.row.Containers && Object.keys(scope.row.Containers).length">
               <div class="container-list">
@@ -121,7 +107,21 @@
             <span v-else class="text-gray">-</span>
           </template>
         </el-table-column>
-        
+         
+        <el-table-column prop="Subnet" label="子网信息" min-width="120" sortable="custom" header-align="left">
+          <template #default="scope">
+            <div class="network-config-info font-mono">
+              <div v-if="scope.row.IPAM?.Config?.[0]?.Subnet" class="config-row">
+                <span class="label">Subnet:</span> <span class="value">{{ scope.row.IPAM.Config[0].Subnet }}</span>
+              </div>
+              <div v-if="scope.row.IPAM?.Config?.[0]?.Gateway" class="config-row">
+                <span class="label">Gateway:</span> <span class="value">{{ scope.row.IPAM.Config[0].Gateway }}</span>
+              </div>
+              <div v-if="!scope.row.IPAM?.Config?.length" class="text-gray">-</div>
+            </div>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="Created" label="创建时间" sortable="custom" width="180" header-align="left">
           <template #default="scope">
             <div class="text-gray font-mono">
@@ -130,7 +130,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="150" fixed="right" header-align="center">
+        <el-table-column label="操作" width="150" fixed="left" header-align="center">
           <template #default="scope">
             <div class="row-ops">
               <el-tooltip content="编辑网络" placement="top">

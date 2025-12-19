@@ -55,7 +55,7 @@
             <el-tab-pane label="YAML配置" name="yaml">
               <div class="yaml-editor">
                 <div class="editor-header">
-                  <span>docker-compose.yml</span>
+                  <span>Compose 配置（自动识别 *.yml / *.yaml）</span>
                   <div class="editor-actions">
                     <el-button type="primary" size="small" :loading="isSaving" @click="handleSaveYaml">
                       保存

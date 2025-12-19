@@ -98,6 +98,8 @@ import api from '../api'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
+const managementMode = (import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toUpperCase()
+
 const statistics = ref([
   { title: '容器总数', value: 0, icon: 'Monitor', type: 'stat-primary', key: 'containers' },
   { title: '运行中', value: 0, icon: 'CircleCheckFilled', type: 'stat-success', key: 'running' },
@@ -125,6 +127,7 @@ const eventLogs = ref([
 const pageSize = 20
 const maxEvents = 100 // 最多显示100条（5页）
 const currentPage = ref(1)
+let versionWarned = false
 
 // 事件类型映射
 const getEventIcon = (type) => {
@@ -138,9 +141,9 @@ const getEventIcon = (type) => {
 
 const getEventLabel = (type) => {
   switch (type?.toLowerCase()) {
-    case 'success': return '成功'
-    case 'warning': return '警告'
-    case 'error': return '错误'
+    case 'success': return '启动类'
+    case 'warning': return '停止类'
+    case 'error': return '删除类'
     default: return '信息'
   }
 }
@@ -211,6 +214,14 @@ const fetchStatistics = async () => {
       resources.value.disk.total = formatBytes(data.DiskTotal)
     }
 
+    if (!versionWarned && data.DockerAPIVersion) {
+      const apiVersionNum = parseFloat(String(data.DockerAPIVersion))
+      if (!Number.isNaN(apiVersionNum) && apiVersionNum >= 1.52) {
+        versionWarned = true
+        ElMessage.warning(`检测到 Docker API 版本为 ${data.DockerAPIVersion}，高于当前推荐版本（≤ 1.51），可能会造成部分功能使用异常，建议宿主机 Docker 版本控制在 24.x 左右`)
+      }
+    }
+
   } catch (error) {
     console.error('获取系统信息失败:', error)
     ElMessage.error('获取系统信息失败')
@@ -218,16 +229,15 @@ const fetchStatistics = async () => {
 }
 
 const handleStatClick = (stat) => {
-  if (stat.key === 'containers') {
-    router.push({ path: '/containers', query: { status: '' } })
-    return
-  }
-  if (stat.key === 'running') {
-    router.push({ path: '/containers', query: { status: 'running' } })
-    return
-  }
-  if (stat.key === 'stopped') {
-    router.push({ path: '/containers', query: { status: 'stopped' } })
+  if (stat.key === 'containers' || stat.key === 'running' || stat.key === 'stopped') {
+    const containersPath = managementMode === 'DS' ? '/containers' : '/compose'
+    const status =
+      stat.key === 'running'
+        ? 'running'
+        : stat.key === 'stopped'
+        ? 'stopped'
+        : ''
+    router.push({ path: containersPath, query: { status } })
     return
   }
   if (stat.key === 'images') {

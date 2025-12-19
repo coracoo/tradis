@@ -72,7 +72,7 @@
         <span :class="appStoreConnected ? 'dot connected' : 'dot'" /> 
         <span> {{ appStoreConnected ? '商城服务连接正常' : '商城服务连接异常' }} </span>
       </div>
-      <div class="version-info">v0.3.0 (开发板)</div>
+      <div class="version-info">v0.3.0 (开发中)</div>
     </div>
   </aside>
 </template>

@@ -347,10 +347,164 @@ watch(() => dialogVisible.value, (val) => {
   if (val) {
     loadSettings()
   }
-})</script>
+})
+
+</script>
 <style scoped>
+/* Dialog Styles */
+:deep(.el-dialog) {
+  --el-dialog-bg-color: var(--el-bg-color-overlay);
+  background-color: var(--el-bg-color-overlay);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--el-box-shadow);
+}
+
+:deep(.el-dialog__header) {
+  background-color: var(--el-bg-color-overlay);
+  color: var(--el-text-color-primary);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 20px;
+  margin-right: 0;
+}
+
+:deep(.el-dialog__title) {
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+:deep(.el-dialog__body) {
+  background-color: var(--el-bg-color-overlay);
+  color: var(--el-text-color-primary);
+  padding: 24px;
+}
+
+:deep(.el-dialog__footer) {
+  background-color: var(--el-bg-color-overlay) !important;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding: 20px;
+}
+
+/* Tabs Styles */
+.settings-tabs :deep(.el-tabs__header) {
+  margin-bottom: 20px;
+}
+
+.settings-tabs :deep(.el-tabs__nav-wrap::after) {
+  background-color: var(--el-border-color-lighter);
+}
+
+.settings-tabs :deep(.el-tabs__item) {
+  color: var(--el-text-color-regular);
+  font-size: 15px;
+}
+
+.settings-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+.settings-tabs :deep(.el-tabs__item:hover) {
+  color: var(--el-color-primary);
+}
+
+/* Form & Input Styles */
+:deep(.el-form-item__label) {
+  color: var(--el-text-color-regular);
+}
+
+:deep(.el-input__wrapper) {
+  background-color: var(--el-fill-color-blank);
+  box-shadow: 0 0 0 1px var(--el-border-color) inset;
+}
+
+:deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--el-border-color-hover) inset;
+}
+
+:deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+
+:deep(.el-input__inner) {
+  color: var(--el-text-color-primary);
+}
+
+:deep(.el-input.is-disabled .el-input__wrapper) {
+  background-color: var(--el-fill-color-light);
+  box-shadow: 0 0 0 1px var(--el-border-color-lighter) inset;
+}
+
+:deep(.el-input.is-disabled .el-input__inner) {
+  color: var(--el-text-color-placeholder);
+}
+
+/* Switch Styles */
+:deep(.el-switch__label) {
+  color: var(--el-text-color-regular);
+}
+
+:deep(.el-switch__label.is-active) {
+  color: var(--el-color-primary);
+}
+
+/* Table Styles */
+:deep(.el-table) {
+  background-color: transparent;
+  --el-table-header-bg-color: var(--el-fill-color-light);
+  --el-table-row-hover-bg-color: var(--el-fill-color);
+  --el-table-tr-bg-color: transparent;
+  --el-table-border-color: var(--el-border-color-lighter);
+  color: var(--el-text-color-regular);
+}
+
+:deep(.el-table th.el-table__cell) {
+  background-color: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+:deep(.el-table td.el-table__cell) {
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+/* Custom Classes */
 .registry-header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
   margin-bottom: 16px;
-  padding-left: 0;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  background-color: var(--el-bg-color-overlay);
+  width: 100%;
+  box-sizing: border-box;
+}
+</style>
+
+<style>
+/* Global styles override for dialog */
+.app-dialog.el-dialog {
+  background-color: var(--el-bg-color-overlay);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--el-box-shadow);
+}
+
+.app-dialog .el-dialog__header,
+.app-dialog .el-dialog__body,
+.app-dialog .el-dialog__footer {
+  background-color: var(--el-bg-color-overlay) !important;
+  color: var(--el-text-color-primary);
+}
+
+.app-dialog .el-dialog__footer {
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 </style>

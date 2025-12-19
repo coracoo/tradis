@@ -617,7 +617,11 @@ const goBack = () => {
 }
 
 const goToContainers = () => {
-  router.push('/containers')
+  if ((import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toUpperCase() === 'CS') {
+    router.push('/compose')
+  } else {
+    router.push('/projects')
+  }
 }
 
 // 简单对象转 YAML 字符串
@@ -691,7 +695,32 @@ const submitDeploy = async () => {
        console.warn('No compose or services found in project definition')
     }
 
-    const projectName = project.value.name
+    const rawName = project.value.name || ''
+
+    const normalizeComposeName = (name) => {
+      const lower = String(name || '').toLowerCase()
+      const sanitized = lower.replace(/[^a-z0-9_-]/g, '')
+      const trimmed = sanitized.replace(/^[^a-z0-9]+/, '')
+      return trimmed || 'project'
+    }
+
+    const projectName = normalizeComposeName(rawName)
+
+    if (projectName !== rawName) {
+      try {
+        await ElMessageBox.confirm(
+          `当前应用名称 "${rawName}" 包含 Docker Compose 不支持的字符，将使用规范化名称 "${projectName}" 作为项目名进行部署（目录及项目列表将以该名称显示）。是否继续？`,
+          '项目名称规范化',
+          {
+            confirmButtonText: '继续部署',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+      } catch (e) {
+        return
+      }
+    }
 
     // 检查项目是否已存在
     try {
@@ -721,7 +750,8 @@ const submitDeploy = async () => {
 
     // 3. 调用部署接口
     const deployData = {
-      projectId: projectName, 
+      projectId: rawName,
+      projectName,
       compose: yamlContent,
       env: finalEnv, // 兼容旧逻辑
       config: deployConfig.value // 新逻辑：传递完整配置数组

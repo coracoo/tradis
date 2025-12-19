@@ -228,9 +228,24 @@ func getApp(c *gin.Context) {
 }
 
 type DeployRequest struct {
-	Compose string            `json:"compose"` // 前端传递的最终 Compose 内容
-	Env     map[string]string `json:"env"`     // 预留环境变量
-	Config  []Variable        `json:"config"`  // 新增：完整的配置数组
+	Compose     string            `json:"compose"`
+	Env         map[string]string `json:"env"`
+	Config      []Variable        `json:"config"`
+	ProjectName string            `json:"projectName"`
+}
+
+func normalizeProjectName(name string) string {
+	lower := strings.ToLower(name)
+	buf := make([]rune, 0, len(lower))
+	for _, r := range lower {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			buf = append(buf, r)
+		}
+	}
+	if len(buf) == 0 {
+		return "project"
+	}
+	return string(buf)
 }
 
 // 部署应用
@@ -266,11 +281,15 @@ func deployApp(c *gin.Context) {
 			return
 		}
 
-		// 创建临时compose文件
-		t.AddLog("info", fmt.Sprintf("准备部署目录: %s", app.Name))
-		// 使用项目名称作为目录名，与 compose.go 保持一致
+		projectName := app.Name
+		if deployReq.ProjectName != "" {
+			projectName = deployReq.ProjectName
+		}
+		projectName = normalizeProjectName(projectName)
+
+		t.AddLog("info", fmt.Sprintf("准备部署目录: %s", projectName))
 		baseDir := getProjectsBaseDir()
-		composeDir := filepath.Join(baseDir, app.Name)
+		composeDir := filepath.Join(baseDir, projectName)
 
 		if mkErr := os.MkdirAll(composeDir, 0755); mkErr != nil {
 			t.AddLog("error", fmt.Sprintf("创建部署目录失败: %v", mkErr))
