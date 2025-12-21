@@ -164,6 +164,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
 import { Refresh, Plus, Delete, Search, ArrowDown, Coin } from '@element-plus/icons-vue'
+import request from '../utils/request'
 
 const loading = ref(false)
 const volumes = ref([])
@@ -197,6 +198,10 @@ const fetchVolumes = async () => {
 
 const handleSortChange = ({ prop, order }) => {
   sortState.value = { prop, order }
+  try {
+    const v = JSON.stringify(sortState.value)
+    request.post('/settings/kv/sort_volumes', { value: v })
+  } catch (e) {}
 }
 
 const filteredVolumes = computed(() => {
@@ -323,7 +328,16 @@ const handleCurrentChange = (val) => {
   currentPage.value = val
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const res = await request.get('/settings/kv/sort_volumes')
+    if (res && res.value) {
+      const s = JSON.parse(res.value)
+      if (s && s.prop && s.order) {
+        sortState.value = s
+      }
+    }
+  } catch (e) {}
   fetchVolumes()
 })
 </script>

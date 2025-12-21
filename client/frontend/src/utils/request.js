@@ -45,7 +45,36 @@ service.interceptors.response.use(
     if (response.config.url?.includes('/images/pull')) {
       return response.data
     }
-    return response.data
+    const data = response.data
+    if (!data || typeof data !== 'object') return data
+
+    const seen = new WeakSet()
+    const stack = [data]
+
+    while (stack.length) {
+      const cur = stack.pop()
+      if (!cur || typeof cur !== 'object') continue
+      if (seen.has(cur)) continue
+      seen.add(cur)
+
+      if (!Array.isArray(cur) && Object.prototype.hasOwnProperty.call(cur, 'IsSelf')) {
+        if (!Object.prototype.hasOwnProperty.call(cur, 'isSelf')) {
+          cur.isSelf = !!cur.IsSelf
+        }
+      }
+
+      if (Array.isArray(cur)) {
+        for (const item of cur) stack.push(item)
+        continue
+      }
+
+      for (const key of Object.keys(cur)) {
+        const v = cur[key]
+        if (v && typeof v === 'object') stack.push(v)
+      }
+    }
+
+    return data
   },
   error => {
     console.error('响应错误:', error)

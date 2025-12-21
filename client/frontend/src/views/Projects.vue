@@ -28,17 +28,29 @@
       </div>
     </div>
 
+    <el-alert
+      v-if="hasSelfProject"
+      type="info"
+      effect="light"
+      title="只读模式"
+      description="容器化部署模式下，自身项目/容器不支持操作"
+      :closable="false"
+      class="self-resource-alert"
+    />
+
     <div class="table-wrapper">
       <el-table 
         :data="paginatedProjects" 
         style="width: 100%" 
         class="main-table"
         v-loading="loading"
+        @sort-change="handleSortChange"
+        :default-sort="{ prop: 'name', order: 'ascending' }"
         :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
         :row-style="{ height: '60px' }"
       >
         <el-table-column type="selection" width="40" align="center" header-align="left" />
-        <el-table-column label="名称" min-width="240" show-overflow-tooltip header-align="left">
+        <el-table-column label="名称" prop="name" sortable="custom" min-width="240" show-overflow-tooltip header-align="left">
           <template #default="scope">
             <div class="project-name-cell" 
                  :class="{ 'clickable': scope.row.path.startsWith('project/') }"
@@ -48,19 +60,20 @@
               </div>
               <div class="name-info">
                 <span class="name-text">{{ scope.row.name }}</span>
+                <el-tag v-if="isSelfProject(scope.row)" size="small" type="warning" effect="plain" style="margin-left: 8px">自身</el-tag>
                 <span class="path-text text-gray">{{ scope.row.path }}</span>
               </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="容器数量" width="120" align="center">
+        <el-table-column label="容器数量" prop="containers" sortable="custom" width="120" align="center">
           <template #default="scope">
             <div class="count-badge">
               {{ scope.row.containers || 0 }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="运行状态" width="140" header-align="left">
+        <el-table-column label="运行状态" prop="status" sortable="custom" width="140" header-align="left">
           <template #default="scope">
             <div class="status-indicator">
               <span class="status-point" :class="scope.row.status === '运行中' ? 'running' : 'stopped'"></span>
@@ -68,7 +81,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="160" header-align="left">
+        <el-table-column label="创建时间" prop="createTime" sortable="custom" width="160" header-align="left">
           <template #default="scope">
             <div class="text-gray font-mono text-center whitespace-pre-line">
               {{ formatTimeTwoLines(scope.row.createTime) }}
@@ -83,7 +96,7 @@
                   circle plain size="default"
                   type="primary" 
                   @click="handleStart(scope.row)" 
-                  :disabled="scope.row.status === '运行中' || !isManagedProject(scope.row.path)">
+                  :disabled="scope.row.status === '运行中' || !isManagedProject(scope.row.path) || isSelfProject(scope.row)">
                   <el-icon><VideoPlay /></el-icon>
                 </el-button>
               </el-tooltip>
@@ -92,24 +105,24 @@
                   circle plain size="default"
                   type="warning" 
                   @click="handleStop(scope.row)" 
-                  :disabled="scope.row.status !== '运行中' || !isManagedProject(scope.row.path)">
+                  :disabled="scope.row.status !== '运行中' || !isManagedProject(scope.row.path) || isSelfProject(scope.row)">
                   <el-icon><VideoPause /></el-icon>
                 </el-button>
               </el-tooltip>
               <el-tooltip content="编辑" placement="top">
-                <el-button circle plain size="default" type="primary" @click="handleEdit(scope.row)" :disabled="!isManagedProject(scope.row.path)">
+                <el-button circle plain size="default" type="primary" @click="handleEdit(scope.row)" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">
                   <el-icon><Edit /></el-icon>
                 </el-button>
               </el-tooltip>
               
-              <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)">
+              <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)" :disabled="isSelfProject(scope.row)">
                 <el-button circle size="default" plain class="ml-2">
                   <el-icon><MoreFilled /></el-icon>
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="down" :icon="CircleClose" :disabled="!isManagedProject(scope.row.path)">清除(保留文件)</el-dropdown-item>
-                    <el-dropdown-item command="delete" :icon="Delete" divided class="text-danger" :disabled="!isManagedProject(scope.row.path)">删除项目</el-dropdown-item>
+                    <el-dropdown-item command="down" :icon="CircleClose" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">清除(保留文件)</el-dropdown-item>
+                    <el-dropdown-item command="delete" :icon="Delete" divided class="text-danger" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">删除项目</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -221,12 +234,13 @@
 <script setup>
 // 修改导入语句，添加 nextTick
 import { ref, onMounted, shallowRef, nextTick, onBeforeUnmount, computed, watch } from 'vue'
-import { formatTimeTwoLines } from '../utils/format'
+import { formatTimeTwoLines, normalizeComposeProjectName } from '../utils/format'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, InfoFilled, ArrowDown, VideoPlay, VideoPause, Edit, Delete, CircleClose, Search, Folder, MoreFilled } from '@element-plus/icons-vue'
 import * as monaco from 'monaco-editor'
 import api from '../api'
+import request from '../utils/request'
 
 // 判断是否为本项目管理的项目
 const isManagedProject = (path) => {
@@ -382,32 +396,57 @@ const projectForm = ref({
   autoStart: true
 })
 
-const normalizeComposeName = (name) => {
-  const lower = String(name || '').toLowerCase()
-  const sanitized = lower.replace(/[^a-z0-9_-]/g, '')
-  const trimmed = sanitized.replace(/^[^a-z0-9]+/, '')
-  return trimmed || 'project'
-}
-
 watch(() => projectForm.value.name, (newName) => {
   if (dialogTitle.value === '新建项目') {
     const basePath = 'project'
-    const normalized = normalizeComposeName(newName)
+    const normalized = normalizeComposeProjectName(newName)
     projectForm.value.path = normalized ? `${basePath}/${normalized}` : basePath
   }
 })
 
 const projectList = ref([])
 
+const isSelfProject = (row) => !!row?.isSelf
+const hasSelfProject = computed(() => (projectList.value || []).some((row) => isSelfProject(row)))
+
 const searchQuery = ref('')
+const sortState = ref({ prop: '', order: '' })
 
 const filteredProjects = computed(() => {
-  if (!searchQuery.value) return projectList.value
-  const query = searchQuery.value.toLowerCase()
-  return projectList.value.filter(p => 
-    p.name.toLowerCase().includes(query) || 
-    (p.path && p.path.toLowerCase().includes(query))
-  )
+  let list = projectList.value
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    list = projectList.value.filter(p =>
+      p.name.toLowerCase().includes(query) ||
+      (p.path && p.path.toLowerCase().includes(query))
+    )
+  }
+  const { prop, order } = sortState.value
+  if (prop && order) {
+    list = list.slice().sort((a, b) => {
+      let valA, valB
+      switch (prop) {
+        case 'containers':
+          valA = a.containers || 0
+          valB = b.containers || 0
+          break
+        case 'createTime':
+          valA = a.createTime || ''
+          valB = b.createTime || ''
+          break
+        default:
+          valA = a[prop]
+          valB = b[prop]
+      }
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return order === 'ascending' ? valA.localeCompare(valB) : valB.localeCompare(valA)
+      }
+      if (valA < valB) return order === 'ascending' ? -1 : 1
+      if (valA > valB) return order === 'ascending' ? 1 : -1
+      return 0
+    })
+  }
+  return list
 })
 
 // 分页相关变量
@@ -431,6 +470,18 @@ const handleCurrentChange = (val) => {
   currentPage.value = val
 }
 
+const handleSortChange = ({ prop, order }) => {
+  if (!prop || !order) {
+    sortState.value = { prop: '', order: '' }
+    return
+  }
+  sortState.value = { prop, order }
+  try {
+    const v = JSON.stringify(sortState.value)
+    request.post('/settings/kv/sort_projects', { value: v })
+  } catch (e) {}
+}
+
 const handleSave = async () => {
   if (!projectForm.value.name || !projectForm.value.compose) {
     ElMessage.warning('请填写必要信息')
@@ -438,7 +489,7 @@ const handleSave = async () => {
   }
 
   if (dialogTitle.value === '新建项目') {
-    const normalizedName = normalizeComposeName(projectForm.value.name)
+    const normalizedName = normalizeComposeProjectName(projectForm.value.name)
 
     if (normalizedName !== projectForm.value.name) {
       try {
@@ -589,7 +640,16 @@ const handleSave = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const res = await request.get('/settings/kv/sort_projects')
+    if (res && res.value) {
+      const s = JSON.parse(res.value)
+      if (s && s.prop && s.order) {
+        sortState.value = s
+      }
+    }
+  } catch (e) {}
   handleRefresh()
 })
 
@@ -601,6 +661,10 @@ const handleRowClick = (row) => {
 
 // 添加启动处理函数
 const handleStart = async (row) => {
+  if (isSelfProject(row)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     await api.compose.start(row.name)
     ElMessage.success('项目启动成功')
@@ -612,6 +676,10 @@ const handleStart = async (row) => {
 
 // 添加停止处理函数
 const handleStop = async (row) => {
+  if (isSelfProject(row)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     await api.compose.stop(row.name)
     ElMessage.success('项目已停止')
@@ -623,6 +691,10 @@ const handleStop = async (row) => {
 
 // 添加清除(Down)处理函数
 const handleDown = (row) => {
+  if (isSelfProject(row)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   ElMessageBox.confirm(
     `确定要清除项目 "${row.name}" 的容器和网络吗？\n这将停止并删除容器，但保留项目文件。`,
     '提示',
@@ -644,6 +716,10 @@ const handleDown = (row) => {
 
 // 添加删除处理函数
 const handleDelete = (row) => {
+  if (isSelfProject(row)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   ElMessageBox.confirm(
     '确定要删除该项目吗？此操作将停止并删除所有相关容器。',
     '警告',
@@ -664,6 +740,10 @@ const handleDelete = (row) => {
 }
 
 const handleProjectCommand = (command, row) => {
+  if (isSelfProject(row)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   if (command === 'down') {
     handleDown(row)
   } else if (command === 'delete') {
@@ -778,6 +858,11 @@ services:
   border-radius: 12px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   border: 1px solid var(--el-border-color-light);
+}
+
+.self-resource-alert {
+  margin: 0 0 12px;
+  border-radius: 12px;
 }
 
 .filter-left, .filter-right {

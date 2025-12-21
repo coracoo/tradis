@@ -9,6 +9,7 @@
         <el-tag :type="containerStatus === '运行中' ? 'success' : 'info'" class="status-tag">
           {{ containerStatus }}
         </el-tag>
+        <el-tag v-if="isSelfContainer" size="small" type="warning" effect="plain" style="margin-left: 8px">自身</el-tag>
       </div>
       <div class="header-right">
         <el-button @click="handleRefresh" plain size="medium" class="square-btn">
@@ -17,7 +18,7 @@
         <el-button-group>
           <el-button 
             type="primary" 
-            :disabled="containerStatus === '运行中'"
+            :disabled="containerStatus === '运行中' || isSelfContainer"
             @click="handleStart"
             size="medium"
           >
@@ -25,7 +26,7 @@
           </el-button>
           <el-button 
             type="warning" 
-            :disabled="containerStatus !== '运行中'"
+            :disabled="containerStatus !== '运行中' || isSelfContainer"
             @click="handleStop"
             size="medium"
           >
@@ -33,6 +34,7 @@
           </el-button>
           <el-button 
             type="primary"
+            :disabled="isSelfContainer"
             @click="handleRestart"
             size="medium"
           >
@@ -41,6 +43,16 @@
         </el-button-group>
       </div>
     </div>
+
+    <el-alert
+      v-if="isSelfContainer"
+      type="info"
+      effect="light"
+      title="只读模式"
+      description="容器化部署模式下，自身项目/容器不支持操作"
+      :closable="false"
+      class="self-resource-alert"
+    />
 
     <div class="content-wrapper">
       <div class="scroll-content">
@@ -114,7 +126,7 @@
                     />
                     <el-input
                       v-model="logFilter"
-                      placeholder="过滤日志"
+                      placeholder="检索日志"
                       style="width: 200px"
                       size="medium"
                     >
@@ -146,6 +158,7 @@ import { ElMessage } from 'element-plus'
 import { Back, Search, Refresh } from '@element-plus/icons-vue'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
+import { useSseLogStream } from '../utils/sseLogStream'
 
 const route = useRoute()
 const router = useRouter()
@@ -154,6 +167,7 @@ const containerStatus = ref('')
 const activeTab = ref('info')
 const loading = ref(false)
 const containerId = ref('') // 存储容器完整 ID
+const isSelfContainer = ref(false)
 
 // 基本信息数据
 const cpuUsage = ref(0)
@@ -171,24 +185,25 @@ const restartPolicy = ref('')
 
 // 日志相关
 const autoScroll = ref(true)
-const logFilter = ref('')
-const logs = ref([])
 const logsRef = ref(null)
-let logStreamController = null
+const {
+  logs,
+  logFilter,
+  filteredLogs,
+  start: startLogStream,
+  stop: stopLogStream,
+  clear: clearLogs,
+  pushLine: pushLogLine
+} = useSseLogStream({
+  autoScroll,
+  scrollElRef: logsRef
+})
 let refreshTimer = null
 let statsTimer = null
 let statsEventSource = null
 let prevRxBytes = null
 let prevTxBytes = null
 let prevTs = null
-
-// 计算属性和方法
-const filteredLogs = computed(() => {
-  if (!logFilter.value) return logs.value
-  return logs.value.filter(log => 
-    log.content.toLowerCase().includes(logFilter.value.toLowerCase())
-  )
-})
 
 const getProgressColor = (percentage) => {
   if (percentage < 60) return '#67C23A'
@@ -199,7 +214,7 @@ const getProgressColor = (percentage) => {
 const getLogClass = (log) => ({
   'error': log.level === 'error',
   'warning': log.level === 'warning',
-  'info': log.level === 'info'
+  'info': log.level === 'info' || log.level === 'success'
 })
 
 // 格式化网络流量
@@ -295,6 +310,7 @@ const fetchContainerDetail = async () => {
     // 所以 data.State 应该是 string
     
     containerStatus.value = (data.State === 'running' || data.Running) ? '运行中' : data.State
+    isSelfContainer.value = !!data.isSelf
     imageInfo.value = data.Image
     createTime.value = formatTimeTwoLines(data.Created)
     uptime.value = data.RunningTime
@@ -348,6 +364,10 @@ const goBack = () => {
 }
 
 const handleStart = async () => {
+  if (isSelfContainer.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await api.containers.startContainer(containerId.value)
     ElMessage.success('容器已启动')
@@ -358,6 +378,10 @@ const handleStart = async () => {
 }
 
 const handleStop = async () => {
+  if (isSelfContainer.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await api.containers.stopContainer(containerId.value)
     ElMessage.success('容器已停止')
@@ -368,6 +392,10 @@ const handleStop = async () => {
 }
 
 const handleRestart = async () => {
+  if (isSelfContainer.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await api.containers.restartContainer(containerId.value) // 假设 API 有这个方法
     ElMessage.success('容器已重启')
@@ -382,73 +410,35 @@ const handleRestart = async () => {
 }
 
 const handleClearLogs = () => {
-  logs.value = []
+  clearLogs()
 }
 
-// 启动日志流（复用 ContainerLogs.vue 的逻辑）
-const startLogsStream = async () => {
+const inferLogLevel = (line) => {
+  const raw = String(line || '')
+  const lower = raw.toLowerCase()
+  if (lower.startsWith('error:')) return 'error'
+  if (lower.startsWith('warning:')) return 'warning'
+  if (lower.startsWith('success:')) return 'success'
+  if (lower.startsWith('info:')) return 'info'
+  if (lower.includes('error') || lower.includes('err')) return 'error'
+  if (lower.includes('warn')) return 'warning'
+  return 'info'
+}
+
+const stopLogsStream = () => {
+  stopLogStream()
+}
+
+// 启动日志流（SSE，逻辑与其他日志页保持一致）
+const startLogsStream = () => {
   if (!containerId.value) return
   try {
-    // 关闭已有流
-    if (logStreamController) {
-      try { logStreamController.abort() } catch {}
-      logStreamController = null
-    }
-    logs.value = []
-    logStreamController = new AbortController()
-    const token = localStorage.getItem('token')
-    const resp = await fetch(`/api/containers/${containerId.value}/logs`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-      signal: logStreamController.signal,
-    })
-    if (!resp.ok) {
-      ElMessage.error('日志获取失败')
-      return
-    }
-    const reader = resp.body?.getReader()
-    const decoder = new TextDecoder('utf-8')
-    if (!reader) return
-    while (true) {
-      let value
-      try {
-        const r = await reader.read()
-        if (r.done) break
-        value = r.value
-      } catch (err) {
-        if (err?.name === 'AbortError') {
-          return
-        }
-        throw err
-      }
-      const chunk = decoder.decode(value, { stream: true })
-      // 按行拆分并推入日志
-      const lines = chunk.split('\n').filter(l => l.length > 0)
-      for (const line of lines) {
-        const lower = line.toLowerCase()
-        const level = lower.includes('error') || lower.includes('err') ? 'error'
-                    : lower.includes('warn') ? 'warning'
-                    : 'info'
-        logs.value.push({ content: line, level })
-      }
-      if (autoScroll.value && logsRef.value) {
-        nextTick(() => {
-          logsRef.value.scrollTop = logsRef.value.scrollHeight
-        })
-      }
-    }
-    // flush
-    const rest = decoder.decode()
-    if (rest) {
-      const lines = rest.split('\n').filter(l => l.length > 0)
-      for (const line of lines) {
-        logs.value.push({ content: line, level: 'info' })
-      }
-    }
+    const token = localStorage.getItem('token') || ''
+    const url = `/api/containers/${containerId.value}/logs/events?tail=200&token=${encodeURIComponent(token)}`
+    startLogStream(url, { reset: true })
   } catch (e) {
     console.error('日志流错误:', e)
-    if (e?.name !== 'AbortError') {
-      ElMessage.error('日志获取失败')
-    }
+    ElMessage.error('日志获取失败')
   }
 }
 
@@ -487,10 +477,7 @@ watch(activeTab, (tab) => {
   if (tab === 'logs') {
     startLogsStream()
   } else {
-    if (logStreamController) {
-      try { logStreamController.abort() } catch {}
-      logStreamController = null
-    }
+    stopLogsStream()
   }
 })
 
@@ -572,10 +559,7 @@ onUnmounted(() => {
     try { statsEventSource.close() } catch {}
     statsEventSource = null
   }
-  if (logStreamController) {
-    try { logStreamController.abort() } catch {}
-    logStreamController = null
-  }
+  stopLogsStream()
 })
 </script>
 
@@ -599,6 +583,11 @@ onUnmounted(() => {
   border-radius: 12px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   flex-shrink: 0;
+}
+
+.self-resource-alert {
+  margin: 0 0 12px;
+  border-radius: 12px;
 }
 
 .header-left {

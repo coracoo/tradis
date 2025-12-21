@@ -3,20 +3,19 @@ package api
 import (
 	"bytes"
 	"context"
-	"dockerpanel/backend/pkg/database" // Add this
+	"dockerpanel/backend/pkg/database"
 	"dockerpanel/backend/pkg/docker"
-	"dockerpanel/backend/pkg/settings" // 添加 settings 包
+	"dockerpanel/backend/pkg/settings"
 	"dockerpanel/backend/pkg/task"
-	"os/exec"
-	"strconv" // Add this
-
-	// 添加 task 包
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +35,7 @@ func getAppCacheDir() string {
 func getAppStoreServerURL() string {
 	s, err := settings.GetSettings()
 	if err != nil || s.AppStoreServerUrl == "" {
-		return "https://template.cgakki.top:33333"
+		return settings.DefaultAppStoreServerURL
 	}
 	return s.AppStoreServerUrl
 }
@@ -85,6 +84,23 @@ type EnvVar struct {
 	Description string `json:"description"`
 }
 
+// mapHostPortsToContainerIDs 根据容器列表构建宿主机端口到容器ID的映射（仅记录 TCP 映射端口）。
+func mapHostPortsToContainerIDs(containers []types.Container) map[int]string {
+	portToContainer := make(map[int]string)
+	for _, ctr := range containers {
+		for _, p := range ctr.Ports {
+			if p.PublicPort == 0 {
+				continue
+			}
+			if strings.ToLower(p.Type) != "tcp" {
+				continue
+			}
+			portToContainer[int(p.PublicPort)] = ctr.ID
+		}
+	}
+	return portToContainer
+}
+
 // 注册应用商城路由
 func RegisterAppStoreRoutes(r *gin.Engine) {
 	// 应用商城的基础信息获取不需要认证
@@ -120,11 +136,13 @@ func listApps(c *gin.Context) {
 
 	// 从应用商城服务器获取应用列表
 	url := fmt.Sprintf("%s/api/templates", getAppStoreServerURL())
-	fmt.Printf("Requesting AppStore URL: %s\n", url) // 添加日志
+	if settings.IsDebugEnabled() {
+		log.Printf("Requesting AppStore URL: %s", settings.RedactAppStoreURL(url))
+	}
 	resp, err := http.Get(url)
 	if err != nil {
-		fmt.Printf("Error connecting to AppStore: %v\n", err) // 添加日志
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接应用商城服务器失败: " + err.Error()})
+		log.Printf("Error connecting to AppStore: %s", settings.RedactAppStoreURL(err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接应用商城服务器失败: " + settings.RedactAppStoreURL(err.Error())})
 		return
 	}
 	defer resp.Body.Close()
@@ -164,11 +182,15 @@ func listApps(c *gin.Context) {
 
 // 从缓存或服务器获取应用详情 (Helper)
 func getAppFromCacheOrServer(idOrName string) (*App, error) {
-	fmt.Printf("[Debug] getAppFromCacheOrServer: idOrName=%s\n", idOrName)
+	if settings.IsDebugEnabled() {
+		log.Printf("[Debug] getAppFromCacheOrServer: idOrName=%s", idOrName)
+	}
 
 	// 1. 尝试从服务器获取 (优先，以获取最新信息和正确的 Name)
 	url := fmt.Sprintf("%s/api/templates/%s", getAppStoreServerURL(), idOrName)
-	fmt.Printf("[Debug] Requesting Server: %s\n", url)
+	if settings.IsDebugEnabled() {
+		log.Printf("[Debug] Requesting Server: %s", settings.RedactAppStoreURL(url))
+	}
 	resp, err := http.Get(url)
 
 	var app App
@@ -245,13 +267,60 @@ func normalizeProjectName(name string) string {
 	if len(buf) == 0 {
 		return "project"
 	}
-	return string(buf)
+
+	out := string(buf)
+	out = strings.TrimLeftFunc(out, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	if out == "" {
+		return "project"
+	}
+	return out
+}
+
+func removeExplicitContainerNames(composeContent string) (string, error) {
+	var composeMap map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &composeMap); err != nil {
+		return "", err
+	}
+
+	servicesRaw, ok := composeMap["services"]
+	if !ok {
+		return composeContent, nil
+	}
+	services, ok := servicesRaw.(map[string]interface{})
+	if !ok {
+		return composeContent, nil
+	}
+
+	changed := false
+	for _, serviceRaw := range services {
+		service, ok := serviceRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, ok := service["container_name"]; ok {
+			delete(service, "container_name")
+			changed = true
+		}
+	}
+
+	if !changed {
+		return composeContent, nil
+	}
+	out, err := yaml.Marshal(composeMap)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // 部署应用
 func deployApp(c *gin.Context) {
 	id := c.Param("id")
-	fmt.Printf("[Debug] deployApp called for id: %s\n", id)
+	if settings.IsDebugEnabled() {
+		log.Printf("[Debug] deployApp called for id: %s", id)
+	}
 
 	var req DeployRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -270,7 +339,9 @@ func deployApp(c *gin.Context) {
 		t.UpdateStatus(task.StatusRunning)
 
 		// 打印调试信息，确认接收到的参数
-		fmt.Printf("[Debug] Deploy Params for %s: ConfigLen=%d, EnvLen=%d\n", appId, len(deployReq.Config), len(deployReq.Env))
+		if settings.IsDebugEnabled() {
+			log.Printf("[Debug] Deploy Params for %s: ConfigLen=%d, EnvLen=%d", appId, len(deployReq.Config), len(deployReq.Env))
+		}
 
 		// 获取应用详情 (支持缓存回源)
 		t.AddLog("info", "正在获取应用配置...")
@@ -286,10 +357,30 @@ func deployApp(c *gin.Context) {
 			projectName = deployReq.ProjectName
 		}
 		projectName = normalizeProjectName(projectName)
+		if _, ok := validateComposeProjectName(projectName); !ok {
+			projectName = "project"
+		}
+		if isSelfProjectName(projectName) {
+			errMsg := "容器化部署模式下，禁止部署到自身项目目录"
+			t.AddLog("error", errMsg)
+			t.Finish(task.StatusFailed, nil, errMsg)
+			return
+		}
 
 		t.AddLog("info", fmt.Sprintf("准备部署目录: %s", projectName))
 		baseDir := getProjectsBaseDir()
 		composeDir := filepath.Join(baseDir, projectName)
+
+		if _, statErr := os.Stat(composeDir); statErr == nil {
+			errMsg := fmt.Sprintf("项目 '%s' 已存在，如需重新部署请先删除现有项目", projectName)
+			t.AddLog("error", errMsg)
+			t.Finish(task.StatusFailed, nil, errMsg)
+			return
+		} else if !os.IsNotExist(statErr) {
+			t.AddLog("error", fmt.Sprintf("检查部署目录失败: %v", statErr))
+			t.Finish(task.StatusFailed, nil, statErr.Error())
+			return
+		}
 
 		if mkErr := os.MkdirAll(composeDir, 0755); mkErr != nil {
 			t.AddLog("error", fmt.Sprintf("创建部署目录失败: %v", mkErr))
@@ -369,6 +460,26 @@ func deployApp(c *gin.Context) {
 			})
 		} else {
 			t.AddLog("warning", "未接收到任何配置参数，将使用默认模板部署")
+		}
+
+		baseName := normalizeProjectName(app.Name)
+		if deployReq.ProjectName != "" && projectName != baseName {
+			if modified, err := removeExplicitContainerNames(composeContent); err == nil {
+				composeContent = modified
+			} else {
+				t.AddLog("warning", fmt.Sprintf("移除 container_name 失败: %v", err))
+			}
+		}
+
+		if hostRoot := settings.GetHostProjectRoot(); hostRoot != "" {
+			hostProjectDir := filepath.Join(hostRoot, projectName)
+			if normalized, nerr := normalizeComposeBindMountsForHost(composeContent, hostProjectDir); nerr == nil {
+				composeContent = normalized
+			} else {
+				t.AddLog("error", fmt.Sprintf("处理相对路径失败: %v", nerr))
+				t.Finish(task.StatusFailed, nil, nerr.Error())
+				return
+			}
 		}
 
 		if writeErr := os.WriteFile(composeFile, []byte(composeContent), 0644); writeErr != nil {
@@ -485,18 +596,67 @@ func deployApp(c *gin.Context) {
 			}
 			if len(usedPorts) > 0 {
 				t.AddLog("info", fmt.Sprintf("正在登记端口使用情况: %v", usedPorts))
-				tx, err := database.GetDB().Begin()
-				if err == nil {
-					// ReservedBy could be app name or ID
-					if err := database.ReservePortsTx(tx, usedPorts, app.Name, "TCP", "App"); err != nil {
-						t.AddLog("warning", fmt.Sprintf("端口登记失败: %v", err))
-						tx.Rollback()
-					} else {
-						tx.Commit()
-						t.AddLog("info", "端口登记完成")
+				owners := map[string][]int{}
+
+				if cli, err := docker.NewDockerClient(); err == nil {
+					defer cli.Close()
+
+					containers, cerr := cli.ContainerList(context.Background(), types.ContainerListOptions{
+						All: true,
+						Filters: filters.NewArgs(
+							filters.Arg("label", "com.docker.compose.project="+projectName),
+						),
+					})
+					if cerr == nil && len(containers) == 0 {
+						containers, _ = cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
+						var filtered []types.Container
+						for _, ctr := range containers {
+							if ctr.Labels["com.docker.compose.project"] == projectName {
+								filtered = append(filtered, ctr)
+								continue
+							}
+							if wd := strings.TrimSpace(ctr.Labels["com.docker.compose.project.working_dir"]); wd != "" {
+								if filepath.Base(wd) == projectName {
+									filtered = append(filtered, ctr)
+								}
+							}
+						}
+						containers = filtered
+					}
+
+					portToContainer := mapHostPortsToContainerIDs(containers)
+					for _, p := range usedPorts {
+						if cid := strings.TrimSpace(portToContainer[p]); cid != "" {
+							owners[cid] = append(owners[cid], p)
+						} else {
+							owners[projectName] = append(owners[projectName], p)
+						}
 					}
 				} else {
+					for _, p := range usedPorts {
+						owners[projectName] = append(owners[projectName], p)
+					}
+				}
+
+				tx, err := database.GetDB().Begin()
+				if err != nil {
 					t.AddLog("warning", "无法开启数据库事务进行端口登记")
+				} else {
+					ok := true
+					for owner, ports := range owners {
+						if rerr := database.ReservePortsTx(tx, ports, owner, "TCP", "App"); rerr != nil {
+							ok = false
+							t.AddLog("warning", fmt.Sprintf("端口登记失败: %v", rerr))
+							break
+						}
+					}
+					if !ok {
+						_ = tx.Rollback()
+					} else if cerr := tx.Commit(); cerr != nil {
+						t.AddLog("warning", fmt.Sprintf("端口登记提交失败: %v", cerr))
+					} else {
+						t.AddLog("info", "端口登记完成")
+					}
 				}
 			}
 		}
@@ -534,7 +694,9 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 	for serviceName, svcConfig := range configByService {
 		service, ok := services[serviceName]
 		if !ok {
-			fmt.Printf("[Debug] Service %s not found in YAML\n", serviceName)
+			if settings.IsDebugEnabled() {
+				log.Printf("[Debug] Service %s not found in YAML", serviceName)
+			}
 			continue // Service not found in YAML, skip
 		}
 		svcMap, ok := service.(map[string]interface{})
@@ -542,7 +704,9 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 			continue
 		}
 
-		fmt.Printf("[Debug] Processing service: %s, config items: %d\n", serviceName, len(svcConfig))
+		if settings.IsDebugEnabled() {
+			log.Printf("[Debug] Processing service: %s, config items: %d", serviceName, len(svcConfig))
+		}
 
 		// Reset lists to rebuild them from config
 		var newPorts []string
@@ -579,7 +743,9 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 				if left != "" && right != "" {
 					portStr := fmt.Sprintf("%s:%s", left, right)
 					newPorts = append(newPorts, portStr)
-					fmt.Printf("[Debug] Adding port: %s\n", portStr)
+					if settings.IsDebugEnabled() {
+						log.Printf("[Debug] Adding port: %s", portStr)
+					}
 				}
 			case "path", "volume": // Handle both 'path' and 'volume' types
 				// Format: "host:container" -> "name:default"
@@ -624,33 +790,42 @@ func taskEvents(c *gin.Context) {
 		return
 	}
 
-	// 设置 SSE 头部
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+	setSSEHeaders(c)
 
 	logChan, closeChan := t.Subscribe()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
 
 	// 获取已有的日志
 	logs := t.GetLogs()
 
 	// 获取 Header 中的 Last-Event-ID，如果存在，则只发送之后的日志
-	lastEventId := c.GetHeader("Last-Event-ID")
+	lastEventIdRaw := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	lastEventId := int64(0)
+	if lastEventIdRaw != "" {
+		if v, err := strconv.ParseInt(lastEventIdRaw, 10, 64); err == nil && v > 0 {
+			lastEventId = v
+		}
+	}
+
 	startIndex := 0
-	if lastEventId != "" {
-		// 这里简单处理：如果客户端发送了 Last-Event-ID，我们假设它已经接收了部分日志
-		// 但由于我们没有为每条日志分配唯一递增 ID，这里只能尽力而为
-		// 更好的做法是给每条日志一个 index，客户端传回 index
-		// 暂时策略：如果是重连 (Last-Event-ID 不为空)，则不发送历史日志，只发送新日志
-		// 或者前端负责去重
-		startIndex = len(logs)
+	if lastEventId > 0 {
+		if lastEventId >= int64(len(logs)) {
+			startIndex = len(logs)
+		} else {
+			startIndex = int(lastEventId)
+		}
+	}
+
+	nextID := int64(len(logs)) + 1
+	if lastEventId > 0 && (lastEventId+1) > nextID {
+		nextID = lastEventId + 1
 	}
 
 	// 发送历史日志
 	for i := startIndex; i < len(logs); i++ {
 		data, _ := json.Marshal(logs[i])
-		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
+		fmt.Fprintf(c.Writer, "id: %d\ndata: %s\n\n", int64(i)+1, string(data))
 	}
 	c.Writer.Flush()
 
@@ -662,7 +837,11 @@ func taskEvents(c *gin.Context) {
 				return
 			}
 			data, _ := json.Marshal(log)
-			fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
+			fmt.Fprintf(c.Writer, "id: %d\ndata: %s\n\n", nextID, string(data))
+			nextID++
+			c.Writer.Flush()
+		case <-keepalive.C:
+			_, _ = fmt.Fprint(c.Writer, ": ping\n\n")
 			c.Writer.Flush()
 		case <-closeChan:
 			// 任务结束，发送最终状态
@@ -671,7 +850,8 @@ func taskEvents(c *gin.Context) {
 				"status":  t.Status,
 				"message": "任务结束",
 			})
-			fmt.Fprintf(c.Writer, "data: %s\n\n", string(resultData))
+			fmt.Fprintf(c.Writer, "id: %d\ndata: %s\n\n", nextID, string(resultData))
+			nextID++
 			c.Writer.Flush()
 			return
 		case <-c.Request.Context().Done():

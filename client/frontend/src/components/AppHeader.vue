@@ -80,7 +80,6 @@ import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { Refresh, Bell, Moon, Sunny } from '@element-plus/icons-vue'
 import api from '../api'
-import request from '../utils/request'
 const props = defineProps({
   title: { type: String, default: 'Dockpier' }
 })
@@ -110,10 +109,6 @@ const isDark = ref(false)
 const notifications = ref([])
 const notificationPanelVisible = ref(false)
 
-let imageUpdateTimer = null
-let imageUpdateLastKey = ''
-const imageUpdateNotifiedTags = new Set()
-const DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES = 30
 const deletedTempIds = new Set()
 
 const hasNotifications = computed(() => notifications.value.length > 0)
@@ -292,82 +287,18 @@ const sendHeaderNotification = async (type, message) => {
   }
 }
 
-const checkImageUpdatesGlobal = async () => {
-  try {
-    const res = await api.images.getUpdateStatus()
-    const data = res.data || res
-    const updates = Array.isArray(data.updates) ? data.updates : []
-    const tags = []
-    updates.forEach((item) => {
-      if (item && item.repoTag) {
-        tags.push(item.repoTag)
-      }
-    })
-    if (!tags.length) {
-      return
-    }
-  const newTags = tags.filter(tag => !imageUpdateNotifiedTags.has(tag))
-  newTags.forEach(tag => imageUpdateNotifiedTags.add(tag))
-  if (!newTags.length) {
-    return
-  }
-  const key = newTags.slice().sort().join(',')
-  if (key === imageUpdateLastKey) {
-    return
-  }
-  imageUpdateLastKey = key
-  const displayTags = newTags.slice(0, 3).join('、')
-  const suffix = newTags.length > 3 ? ` 等 ${newTags.length} 个` : ''
-  const message = `${displayTags}${suffix}镜像有新版本，去及时查看`
-  // 已有数据库状态标记（/images/updates/status），不再重复推送通知
-  } catch (e) {
-    console.error('全局检测镜像更新失败:', e)
-  }
-}
-
-const startImageUpdateTimer = (minutes) => {
-  if (imageUpdateTimer) {
-    clearInterval(imageUpdateTimer)
-    imageUpdateTimer = null
-  }
-  const m = typeof minutes === 'number' && minutes > 0 ? minutes : DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES
-  imageUpdateTimer = setInterval(() => {
-    checkImageUpdatesGlobal()
-  }, m * 60 * 1000)
-}
-
-const initImageUpdateTimer = async () => {
-  try {
-    const res = await request.get('/settings/global')
-    let minutes = DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES
-    if (res && typeof res.imageUpdateIntervalMinutes === 'number' && res.imageUpdateIntervalMinutes > 0) {
-      minutes = res.imageUpdateIntervalMinutes
-    }
-    startImageUpdateTimer(minutes)
-  } catch (e) {
-    console.error('加载镜像更新检查间隔失败:', e)
-    startImageUpdateTimer(DEFAULT_IMAGE_UPDATE_INTERVAL_MINUTES)
-  }
-}
-
 onMounted(() => {
   initTheme()
   window.addEventListener('theme-change', initTheme)
   window.addEventListener('dockpier-notification', handleNotification)
   document.addEventListener('click', handleDocumentClick)
   loadNotifications()
-  checkImageUpdatesGlobal()
-  initImageUpdateTimer()
 })
 
 onUnmounted(() => {
   window.removeEventListener('theme-change', initTheme)
   window.removeEventListener('dockpier-notification', handleNotification)
   document.removeEventListener('click', handleDocumentClick)
-   if (imageUpdateTimer) {
-    clearInterval(imageUpdateTimer)
-    imageUpdateTimer = null
-  }
 })
 </script>
 

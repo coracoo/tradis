@@ -40,12 +40,22 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="prune" :icon="Remove">清除已停止容器</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="Remove" :disabled="hasSelfResource">清除已停止容器</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
       </div>
     </div>
+
+    <el-alert
+      v-if="hasSelfResource"
+      type="info"
+      effect="light"
+      title="只读模式"
+      description="容器化部署模式下，自身项目/容器不支持操作"
+      :closable="false"
+      class="self-resource-alert"
+    />
 
     <div class="table-wrapper">
       <el-table
@@ -56,6 +66,7 @@
         row-key="key"
         :default-expand-all="false"
         class="main-table"
+        :row-class-name="rowClassName"
         :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600, fontSize: '14px', height: '50px' }"
         :row-style="{ height: '60px' }"
         @sort-change="handleSortChange"
@@ -71,6 +82,7 @@
                 size="default" 
                 :show-header="true"
                 class="inner-table"
+                :row-class-name="containerRowClassName"
                 :row-style="{ height: 'auto' }"
               >
                 <el-table-column label="容器名称" min-width="180" sortable prop="name">
@@ -150,36 +162,39 @@
                 <el-table-column label="操作" width="260" fixed="left" align="center">
                   <template #default="scope">
                     <div class="op-buttons">
-                      <el-tooltip content="终端" placement="top" :show-after="500">
-                        <el-button circle plain size="small" @click="openTerminal(scope.row)">
-                          <el-icon><Monitor /></el-icon>
-                        </el-button>
-                      </el-tooltip>
-                      <el-tooltip content="日志" placement="top" :show-after="500">
-                        <el-button circle plain size="small" @click="openLogs(scope.row)">
-                          <el-icon><Document /></el-icon>
-                        </el-button>
-                      </el-tooltip>
-                      <el-tooltip content="启动" placement="top" :show-after="500">
-                        <el-button circle plain size="small" type="primary" @click="startContainer(scope.row)" :disabled="isRunning(scope.row.state)">
-                          <el-icon><VideoPlay /></el-icon>
-                        </el-button>
-                      </el-tooltip>
-                      <el-tooltip content="停止" placement="top" :show-after="500">
-                        <el-button circle plain size="small" type="warning" @click="stopContainer(scope.row)" :disabled="!isRunning(scope.row.state)">
-                          <el-icon><VideoPause /></el-icon>
-                        </el-button>
-                      </el-tooltip>
-                      <el-tooltip content="重启" placement="top" :show-after="500">
-                        <el-button circle plain size="small" type="info" @click="restartContainer(scope.row)">
-                          <el-icon><Refresh /></el-icon>
-                        </el-button>
-                      </el-tooltip>
-                      <el-tooltip content="删除" placement="top" :show-after="500">
-                        <el-button circle plain size="small" type="danger" @click="deleteContainer(scope.row)">
-                          <el-icon><Delete /></el-icon>
-                        </el-button>
-                      </el-tooltip>
+                      <template v-if="!scope.row.isSelf">
+                        <el-tooltip content="终端" placement="top" :show-after="500">
+                          <el-button circle plain size="small" @click="openTerminal(scope.row)">
+                            <el-icon><Monitor /></el-icon>
+                          </el-button>
+                        </el-tooltip>
+                        <el-tooltip content="日志" placement="top" :show-after="500">
+                          <el-button circle plain size="small" @click="openLogs(scope.row)">
+                            <el-icon><Document /></el-icon>
+                          </el-button>
+                        </el-tooltip>
+                        <el-tooltip content="启动" placement="top" :show-after="500">
+                          <el-button circle plain size="small" type="primary" @click="startContainer(scope.row)" :disabled="isRunning(scope.row.state)">
+                            <el-icon><VideoPlay /></el-icon>
+                          </el-button>
+                        </el-tooltip>
+                        <el-tooltip content="停止" placement="top" :show-after="500">
+                          <el-button circle plain size="small" type="warning" @click="stopContainer(scope.row)" :disabled="!isRunning(scope.row.state)">
+                            <el-icon><VideoPause /></el-icon>
+                          </el-button>
+                        </el-tooltip>
+                        <el-tooltip content="重启" placement="top" :show-after="500">
+                          <el-button circle plain size="small" type="info" @click="restartContainer(scope.row)">
+                            <el-icon><Refresh /></el-icon>
+                          </el-button>
+                        </el-tooltip>
+                        <el-tooltip content="删除" placement="top" :show-after="500">
+                          <el-button circle plain size="small" type="danger" @click="deleteContainer(scope.row)">
+                            <el-icon><Delete /></el-icon>
+                          </el-button>
+                        </el-tooltip>
+                      </template>
+                      <el-tag v-else size="small" type="warning" effect="plain">自身</el-tag>
                     </div>
                   </template>
                 </el-table-column>
@@ -200,6 +215,7 @@
               </div>
               <div class="name-info">
                 <span class="name-text">{{ scope.row.name }}</span>
+                <el-tag v-if="scope.row.isSelf" size="small" type="warning" effect="plain">自身</el-tag>
                 <span class="type-tag" v-if="scope.row.type === 'compose'">Compose</span>
                 <span class="type-tag" v-else-if="scope.row.type === 'container'">独立容器</span>
               </div>
@@ -251,32 +267,35 @@
         <el-table-column label="操作" width="240" fixed="left" align="center">
           <template #default="scope">
             <div class="row-ops" v-if="scope.row.type === 'compose'">
-              <el-tooltip content="启动项目" placement="top">
-                <el-button circle size="default" type="primary" plain @click="startProject(scope.row)">
-                  <el-icon><VideoPlay /></el-icon>
-                </el-button>
-              </el-tooltip>
-              <el-tooltip content="停止项目" placement="top">
-                <el-button circle size="default" type="warning" plain @click="stopProject(scope.row)">
-                  <el-icon><VideoPause /></el-icon>
-                </el-button>
-              </el-tooltip>
-              <el-tooltip content="编辑配置" placement="top">
-                <el-button circle size="default" type="info" plain @click="editProject(scope.row)">
-                  <el-icon><Edit /></el-icon>
-                </el-button>
-              </el-tooltip>
-              <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)">
-                <el-button circle size="default" plain class="ml-2">
-                  <el-icon><MoreFilled /></el-icon>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="down" :icon="CircleClose">清理 (Down)</el-dropdown-item>
-                    <el-dropdown-item command="remove" :icon="Delete" divided class="text-danger">删除项目</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              <template v-if="!scope.row.isSelf">
+                <el-tooltip content="启动项目" placement="top">
+                  <el-button circle size="default" type="primary" plain @click="startProject(scope.row)">
+                    <el-icon><VideoPlay /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="停止项目" placement="top">
+                  <el-button circle size="default" type="warning" plain @click="stopProject(scope.row)">
+                    <el-icon><VideoPause /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="编辑配置" placement="top">
+                  <el-button circle size="default" type="info" plain @click="editProject(scope.row)">
+                    <el-icon><Edit /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)">
+                  <el-button circle size="default" plain class="ml-2">
+                    <el-icon><MoreFilled /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="down" :icon="CircleClose">清理 (Down)</el-dropdown-item>
+                      <el-dropdown-item command="remove" :icon="Delete" divided class="text-danger">删除项目</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </template>
+              <el-tag v-else size="small" type="warning" effect="plain">自身</el-tag>
             </div>
             <div class="row-ops" v-else>
                <!-- Single Container Ops - Same as inner table for consistency, or simplified -->
@@ -402,10 +421,38 @@ import {
   Folder, Box, Platform, Connection, MoreFilled, ArrowDown, Document, Monitor, InfoFilled
 } from '@element-plus/icons-vue'
 import api from '../api'
-import { formatTimeTwoLines } from '../utils/format'
+import { formatTimeTwoLines, normalizeComposeProjectName } from '../utils/format'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
 import ContainerLogs from '../components/ContainerLogs.vue'
+import request from '../utils/request'
 let monaco = null
+const copyTextToClipboard = async (text) => {
+  const writeText = navigator?.clipboard?.writeText
+  if (typeof writeText === 'function') {
+    await writeText.call(navigator.clipboard, text)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'readonly')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '-9999px'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const ok = document.execCommand && document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (!ok) throw new Error('clipboard-unavailable')
+}
+
+const readTextFromClipboard = async () => {
+  const readText = navigator?.clipboard?.readText
+  if (typeof readText === 'function') {
+    return await readText.call(navigator.clipboard)
+  }
+  return ''
+}
+
 const loadMonaco = async () => {
   if (monaco) return monaco
   await new Promise((resolve) => {
@@ -440,11 +487,27 @@ const sortState = ref({
 
 const handleSortChange = ({ prop, order }) => {
   sortState.value = { prop, order }
+  try {
+    const v = JSON.stringify(sortState.value)
+    request.post('/settings/kv/sort_compose', { value: v })
+  } catch (e) {}
 }
 
 const items = ref([])
 const currentPage = ref(1)
 const pageSize = ref(10)
+
+const hasSelfResource = computed(() => {
+  const list = Array.isArray(items.value) ? items.value : []
+  return list.some((row) => {
+    if (row?.isSelf) return true
+    const containers = Array.isArray(row?.containers) ? row.containers : []
+    return containers.some((c) => !!c?.isSelf)
+  })
+})
+
+const rowClassName = ({ row }) => (row?.isSelf ? 'self-row' : '')
+const containerRowClassName = ({ row }) => (row?.isSelf ? 'self-row' : '')
 
 // Dialog states
 const terminalDialogVisible = ref(false)
@@ -497,6 +560,110 @@ const initEditor = async () => {
     }
     await loadMonaco()
     editorInstance.value = monaco.editor.create(editorContainer.value, editorOptions)
+    try {
+      editorInstance.value.addAction({
+        id: 'dockerpanel.copy',
+        label: '复制',
+        contextMenuGroupId: '9_clipboard',
+        contextMenuOrder: 1,
+        run: async (ed) => {
+          try {
+            const action = ed.getAction('editor.action.clipboardCopyAction')
+            if (action) {
+              await action.run()
+              return
+            }
+            const model = ed.getModel()
+            const sel = ed.getSelection()
+            if (!model || !sel) return
+            const text = model.getValueInRange(sel)
+            if (!text) return
+            await copyTextToClipboard(text)
+          } catch (e) {
+            ElMessage.error('复制失败')
+          }
+        }
+      })
+
+      editorInstance.value.addAction({
+        id: 'dockerpanel.cut',
+        label: '剪切',
+        contextMenuGroupId: '9_clipboard',
+        contextMenuOrder: 2,
+        run: async (ed) => {
+          try {
+            const action = ed.getAction('editor.action.clipboardCutAction')
+            if (action) {
+              await action.run()
+              return
+            }
+            const model = ed.getModel()
+            const sel = ed.getSelection()
+            if (!model || !sel) return
+            const text = model.getValueInRange(sel)
+            if (!text) return
+            await copyTextToClipboard(text)
+            ed.executeEdits('dockerpanel.cut', [{ range: sel, text: '' }])
+          } catch (e) {
+            ElMessage.error('剪切失败')
+          }
+        }
+      })
+
+      editorInstance.value.addAction({
+        id: 'dockerpanel.paste',
+        label: '粘贴',
+        contextMenuGroupId: '9_clipboard',
+        contextMenuOrder: 3,
+        run: async (ed) => {
+          try {
+            const action = ed.getAction('editor.action.clipboardPasteAction')
+            if (action) {
+              await action.run()
+              return
+            }
+            let text = ''
+            try {
+              text = await readTextFromClipboard()
+            } catch (e) {
+              text = ''
+            }
+            if (!text) {
+              const { value } = await ElMessageBox.prompt('浏览器未授权读取剪贴板，请在此输入/粘贴文本', '粘贴', {
+                confirmButtonText: '粘贴',
+                cancelButtonText: '取消',
+                inputType: 'textarea',
+                inputValue: ''
+              })
+              text = String(value || '')
+            }
+            if (!text) return
+            ed.trigger('dockerpanel.paste', 'type', { text })
+          } catch (e) {
+            if (e !== 'cancel') ElMessage.error('粘贴失败')
+          }
+        }
+      })
+
+      editorInstance.value.addAction({
+        id: 'dockerpanel.selectAll',
+        label: '全选',
+        contextMenuGroupId: '9_clipboard',
+        contextMenuOrder: 4,
+        run: async (ed) => {
+          try {
+            const action = ed.getAction('editor.action.selectAll')
+            if (action) {
+              await action.run()
+              return
+            }
+            const model = ed.getModel()
+            if (!model) return
+            ed.setSelection(model.getFullModelRange())
+          } catch (e) {}
+        }
+      })
+    } catch (e) {}
     editorInstance.value.onDidChangeModelContent(() => {
       projectForm.value.compose = editorInstance.value.getValue()
     })
@@ -529,6 +696,7 @@ const refreshAll = async () => {
         status: toCnState(p.status),
         path: p.path,
         createTime: p.createTime, // Added createTime
+        isSelf: !!p.isSelf,
         containers: []
       })
     }
@@ -537,6 +705,7 @@ const refreshAll = async () => {
     for (const c of (containers || [])) {
       const labels = c.Labels || c.Config?.Labels || {}
       const projectName = labels['com.docker.compose.project']
+      const isSelf = !!c?.isSelf
       const item = {
         key: `container:${c.Id}`,
         type: 'container',
@@ -551,6 +720,7 @@ const refreshAll = async () => {
         Created: c.Created, // Added Created
         Ports: c.Ports,     // Added Ports
         NetworkSettings: c.NetworkSettings, // Added NetworkSettings
+        isSelf,
         // Helper for status runtime if needed, though usually in Status string
         Status: c.Status
       }
@@ -595,19 +765,25 @@ const refreshAll = async () => {
   }
 }
 
-const normalizeComposeName = (name) => {
-  const lower = String(name || '').toLowerCase()
-  const sanitized = lower.replace(/[^a-z0-9_-]/g, '')
-  const trimmed = sanitized.replace(/^[^a-z0-9]+/, '')
-  return trimmed || 'project'
-}
+onMounted(async () => {
+  try {
+    const res = await request.get('/settings/kv/sort_compose')
+    if (res && res.value) {
+      const s = JSON.parse(res.value)
+      if (s && s.prop && s.order) {
+        sortState.value = s
+      }
+    }
+  } catch (e) {}
+  refreshAll()
+})
 
 watch(
   () => projectForm.value.name,
   (newName) => {
     if (dialogTitle.value === '新建项目') {
       const basePath = 'project'
-      const normalized = normalizeComposeName(newName)
+      const normalized = normalizeComposeProjectName(newName)
       projectForm.value.path = normalized ? `${basePath}/${normalized}` : basePath
     }
   }
@@ -713,6 +889,10 @@ const handleProjectCommand = (cmd, row) => {
 }
 
 const pruneContainers = async () => {
+  if (hasSelfResource.value) {
+    ElMessage.warning('容器化部署模式下，不支持执行全局清理操作')
+    return
+  }
   try {
     await ElMessageBox.confirm('确定要清理所有已停止的容器吗？此操作只会删除容器，不会影响镜像、网络或卷。', '清理容器', {
       confirmButtonText: '确认清理',
@@ -739,6 +919,10 @@ const goContainerDetail = (c) => {
 }
 
 const startProject = async (row) => {
+  if (row?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     await api.compose.start(row.name)
     ElMessage.success('项目启动成功')
@@ -748,6 +932,10 @@ const startProject = async (row) => {
   }
 }
 const stopProject = async (row) => {
+  if (row?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     await api.compose.stop(row.name)
     ElMessage.success('项目已停止')
@@ -756,22 +944,38 @@ const stopProject = async (row) => {
     ElMessage.error('停止失败')
   }
 }
-const editProject = (row) => router.push(`/projects/${row.name}`)
+const editProject = (row) => {
+  if (row?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
+  router.push(`/projects/${row.name}`)
+}
 const downProject = async (row) => {
+  if (row?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     await ElMessageBox.confirm(`清除 "${row.name}" 的容器与网络？保留文件。`, '提示', { type: 'warning' })
     await api.compose.down(row.name)
     ElMessage.success('清除完成')
+    try { await request.post(`/system/navigation/rebuild?project=${encodeURIComponent(row.name)}`) } catch {}
     refreshAll()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('清除失败')
   }
 }
 const removeProject = async (row) => {
+  if (row?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     await ElMessageBox.confirm(`删除项目 "${row.name}"？此操作不可恢复。`, '警告', { type: 'warning' })
     await api.compose.remove(row.name)
     ElMessage.success('删除完成')
+    try { await request.post(`/system/navigation/rebuild?project=${encodeURIComponent(row.name)}`) } catch {}
     refreshAll()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败')
@@ -779,6 +983,10 @@ const removeProject = async (row) => {
 }
 
 const startContainer = async (c) => {
+  if (c?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await api.containers.start(c.Id)
     ElMessage.success('容器启动成功')
@@ -788,6 +996,10 @@ const startContainer = async (c) => {
   }
 }
 const stopContainer = async (c) => {
+  if (c?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await api.containers.stop(c.Id)
     ElMessage.success('容器已停止')
@@ -797,6 +1009,10 @@ const stopContainer = async (c) => {
   }
 }
 const restartContainer = async (c) => {
+  if (c?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await api.containers.restart(c.Id)
     ElMessage.success('容器已重启')
@@ -806,10 +1022,15 @@ const restartContainer = async (c) => {
   }
 }
 const deleteContainer = async (c) => {
+  if (c?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     await ElMessageBox.confirm(`删除容器 "${c.name}"？`, '警告', { type: 'warning' })
     await api.containers.remove(c.Id)
     ElMessage.success('容器已删除')
+    try { await request.post(`/system/navigation/rebuild?container_id=${encodeURIComponent(c.Id)}`) } catch {}
     refreshAll()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败')
@@ -865,6 +1086,10 @@ const getNetworkNames = (container) => {
 }
 
 const openTerminal = (container) => {
+  if (container?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   currentContainer.value = container
   nextTick(() => {
     terminalDialogVisible.value = true
@@ -872,6 +1097,10 @@ const openTerminal = (container) => {
 }
 
 const openLogs = (container) => {
+  if (container?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持查看自身容器日志')
+    return
+  }
   currentContainer.value = container
   logDialogVisible.value = true
 }
@@ -970,7 +1199,7 @@ const handleSaveProject = async () => {
     return
   }
 
-  const normalizedName = normalizeComposeName(projectForm.value.name)
+  const normalizedName = normalizeComposeProjectName(projectForm.value.name)
 
   if (normalizedName !== projectForm.value.name) {
     try {
@@ -1163,6 +1392,15 @@ watch(
 .main-table {
   flex: 1;
   min-height: 0;
+}
+
+:deep(.self-row td.el-table__cell) {
+  background: var(--el-color-warning-light-9);
+  color: var(--el-text-color-secondary);
+}
+
+:deep(.self-row:hover td.el-table__cell) {
+  background: var(--el-color-warning-light-8);
 }
 
 .project-dialog-body {
@@ -1439,6 +1677,11 @@ watch(
   padding: 10px 16px;
   display: flex;
   align-items: center;
+}
+
+.self-resource-alert {
+  margin: 0 0 12px;
+  border-radius: 12px;
 }
 
  /* New Styles from Docker.vue */

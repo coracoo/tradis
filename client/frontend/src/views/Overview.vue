@@ -128,6 +128,7 @@ const pageSize = 20
 const maxEvents = 100 // 最多显示100条（5页）
 const currentPage = ref(1)
 let versionWarned = false
+let minApiFixNotified = false
 
 // 事件类型映射
 const getEventIcon = (type) => {
@@ -214,11 +215,22 @@ const fetchStatistics = async () => {
       resources.value.disk.total = formatBytes(data.DiskTotal)
     }
 
+    if (!minApiFixNotified && data.MinAPIVersionFixNeeded) {
+      minApiFixNotified = true
+      if (data.MinAPIVersionFixApplied) {
+        ElMessage.success(`已为 Docker 写入 min-api-version=${data.MinAPIVersionFixTarget || '1.43'}，请重启 Docker 服务后再试`)
+      } else if (data.DaemonMinAPIVersion) {
+        ElMessage.info(`检测到 Docker API 版本偏高，当前 daemon.json 的 min-api-version=${data.DaemonMinAPIVersion}`)
+      } else {
+        ElMessage.warning(`检测到 Docker API 版本偏高，但无法写入 daemon.json（${data.MinAPIVersionFixError || '未知原因'}），建议手动加入 min-api-version=${data.MinAPIVersionFixTarget || '1.43'} 并重启 Docker`)
+      }
+    }
+
     if (!versionWarned && data.DockerAPIVersion) {
       const apiVersionNum = parseFloat(String(data.DockerAPIVersion))
-      if (!Number.isNaN(apiVersionNum) && apiVersionNum >= 1.52) {
+      if (!Number.isNaN(apiVersionNum) && apiVersionNum >= 1.52 && !data.DaemonMinAPIVersion) {
         versionWarned = true
-        ElMessage.warning(`检测到 Docker API 版本为 ${data.DockerAPIVersion}，高于当前推荐版本（≤ 1.51），可能会造成部分功能使用异常，建议宿主机 Docker 版本控制在 24.x 左右`)
+        ElMessage.warning(`检测到 Docker API 版本为 ${data.DockerAPIVersion}，可能导致部分功能异常；建议设置 daemon.json 的 min-api-version 并重启 Docker`)
       }
     }
 

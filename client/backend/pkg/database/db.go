@@ -253,6 +253,7 @@ func createTables() error {
 	        image_id TEXT,
 	        local_digest TEXT,
 	        remote_digest TEXT,
+	        notified INTEGER DEFAULT 0,
 	        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	    );
@@ -261,6 +262,44 @@ func createTables() error {
 		return err
 	}
 
+	if err := ensureImageUpdatesNotifiedColumn(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ensureImageUpdatesNotifiedColumn() error {
+	rows, err := db.Query(`PRAGMA table_info(image_updates)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	has := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "notified" {
+			has = true
+			break
+		}
+	}
+	if has {
+		return nil
+	}
+
+	if _, err := db.Exec(`ALTER TABLE image_updates ADD COLUMN notified INTEGER DEFAULT 0`); err != nil {
+		return err
+	}
+	_, _ = db.Exec(`UPDATE image_updates SET notified = 1`)
 	return nil
 }
 
@@ -280,6 +319,7 @@ type ImageUpdate struct {
 	RemoteDigest string `json:"remote_digest"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	Notified     bool   `json:"notified"`
 }
 
 func SaveNotification(n *Notification) error {
@@ -366,29 +406,31 @@ func SaveImageUpdate(u *ImageUpdate) error {
 		return nil
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
+	notified := boolToInt(u.Notified)
 	_, err := db.Exec(`
-	    INSERT INTO image_updates (repo_tag, image_id, local_digest, remote_digest, created_at, updated_at)
-	    VALUES (?, ?, ?, ?, ?, ?)
+	    INSERT INTO image_updates (repo_tag, image_id, local_digest, remote_digest, notified, created_at, updated_at)
+	    VALUES (?, ?, ?, ?, ?, ?, ?)
 	    ON CONFLICT(repo_tag) DO UPDATE SET
 	      image_id = excluded.image_id,
 	      local_digest = excluded.local_digest,
 	      remote_digest = excluded.remote_digest,
 	      updated_at = excluded.updated_at
-	`, u.RepoTag, u.ImageID, u.LocalDigest, u.RemoteDigest, now, now)
+	`, u.RepoTag, u.ImageID, u.LocalDigest, u.RemoteDigest, notified, now, now)
 	if err != nil {
 		return err
 	}
 	_ = db.QueryRow(`
-	    SELECT id, created_at, updated_at
+	    SELECT id, created_at, updated_at, notified
 	    FROM image_updates
 	    WHERE repo_tag = ?
-	`, u.RepoTag).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	`, u.RepoTag).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt, &notified)
+	u.Notified = notified == 1
 	return nil
 }
 
 func GetAllImageUpdates() ([]ImageUpdate, error) {
 	rows, err := db.Query(`
-	    SELECT id, repo_tag, image_id, local_digest, remote_digest, created_at, updated_at
+	    SELECT id, repo_tag, image_id, local_digest, remote_digest, created_at, updated_at, notified
 	    FROM image_updates
 	    ORDER BY id DESC
 	`)
@@ -400,13 +442,58 @@ func GetAllImageUpdates() ([]ImageUpdate, error) {
 	var list []ImageUpdate
 	for rows.Next() {
 		var u ImageUpdate
-		if err := rows.Scan(&u.ID, &u.RepoTag, &u.ImageID, &u.LocalDigest, &u.RemoteDigest, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		var notified int
+		if err := rows.Scan(&u.ID, &u.RepoTag, &u.ImageID, &u.LocalDigest, &u.RemoteDigest, &u.CreatedAt, &u.UpdatedAt, &notified); err != nil {
 			return nil, err
 		}
+		u.Notified = notified == 1
 		list = append(list, u)
 	}
 
 	return list, nil
+}
+
+func GetUnnotifiedImageUpdates() ([]ImageUpdate, error) {
+	rows, err := db.Query(`
+	    SELECT id, repo_tag, image_id, local_digest, remote_digest, created_at, updated_at, notified
+	    FROM image_updates
+	    WHERE notified = 0
+	    ORDER BY id DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []ImageUpdate
+	for rows.Next() {
+		var u ImageUpdate
+		var notified int
+		if err := rows.Scan(&u.ID, &u.RepoTag, &u.ImageID, &u.LocalDigest, &u.RemoteDigest, &u.CreatedAt, &u.UpdatedAt, &notified); err != nil {
+			return nil, err
+		}
+		u.Notified = notified == 1
+		list = append(list, u)
+	}
+
+	return list, nil
+}
+
+func MarkImageUpdatesNotifiedByRepoTags(repoTags []string) error {
+	if len(repoTags) == 0 {
+		return nil
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	placeholders := make([]string, 0, len(repoTags))
+	args := make([]any, 0, len(repoTags)+1)
+	args = append(args, now)
+	for _, t := range repoTags {
+		placeholders = append(placeholders, "?")
+		args = append(args, t)
+	}
+	query := `UPDATE image_updates SET notified = 1, updated_at = ? WHERE repo_tag IN (` + strings.Join(placeholders, ",") + `) AND notified = 0`
+	_, err := db.Exec(query, args...)
+	return err
 }
 
 // initAdminUser 初始化管理员账户

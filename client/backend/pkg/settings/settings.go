@@ -4,18 +4,100 @@ import (
 	"database/sql"
 	"dockerpanel/backend/pkg/database"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
- type Settings struct {
-	LanUrl                    string `json:"lanUrl"`
-	WanUrl                    string `json:"wanUrl"`
-	AppStoreServerUrl         string `json:"appStoreServerUrl"`
-	AllocPortStart            int    `json:"allocPortStart"`
-	AllocPortEnd              int    `json:"allocPortEnd"`
+const DefaultAppStoreServerURL = "https://template.cgakki.top:33333"
+
+var (
+	appStoreRedactMu     sync.Mutex
+	appStoreRedactCached struct {
+		url      string
+		host     string
+		expires  time.Time
+		initOnce bool
+	}
+)
+
+type Settings struct {
+	LanUrl                     string `json:"lanUrl"`
+	WanUrl                     string `json:"wanUrl"`
+	AppStoreServerUrl          string `json:"appStoreServerUrl"`
+	AllocPortStart             int    `json:"allocPortStart"`
+	AllocPortEnd               int    `json:"allocPortEnd"`
 	ImageUpdateIntervalMinutes int    `json:"imageUpdateIntervalMinutes"`
+}
+
+// IsDebugEnabled 判断是否启用调试日志（通过环境变量控制）。
+func IsDebugEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("DEBUG")))
+	if v == "1" || v == "true" || v == "yes" || v == "on" {
+		return true
+	}
+	lv := strings.TrimSpace(strings.ToLower(os.Getenv("LOG_LEVEL")))
+	return lv == "debug"
+}
+
+// RedactAppStoreURL 对文本中的应用商店服务地址进行脱敏处理。
+func RedactAppStoreURL(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	candidates := []string{
+		DefaultAppStoreServerURL,
+		"template.cgakki.top:33333",
+	}
+
+	u, h := getCachedAppStoreURLForRedaction()
+	if u != "" {
+		candidates = append(candidates, u)
+	}
+	if h != "" {
+		candidates = append(candidates, h)
+	}
+
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, c, "<APPSTORE_API>")
+	}
+	return text
+}
+
+func getCachedAppStoreURLForRedaction() (string, string) {
+	now := time.Now()
+	appStoreRedactMu.Lock()
+	defer appStoreRedactMu.Unlock()
+
+	if appStoreRedactCached.initOnce && now.Before(appStoreRedactCached.expires) {
+		return appStoreRedactCached.url, appStoreRedactCached.host
+	}
+
+	var raw string
+	if s, err := GetSettings(); err == nil {
+		raw = strings.TrimSpace(s.AppStoreServerUrl)
+	}
+
+	host := ""
+	if raw != "" {
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			host = u.Host
+		}
+	}
+
+	appStoreRedactCached.url = raw
+	appStoreRedactCached.host = host
+	appStoreRedactCached.expires = now.Add(30 * time.Second)
+	appStoreRedactCached.initOnce = true
+	return appStoreRedactCached.url, appStoreRedactCached.host
 }
 
 // InitSettingsTable 初始化设置表
@@ -48,7 +130,7 @@ func InitSettingsTable() error {
 	if err := insertDefault("wan_url", ""); err != nil {
 		return err
 	}
-	if err := insertDefault("appstore_server_url", "https://template.cgakki.top:33333"); err != nil {
+	if err := insertDefault("appstore_server_url", DefaultAppStoreServerURL); err != nil {
 		return err
 	}
 	if err := insertDefault("alloc_port_start", "20000"); err != nil {
@@ -78,7 +160,7 @@ func GetSettings() (Settings, error) {
 	s.WanUrl = getValue("wan_url")
 	s.AppStoreServerUrl = getValue("appstore_server_url")
 	if s.AppStoreServerUrl == "" {
-		s.AppStoreServerUrl = "https://template.cgakki.top:33333"
+		s.AppStoreServerUrl = DefaultAppStoreServerURL
 	}
 
 	parseInt := func(v string, def int) int {
@@ -117,6 +199,12 @@ func GetProjectRoot() string {
 	return filepath.Join(parent, "project")
 }
 
+func GetHostProjectRoot() string {
+	v := strings.TrimSpace(os.Getenv("PROJECT_ROOT"))
+	v = strings.TrimRight(v, "/")
+	return v
+}
+
 // GetAppStoreBasePath 获取应用商店基础路径
 func GetAppStoreBasePath() string {
 	return GetDataDir()
@@ -137,7 +225,17 @@ func GetWanUrl() string {
 func UpdateSettings(s Settings) error {
 	db := database.GetDB()
 
-	log.Printf("Updating settings: %+v", s)
+	if IsDebugEnabled() {
+		log.Printf(
+			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s allocPortStart=%d allocPortEnd=%d imageUpdateIntervalMinutes=%d",
+			s.LanUrl,
+			s.WanUrl,
+			RedactAppStoreURL(s.AppStoreServerUrl),
+			s.AllocPortStart,
+			s.AllocPortEnd,
+			s.ImageUpdateIntervalMinutes,
+		)
+	}
 
 	// Helper to update
 	update := func(key, value string) error {
@@ -165,4 +263,20 @@ func UpdateSettings(s Settings) error {
 	}
 
 	return nil
+}
+
+func GetValue(key string) (string, error) {
+	db := database.GetDB()
+	var val string
+	err := db.QueryRow("SELECT value FROM global_settings WHERE key = ?", key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return val, err
+}
+
+func SetValue(key, value string) error {
+	db := database.GetDB()
+	_, err := db.Exec("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)", key, value)
+	return err
 }

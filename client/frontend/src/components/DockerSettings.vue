@@ -78,12 +78,17 @@
               <el-input v-model="proxyForm.no" placeholder="例如: localhost,127.0.0.1"></el-input>
             </el-form-item>
             <el-form-item label="历史配置" v-if="proxyHistory.length">
-              <el-select v-model="selectedHistory" placeholder="选择历史代理配置填充" style="width: 100%">
+              <el-select
+                v-model="selectedHistoryId"
+                placeholder="选择历史代理配置填充"
+                style="width: 100%"
+                class="history-select"
+              >
                 <el-option
                   v-for="item in proxyHistory"
                   :key="item.id"
                   :label="formatHistoryLabel(item)"
-                  :value="item"
+                  :value="item.id"
                 />
               </el-select>
             </el-form-item>
@@ -154,7 +159,7 @@ const proxyForm = ref({
 
 // 历史记录
 const proxyHistory = ref([])
-const selectedHistory = ref(null)
+const selectedHistoryId = ref('')
 
 const mirrorForm = ref({
   mirrors: []
@@ -325,13 +330,20 @@ const editRegistry = (registry) => {
 }
 
 // 历史选择应用
-watch(selectedHistory, (val) => {
+watch(selectedHistoryId, () => {
+  if (!selectedHistoryId.value) {
+    return
+  }
+
+  const val = proxyHistory.value.find((h) => String(h.id) === String(selectedHistoryId.value))
   if (val) {
     proxyForm.value.enabled = true
     proxyForm.value.http = val.http_proxy || ''
     proxyForm.value.https = val.https_proxy || ''
     proxyForm.value.no = val.no_proxy || ''
   }
+
+  selectedHistoryId.value = ''
 })
 
 const formatHistoryLabel = (item) => {
@@ -485,6 +497,12 @@ watch(() => dialogVisible.value, (val) => {
   background-color: var(--el-bg-color-overlay);
   width: 100%;
   box-sizing: border-box;
+}
+
+.history-select :deep(.el-select__selected-item) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
 

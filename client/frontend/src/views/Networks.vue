@@ -407,6 +407,10 @@ const fetchNetworks = async () => {
 // 过滤和排序
 const handleSortChange = ({ prop, order }) => {
   sortState.value = { prop, order }
+  try {
+    const v = JSON.stringify(sortState.value)
+    request.post('/settings/kv/sort_networks', { value: v })
+  } catch (e) {}
 }
 
 const filteredNetworks = computed(() => {
@@ -597,7 +601,16 @@ const handleCurrentChange = (val) => {
   currentPage.value = val
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const res = await request.get('/settings/kv/sort_networks')
+    if (res && res.value) {
+      const s = JSON.parse(res.value)
+      if (s && s.prop && s.order) {
+        sortState.value = s
+      }
+    }
+  } catch (e) {}
   fetchNetworks()
 })
 

@@ -6,19 +6,45 @@
     @close="handleClose"
     class="app-dialog"
   >
-    <div ref="logContainer" class="log-container">
-      <pre class="logs">{{ logs }}</pre>
+    <div class="logs-container">
+      <div class="logs-header">
+        <div class="logs-options">
+          <el-switch
+            v-model="autoScroll"
+            active-text="自动滚动"
+          />
+          <el-input
+            v-model="logFilter"
+            placeholder="检索日志"
+            style="width: 220px"
+            size="default"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+        </div>
+        <el-button @click="clearLogs">清空</el-button>
+      </div>
+      <div ref="logContainer" class="logs-content">
+        <pre
+          v-for="(log, index) in filteredLogs"
+          :key="index"
+          :class="getLogClass(log)"
+        >{{ log.content }}</pre>
+      </div>
     </div>
     <template #footer>
-      <el-button @click="clearLogs">清空</el-button>
       <el-button @click="handleClose">关闭</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
+import { useSseLogStream } from '../utils/sseLogStream'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -28,122 +54,112 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const visible = ref(false)
-const logs = ref('')
 const logContainer = ref(null)
 const autoScroll = ref(true)
-let logController = null
+const {
+  logs,
+  logFilter,
+  filteredLogs,
+  start: startStream,
+  stop: stopStream,
+  clear: clearLogs,
+  pushLine
+} = useSseLogStream({
+  autoScroll,
+  scrollElRef: logContainer
+})
+
+const getLogClass = (log) => ({
+  'error': log.level === 'error',
+  'warning': log.level === 'warning',
+  'info': log.level === 'info',
+  'success': log.level === 'success'
+})
 
 watch(() => props.modelValue, (newVal) => {
   visible.value = newVal
   if (newVal && props.container) {
-    fetchLogs()
+    startLogsStream()
   }
 })
 
 watch(() => visible.value, (newVal) => {
   emit('update:modelValue', newVal)
-  if (!newVal && logController) {
-    try { logController.abort() } catch {}
-    logController = null
+  if (!newVal) {
+    stopLogsStream()
   }
 })
 
-const fetchLogs = async () => {
-  if (!props.container) return
-  
-  logs.value = ''
-  
+const startLogsStream = () => {
+  if (!props.container?.Id) return
+
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/containers/${props.container.Id}/logs/events?tail=200&token=${encodeURIComponent(token)}`
   try {
-    if (logController) {
-      try { logController.abort() } catch {}
-      logController = null
-    }
-    logController = new AbortController()
-    const token = localStorage.getItem('token')
-    const response = await fetch(`/api/containers/${props.container.Id}/logs`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
-      signal: logController.signal
-    })
-    if (!response.ok) {
-      const msg = await response.text().catch(() => '')
-      ElMessage.error(`获取日志失败${msg ? `: ${msg}` : ''}`)
-      logs.value = msg || '获取日志失败'
-      return
-    }
-    const reader = response.body?.getReader()
-    const decoder = new TextDecoder('utf-8')
-    
-    if (!reader) return
-    while (true) {
-      let chunk
-      try {
-        const { value, done } = await reader.read()
-        if (done) break
-        chunk = value
-      } catch (err) {
-        if (err?.name === 'AbortError') {
-          return
-        }
-        throw err
-      }
-      
-      const text = decoder.decode(chunk, { stream: true })
-      logs.value += text
-      
-      if (autoScroll.value && logContainer.value) {
-        nextTick(() => {
-          logContainer.value.scrollTop = logContainer.value.scrollHeight
-        })
-      }
-    }
-    // Flush any remaining bytes
-    logs.value += decoder.decode()
-  } catch (error) {
-    console.error('Error fetching logs:', error)
-    if (error?.name !== 'AbortError') {
-      ElMessage.error('获取日志失败')
-      logs.value = '获取日志失败'
-    }
+    startStream(url, { reset: true })
+  } catch (e) {
+    ElMessage.error('日志连接失败')
   }
 }
 
-const clearLogs = () => {
-  logs.value = ''
-}
+const stopLogsStream = () => stopStream()
 
 const handleClose = () => {
   visible.value = false
-  logs.value = ''
-  if (logController) {
-    try { logController.abort() } catch {}
-    logController = null
-  }
+  clearLogs()
+  stopStream()
 }
 
 onUnmounted(() => {
-  if (logController) {
-    try { logController.abort() } catch {}
-    logController = null
-  }
+  stopStream()
 })
 </script>
 
 <style scoped>
-.log-container {
-  height: 500px;
-  overflow-y: auto;
-  background-color: var(--el-fill-color-darker);
-  padding: 10px;
-  border-radius: 4px;
+.logs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.logs {
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logs-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logs-content {
+  height: 500px;
+  overflow-y: auto;
+  background: var(--el-bg-color-overlay);
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--el-border-color);
+}
+
+.logs-content pre {
   margin: 0;
-  color: #fff;
   font-family: monospace;
   white-space: pre-wrap;
-  word-wrap: break-word;
+  word-break: break-word;
+  color: var(--el-text-color-primary);
+}
+
+.logs-content pre.error {
+  color: var(--el-color-danger);
+}
+
+.logs-content pre.warning {
+  color: var(--el-color-warning);
+}
+
+.logs-content pre.success {
+  color: var(--el-color-success);
 }
 </style>

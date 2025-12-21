@@ -70,7 +70,7 @@ import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 // import { AttachAddon } from 'xterm-addon-attach';
 import 'xterm/css/xterm.css'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps({
   modelValue: {
@@ -155,9 +155,21 @@ const createTerminalForSession = (session) => {
   if (!terminalHost.value) return
   if (session.terminal) return
 
+  const cssVar = (name, fallback) => {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+      return v || fallback
+    } catch {
+      return fallback
+    }
+  }
+
   const term = new Terminal({
     cursorBlink: true,
-    theme: { background: '#1e1e1e', foreground: '#f0f0f0' },
+    theme: {
+      background: cssVar('--el-bg-color-overlay', '#1e1e1e'),
+      foreground: cssVar('--el-text-color-primary', '#f0f0f0')
+    },
     fontSize: 14,
     fontFamily: 'Consolas, "Courier New", monospace',
     scrollback: 1000
@@ -451,8 +463,27 @@ const copySelection = async () => {
       ElMessage.warning('没有选中的文本')
       return
     }
-    await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制到剪贴板')
+    const writeText = navigator?.clipboard?.writeText
+    if (typeof writeText === 'function') {
+      await writeText.call(navigator.clipboard, text)
+      ElMessage.success('已复制到剪贴板')
+      return
+    }
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', 'readonly')
+    textarea.style.position = 'fixed'
+    textarea.style.top = '-9999px'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    const ok = document.execCommand && document.execCommand('copy')
+    document.body.removeChild(textarea)
+    if (ok) {
+      ElMessage.success('已复制到剪贴板')
+      return
+    }
+    throw new Error('clipboard-unavailable')
   } catch (e) {
     ElMessage.error('复制失败')
   }
@@ -460,11 +491,29 @@ const copySelection = async () => {
 
 const pasteClipboard = async () => {
   try {
-    const text = await navigator.clipboard.readText()
-    if (!text) {
-      ElMessage.warning('剪贴板为空')
-      return
+    let text = ''
+    const readText = navigator?.clipboard?.readText
+    if (typeof readText === 'function') {
+      try {
+        text = await readText.call(navigator.clipboard)
+      } catch (e) {
+        text = ''
+      }
     }
+    if (!text) {
+      try {
+        const { value } = await ElMessageBox.prompt('浏览器未授权读取剪贴板，请在此输入/粘贴要发送到终端的文本', '粘贴到终端', {
+          confirmButtonText: '发送',
+          cancelButtonText: '取消',
+          inputType: 'textarea',
+          inputValue: ''
+        })
+        text = String(value || '')
+      } catch (e) {
+        return
+      }
+    }
+    if (!text) return
     const active = sessions.value.find(s => s.id === activeSessionId.value) || sessions.value[sessions.value.length - 1]
     if (active?.socket && active.socket.readyState === WebSocket.OPEN) {
       active.socket.send(JSON.stringify({ type: 'input', data: text }))
@@ -491,7 +540,7 @@ onBeforeUnmount(() => {
 .terminal-container {
   display: flex;
   min-height: 500px;
-  background-color: #1e1e1e;
+  background-color: var(--el-bg-color-overlay);
   padding: 5px;
   border-radius: 8px;
   gap: 10px;
@@ -503,7 +552,7 @@ onBeforeUnmount(() => {
 
 .left-panel {
   width: 250px;
-  background-color: #f5f7fa;
+  background-color: var(--el-bg-color);
   padding: 10px;
   border-radius: 8px;
 }
@@ -531,7 +580,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   height: 34px;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .status-dot {
   width: 8px;
@@ -540,21 +589,21 @@ onBeforeUnmount(() => {
   display: inline-block;
   margin-right: 8px;
 }
-.status-dot.connected { background-color: #67c23a; }
-.status-dot.disconnected { background-color: #c0c4cc; }
+.status-dot.connected { background-color: var(--el-color-success); }
+.status-dot.disconnected { background-color: var(--el-text-color-secondary); }
 .profile-label {
   flex: 1;
   cursor: pointer;
 }
 .profile-remove {
-  color: #f56c6c;
+  color: var(--el-color-danger);
   cursor: pointer;
   margin-left: 8px;
 }
 
 .terminal-panel {
   flex: 1;
-  background-color: #1e1e1e;
+  background-color: var(--el-bg-color-overlay);
   border-radius: 4px;
   overflow: hidden;
   position: relative;
@@ -577,12 +626,12 @@ onBeforeUnmount(() => {
   cursor: pointer;
   padding: 5px 10px;
   list-style: none;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .history-item:hover {
-  background-color: #ecf5ff;
-  color: #409eff;
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
 }
 
 .history-list {
@@ -599,7 +648,7 @@ onBeforeUnmount(() => {
 .command-history h4 {
   margin-top: 0;
   margin-bottom: 10px;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 .command-history {
@@ -620,30 +669,39 @@ onBeforeUnmount(() => {
 .terminal-panel .terminal-host .xterm-rows {
   padding: 0 !important;
 }
+
+.terminal-host .xterm .xterm-selection div {
+  background-color: var(--el-color-primary-light-5) !important;
+}
+
+.terminal-host .xterm .xterm-rows ::selection {
+  background-color: var(--el-color-primary-light-5);
+  color: var(--el-text-color-primary);
+}
 </style>
 
 <style>
 .app-dialog {
   border-radius: 12px !important;
   overflow: hidden;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+  box-shadow: var(--el-box-shadow) !important;
 }
 .app-dialog .el-dialog__header {
   padding: 20px 24px;
   margin-right: 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .app-dialog .el-dialog__title {
   font-weight: 600;
-  color: #1e293b;
+  color: var(--el-text-color-primary);
 }
 .app-dialog .el-dialog__body {
   padding: 24px;
 }
 .app-dialog .el-dialog__footer {
   padding: 20px 24px;
-  border-top: 1px solid #f1f5f9;
-  background-color: #f8fafc;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background-color: var(--el-bg-color);
 }
 .app-dialog .el-dialog__headerbtn {
   top: 24px;

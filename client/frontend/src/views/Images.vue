@@ -310,6 +310,8 @@ import { Refresh, UploadFilled, Download, Upload, Setting, Edit, Delete, Search,
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
 import DockerSettings from '../components/DockerSettings.vue'
+import request from '../utils/request'
+import { useSseLogStream } from '../utils/sseLogStream'
 
 import { getRegistries } from '../api/image_registry'
 
@@ -319,6 +321,7 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const searchQuery = ref('') // 添加搜索关键词
+const sortState = ref({ prop: '', order: '' })
 
 // 添加计算属性处理搜索和分页
 const filteredImages = computed(() => {
@@ -377,28 +380,13 @@ const getImageTag = (repoTag) => {
 }
 
 const normalizeImageTag = (repoTag) => {
-  if (!repoTag || repoTag === '<none>:<none>') {
-    return repoTag || ''
-  }
-  const parts = repoTag.split(':')
-  const namePart = parts[0] || ''
-  const tagPart = parts[1] || 'latest'
-  const segments = namePart.split('/')
-  let name = namePart
-  if (segments.length > 1) {
-    const host = segments[0]
-    if (host.includes('.') || host.includes(':') || host === 'localhost') {
-      name = segments.slice(1).join('/')
-    }
-  }
-  return `${name}:${tagPart}`
+  return repoTag || ''
 }
 
 // 删除 proxyDialogVisible 和 proxyForm 相关代码
 const settingsVisible = ref(false)
 
 const updateStatusMap = ref({})
-const updateRepoMap = ref({})
 const updatingMap = ref({})
 const bulkUpdating = ref(false)
 let updateTimer = null
@@ -535,8 +523,12 @@ const fetchImages = async () => {
     
     images.value = processedImages
     total.value = processedImages.length
-    
-    handleSortChange({ prop: 'RepoTags', order: 'ascending' })
+    const { prop, order } = sortState.value
+    if (prop && order) {
+      handleSortChange({ prop, order })
+    } else {
+      handleSortChange({ prop: 'RepoTags', order: 'ascending' })
+    }
   } catch (error) {
     console.error('获取镜像列表错误:', error)
     ElMessage.error('获取镜像列表失败')
@@ -553,6 +545,11 @@ const handleSortChange = ({ prop, order }) => {
     images.value = [...images.value]
     return
   }
+  sortState.value = { prop, order }
+  try {
+    const v = JSON.stringify(sortState.value)
+    request.post('/settings/kv/sort_images', { value: v })
+  } catch (e) {}
 
   images.value.sort((a, b) => {
     let aValue, bValue
@@ -663,6 +660,93 @@ const pullProgress = ref({
   details: []
 })
 
+const {
+  start: startPullStream,
+  stop: stopPullStream
+} = useSseLogStream({
+  onOpenLine: '',
+  onErrorLine: '',
+  onMessage: (event, { stop }) => {
+    let data = null
+    try {
+      data = JSON.parse(event.data)
+    } catch (e) {
+      return
+    }
+
+    if (data && data.type === 'done') {
+      stop()
+      pullProgress.value.show = false
+      pullProgress.value.status = '拉取完成'
+      pullProgress.value.progress = 100
+      ElMessage.success('镜像拉取成功')
+      pullDialogVisible.value = false
+      fetchImages()
+      return
+    }
+
+    if (data && data.error) {
+      stop()
+      pullProgress.value.show = false
+      pullProgress.value.status = '拉取失败'
+      const raw = String(data.errorDetail?.message || data.error || '拉取失败')
+      let msg = raw
+      const lower = raw.toLowerCase()
+      if (lower.includes('connection reset by peer') || lower.includes('timeout')) {
+        msg = '连接到镜像仓库失败，可能是网络问题或代理设置有误。请检查 Docker 的网络设置。'
+      } else if (lower.includes('not found')) {
+        msg = '镜像未找到，请检查镜像名称是否正确。'
+      } else if (lower.includes('unauthorized')) {
+        msg = '认证失败，请检查仓库的用户名和密码设置。'
+      } else {
+        msg = `拉取失败: ${raw}`
+      }
+      ElMessage.error(msg)
+      return
+    }
+
+    if (data.status) {
+      pullProgress.value.status = data.status
+    }
+
+    if (data.progressDetail && data.progressDetail.current && data.progressDetail.total) {
+      const current = Number(data.progressDetail.current || 0)
+      const total = Number(data.progressDetail.total || 0)
+      if (total > 0) {
+        pullProgress.value.progress = Math.max(0, Math.min(100, Math.round((current / total) * 100)))
+      }
+    }
+
+    if (data.id) {
+      const existingDetail = pullProgress.value.details.find(d => d.id === data.id)
+      if (existingDetail) {
+        existingDetail.status = data.status || existingDetail.status
+        existingDetail.progress = data.progress || existingDetail.progress
+      } else {
+        pullProgress.value.details.unshift({
+          id: data.id,
+          status: data.status || '',
+          progress: data.progress || ''
+        })
+      }
+    }
+  },
+  onError: ({ stop }) => {
+    if (!pullProgress.value.show) return
+    stop()
+    pullProgress.value.show = false
+    pullProgress.value.status = '连接中断'
+    ElMessage.error('镜像拉取进度连接中断，请重试')
+  }
+})
+
+watch(pullDialogVisible, (visible) => {
+  if (!visible) {
+    stopPullStream()
+    pullProgress.value.show = false
+  }
+})
+
 // 添加导入镜像相关变量
 const importDialogVisible = ref(false)
 const importProgress = ref({
@@ -766,122 +850,19 @@ const handlePullImage = async () => {
     return
   }
 
-  try {
-    pullProgress.value = {
-      show: true,
-      status: '准备拉取镜像...',
-      progress: 0,
-      details: []
-    }
-
-    // 使用 POST 请求拉取镜像
-    const data = {
-      name: pullForm.value.name,
-      registry: pullForm.value.registry
-    }
-    
-    // 创建 EventSource 监听进度，使用正确的 URL 格式
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-    let eventSource = null
-    
-    try {
-      const token = localStorage.getItem('token')
-      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
-      eventSource = new EventSource(`${baseUrl}/api/images/pull/progress?name=${encodeURIComponent(pullForm.value.name)}&registry=${encodeURIComponent(pullForm.value.registry)}${tokenParam}`)
-      
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          
-          // 更新总体状态
-          if (data.status) {
-            pullProgress.value.status = data.status
-          }
-          
-          // 更新进度百分比
-          if (data.progressDetail && data.progressDetail.current && data.progressDetail.total) {
-            pullProgress.value.progress = Math.round(
-              (data.progressDetail.current / data.progressDetail.total) * 100
-            )
-          }
-          
-          // 更新详细信息
-          if (data.id) {
-            const existingDetail = pullProgress.value.details.find(d => d.id === data.id)
-            if (existingDetail) {
-              existingDetail.status = data.status || existingDetail.status
-              existingDetail.progress = data.progress || existingDetail.progress
-            } else {
-              pullProgress.value.details.unshift({
-                id: data.id,
-                status: data.status || '',
-                progress: data.progress || ''
-              })
-            }
-          }
-        } catch (e) {
-          console.error('解析进度数据失败:', e)
-        }
-      }
-      
-      eventSource.onerror = (event) => {
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
-        // 不在这里显示错误，让 POST 请求处理错误
-        console.warn('进度监听中断:', event)
-      }
-    } catch (e) {
-      console.error('创建 EventSource 失败:', e)
-      // 继续执行，不中断流程
-    }
-    
-    // 使用正确的 API 函数
-    try {
-      await api.images.pull(data)
-      // POST 请求成功完成
-      if (eventSource) {
-        eventSource.close()
-      }
-      ElMessage.success('镜像拉取成功')
-      pullDialogVisible.value = false
-      fetchImages()
-    } catch (error) {
-      // POST 请求失败
-      if (eventSource) {
-        eventSource.close()
-      }
-      
-      console.error('拉取失败:', error)
-      
-      // 提取更有用的错误信息
-      let errorMsg = error.message || '拉取失败'
-      if (error.response?.data?.error) {
-        const dockerError = error.response.data.error
-        
-        // 检查是否是代理连接问题
-        if (dockerError.includes('connection reset by peer') || dockerError.includes('timeout')) {
-          errorMsg = '连接到镜像仓库失败，可能是网络问题或代理设置有误。请检查 Docker 的网络设置。'
-        } else if (dockerError.includes('not found')) {
-          errorMsg = '镜像未找到，请检查镜像名称是否正确。'
-        } else if (dockerError.includes('unauthorized')) {
-          errorMsg = '认证失败，请检查仓库的用户名和密码设置。'
-        } else {
-          // 提取 Docker 守护进程返回的错误信息
-          errorMsg = '拉取失败: ' + dockerError
-        }
-      }
-      
-      ElMessage.error(errorMsg)
-    } finally {
-      pullProgress.value.show = false
-    }
-  } catch (error) {
-    console.error('拉取操作异常:', error)
-    ElMessage.error('拉取操作异常: ' + (error.message || '未知错误'))
-    pullProgress.value.show = false
+  pullProgress.value = {
+    show: true,
+    status: '准备拉取镜像...',
+    progress: 0,
+    details: []
   }
+
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
+  const token = localStorage.getItem('token')
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
+  const url = `${baseUrl}/api/images/pull/progress?name=${encodeURIComponent(pullForm.value.name)}&registry=${encodeURIComponent(pullForm.value.registry)}${tokenParam}`
+
+  startPullStream(url, { reset: true })
 }
 
 // 导出镜像
@@ -1012,14 +993,6 @@ const isImageUpdatable = (image) => {
   if (!originalTag || originalTag === '<none>:<none>') {
     return false
   }
-  const tag = normalizeImageTag(originalTag)
-  const repo = getImageName(tag)
-  if (repo && updateRepoMap.value[repo]) {
-    return true
-  }
-  if (updateStatusMap.value[tag]) {
-    return true
-  }
   if (updateStatusMap.value[originalTag]) {
     return true
   }
@@ -1065,22 +1038,6 @@ const pushNotification = (type, message) => {
   })
 }
 
-const rebuildUpdateRepoMap = () => {
-  const source = updateStatusMap.value || {}
-  const repoMap = {}
-  Object.keys(source).forEach((tag) => {
-    if (!tag || tag === '<none>:<none>') {
-      return
-    }
-    const normalizedTag = normalizeImageTag(tag)
-    const repo = getImageName(normalizedTag)
-    if (repo) {
-      repoMap[repo] = true
-    }
-  })
-  updateRepoMap.value = repoMap
-}
-
 const checkImageUpdates = async () => {
   try {
     const res = await api.images.getUpdateStatus()
@@ -1092,9 +1049,7 @@ const checkImageUpdates = async () => {
         raw[item.repoTag] = true
       }
     })
-    const normalized = normalizeUpdateStatusMap(raw)
-    updateStatusMap.value = normalized
-    rebuildUpdateRepoMap()
+    updateStatusMap.value = normalizeUpdateStatusMap(raw)
   } catch (error) {
     console.error('加载镜像更新状态失败:', error)
   }
@@ -1162,12 +1117,9 @@ const updateImage = async (image) => {
       console.error('清除镜像更新记录失败:', e)
     }
     try {
-      const normalizedTag = normalizeImageTag(tag)
       const map = { ...updateStatusMap.value }
       delete map[tag]
-      delete map[normalizedTag]
       updateStatusMap.value = map
-      rebuildUpdateRepoMap()
     } catch (e) {
       console.error('本地更新状态清理失败:', e)
     }
@@ -1188,12 +1140,22 @@ const updateImage = async (image) => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const res = await request.get('/settings/kv/sort_images')
+    if (res && res.value) {
+      const s = JSON.parse(res.value)
+      if (s && s.prop && s.order) {
+        sortState.value = s
+      }
+    }
+  } catch (e) {}
   fetchImages()
   checkImageUpdates()
 })
 
 onUnmounted(() => {
+  stopPullStream()
 })
 </script>
 

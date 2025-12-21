@@ -515,7 +515,7 @@ const handleConfirm = async () => {
   margin-bottom: 10px;
 }
 .separator {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-weight: bold;
 }
 .add-btn {
@@ -524,7 +524,7 @@ const handleConfirm = async () => {
 }
 .form-tip {
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--el-color-warning);
   line-height: 1.4;
   margin-top: 5px;
   display: flex;
@@ -545,24 +545,24 @@ const handleConfirm = async () => {
 .app-dialog {
   border-radius: 12px !important;
   overflow: hidden;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+  box-shadow: var(--el-box-shadow) !important;
 }
 .app-dialog .el-dialog__header {
   padding: 20px 24px;
   margin-right: 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .app-dialog .el-dialog__title {
   font-weight: 600;
-  color: #1e293b;
+  color: var(--el-text-color-primary);
 }
 .app-dialog .el-dialog__body {
   padding: 24px;
 }
 .app-dialog .el-dialog__footer {
   padding: 20px 24px;
-  border-top: 1px solid #f1f5f9;
-  background-color: #f8fafc;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background-color: var(--el-bg-color);
 }
 .app-dialog .el-dialog__headerbtn {
   top: 24px;
@@ -570,18 +570,18 @@ const handleConfirm = async () => {
 .custom-tabs.el-tabs--border-card {
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--el-border-color);
   box-shadow: none;
 }
 .custom-tabs.el-tabs--border-card > .el-tabs__header {
-  background-color: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
+  background-color: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color);
 }
 .custom-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
-  background-color: #fff;
-  border-right-color: #e2e8f0;
-  border-left-color: #e2e8f0;
-  color: #4f46e5;
+  background-color: var(--el-bg-color-overlay);
+  border-right-color: var(--el-border-color);
+  border-left-color: var(--el-border-color);
+  color: var(--el-color-primary);
   font-weight: 600;
 }
 </style>

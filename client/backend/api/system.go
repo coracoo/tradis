@@ -32,7 +32,81 @@ func RegisterSystemRoutes(r *gin.RouterGroup) {
 		group.GET("/notifications", getNotifications)
 		group.DELETE("/notifications/:id", deleteNotification)
 		group.POST("/notifications/read", markNotificationsRead)
+		group.POST("/navigation/rebuild", rebuildNavigation)
 	}
+}
+
+func rebuildNavigation(c *gin.Context) {
+	containerID := strings.TrimSpace(c.Query("container_id"))
+	projectName := strings.TrimSpace(c.Query("project"))
+
+	if containerID != "" {
+		system.RebuildAutoNavigationForContainer(containerID)
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+		return
+	}
+	if projectName != "" {
+		system.RebuildAutoNavigationForComposeProject(projectName)
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+		return
+	}
+
+	system.RebuildAutoNavigationAll()
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func parseDockerMajorVersion(raw string) int {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) == 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func parseAPIVersion(raw string) (major int, minor int, ok bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(s, ".", 3)
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	maj, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || maj < 0 {
+		return 0, 0, false
+	}
+	min, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || min < 0 {
+		return 0, 0, false
+	}
+	return maj, min, true
+}
+
+func isAPIVersionGE(raw string, wantMajor int, wantMinor int) bool {
+	maj, min, ok := parseAPIVersion(raw)
+	if !ok {
+		return false
+	}
+	if maj != wantMajor {
+		return maj > wantMajor
+	}
+	return min >= wantMinor
+}
+
+func shouldApplyMinAPIVersionFix(engineVersion string, apiVersion string) bool {
+	if parseDockerMajorVersion(engineVersion) >= 29 {
+		return true
+	}
+	return isAPIVersionGE(apiVersion, 1, 52)
 }
 
 // 获取系统信息
@@ -54,6 +128,30 @@ func getSystemInfo(c *gin.Context) {
 	versionInfo, err := cli.ServerVersion(context.Background())
 	if err != nil {
 		versionInfo = types.Version{}
+	}
+
+	engineVersion := strings.TrimSpace(versionInfo.Version)
+	if engineVersion == "" {
+		engineVersion = strings.TrimSpace(info.ServerVersion)
+	}
+
+	daemonMinAPIVersion := ""
+	daemonCfg, daemonErr := docker.GetDaemonConfig()
+	if daemonErr == nil && daemonCfg != nil {
+		daemonMinAPIVersion = strings.TrimSpace(daemonCfg.MinAPIVersion)
+	}
+
+	minAPIVersionFixTarget := "1.43"
+	minAPIVersionFixNeeded := shouldApplyMinAPIVersionFix(engineVersion, versionInfo.APIVersion)
+	minAPIVersionFixApplied := false
+	minAPIVersionFixError := ""
+	if minAPIVersionFixNeeded && daemonMinAPIVersion == "" {
+		if err := docker.UpdateDaemonConfig(&docker.DaemonConfig{MinAPIVersion: minAPIVersionFixTarget}); err != nil {
+			minAPIVersionFixError = err.Error()
+		} else {
+			minAPIVersionFixApplied = true
+			daemonMinAPIVersion = minAPIVersionFixTarget
+		}
 	}
 
 	// 获取数据卷列表以统计数量
@@ -100,26 +198,32 @@ func getSystemInfo(c *gin.Context) {
 
 	// 构建响应
 	response := gin.H{
-		"ServerVersion":     info.ServerVersion,
-		"DockerVersion":     versionInfo.Version,
-		"DockerAPIVersion":  versionInfo.APIVersion,
-		"NCPU":              info.NCPU,
-		"MemTotal":          memInfo.Total,
-		"MemUsage":          memInfo.Used,
-		"DiskTotal":         diskInfo.Total,
-		"DiskUsage":         diskInfo.Used,
-		"CpuUsage":          cpuPercent[0],
-		"SystemTime":        info.SystemTime,
-		"SystemUptime":      uptime,
-		"OS":                runtime.GOOS,
-		"Arch":              runtime.GOARCH,
-		"Containers":        info.Containers,
-		"ContainersRunning": info.ContainersRunning,
-		"ContainersPaused":  info.ContainersPaused,
-		"ContainersStopped": info.ContainersStopped,
-		"Images":            info.Images,
-		"Volumes":           volumeCount,
-		"Networks":          networkCount,
+		"ServerVersion":           info.ServerVersion,
+		"DockerVersion":           versionInfo.Version,
+		"DockerAPIVersion":        versionInfo.APIVersion,
+		"DaemonMinAPIVersion":     daemonMinAPIVersion,
+		"MinAPIVersionFixNeeded":  minAPIVersionFixNeeded,
+		"MinAPIVersionFixApplied": minAPIVersionFixApplied,
+		"MinAPIVersionFixError":   minAPIVersionFixError,
+		"MinAPIVersionFixTarget":  minAPIVersionFixTarget,
+		"DaemonConfigReadable":    daemonErr == nil,
+		"NCPU":                    info.NCPU,
+		"MemTotal":                memInfo.Total,
+		"MemUsage":                memInfo.Used,
+		"DiskTotal":               diskInfo.Total,
+		"DiskUsage":               diskInfo.Used,
+		"CpuUsage":                cpuPercent[0],
+		"SystemTime":              info.SystemTime,
+		"SystemUptime":            uptime,
+		"OS":                      runtime.GOOS,
+		"Arch":                    runtime.GOARCH,
+		"Containers":              info.Containers,
+		"ContainersRunning":       info.ContainersRunning,
+		"ContainersPaused":        info.ContainersPaused,
+		"ContainersStopped":       info.ContainersStopped,
+		"Images":                  info.Images,
+		"Volumes":                 volumeCount,
+		"Networks":                networkCount,
 	}
 
 	c.JSON(http.StatusOK, response)

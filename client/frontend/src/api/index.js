@@ -64,7 +64,8 @@ const api = {
     addNotification: (data) => request.post('/system/notifications', data),
     getNotifications: (params) => request.get('/system/notifications', { params }),
     deleteNotification: (id) => request.delete(`/system/notifications/${id}`),
-    markNotificationsRead: () => request.post('/system/notifications/read')
+    markNotificationsRead: () => request.post('/system/notifications/read'),
+    navigationRebuild: () => request.post('/system/navigation/rebuild')
   },
 
   navigation: {

@@ -197,6 +197,8 @@ func appendLog(entry LogEntry) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
+	entry.Message = settings.RedactAppStoreURL(entry.Message)
+
 	// 去重：同一事件ID不重复写入
 	if _, exists := recentIDs[entry.ID]; exists {
 		return

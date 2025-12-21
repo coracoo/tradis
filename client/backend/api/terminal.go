@@ -115,6 +115,9 @@ func (t *Terminal) Close() {
 // 添加一个新的终端处理函数，使用Docker SDK直接执行命令
 func containerExec(c *gin.Context) {
 	containerId := c.Param("id")
+	if forbidIfSelfContainer(c, containerId) {
+		return
+	}
 	command := c.Query("cmd")
 
 	if command == "" {
@@ -187,6 +190,9 @@ func containerExec(c *gin.Context) {
 // 添加一个交互式终端处理函数，使用Docker SDK的TTY模式
 func containerInteractiveExec(c *gin.Context) {
 	containerId := c.Param("id")
+	if forbidIfSelfContainer(c, containerId) {
+		return
+	}
 
 	// 升级HTTP连接为WebSocket
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -393,6 +399,9 @@ var upgrader = websocket.Upgrader{
 // 3) 支持窗口尺寸调整（type=resize）与持续输入（type=input），保持会话交互直至任一端关闭。
 func containerTerminal(c *gin.Context) {
 	containerId := c.Param("id")
+	if forbidIfSelfContainer(c, containerId) {
+		return
+	}
 
 	fmt.Printf("收到终端连接请求: %s\n", c.Param("id"))
 
@@ -603,6 +612,9 @@ func containerTerminal(c *gin.Context) {
 // 添加一个新的终端处理函数，使用不同的方法
 func containerTerminalAlternative(c *gin.Context) {
 	containerId := c.Param("id")
+	if forbidIfSelfContainer(c, containerId) {
+		return
+	}
 	fmt.Printf("收到终端连接请求(替代方法): %s\n", containerId)
 
 	// 升级HTTP连接为WebSocket

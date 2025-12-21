@@ -36,6 +36,111 @@ func ProcessContainerDiscovery() {
 	}
 }
 
+// RebuildAutoNavigationAll 清空并重新生成所有自动发现的导航项（不会影响手动添加的导航项）。
+func RebuildAutoNavigationAll() {
+	db := database.GetDB()
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		log.Printf("Error creating docker client for discovery rebuild: %v", err)
+		return
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
+	if err != nil {
+		log.Printf("Error listing containers for discovery rebuild: %v", err)
+		return
+	}
+
+	existingContainerIDs := make(map[string]struct{}, len(containers))
+	for _, ctr := range containers {
+		existingContainerIDs[ctr.ID] = struct{}{}
+	}
+
+	rows, err := db.Query("SELECT id, container_id FROM navigation_items WHERE is_auto = 1")
+	if err == nil {
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int
+			var containerID sql.NullString
+			if scanErr := rows.Scan(&id, &containerID); scanErr != nil {
+				continue
+			}
+			if !containerID.Valid || strings.TrimSpace(containerID.String) == "" {
+				_, _ = db.Exec("DELETE FROM navigation_items WHERE id = ?", id)
+				continue
+			}
+			if _, ok := existingContainerIDs[containerID.String]; !ok {
+				_, _ = db.Exec("DELETE FROM navigation_items WHERE id = ?", id)
+			}
+		}
+	}
+
+	ProcessContainerDiscovery()
+}
+
+// RebuildAutoNavigationForContainer 仅针对指定容器重建自动导航项（容器不存在则仅清理）。
+func RebuildAutoNavigationForContainer(containerID string) {
+	containerID = strings.TrimSpace(containerID)
+	if containerID == "" {
+		return
+	}
+
+	db := database.GetDB()
+	_, _ = db.Exec("DELETE FROM navigation_items WHERE container_id = ? AND is_auto = 1", containerID)
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		log.Printf("Error creating docker client for container rebuild: %v", err)
+		return
+	}
+	defer cli.Close()
+
+	ctr, err := cli.ContainerInspect(context.Background(), containerID)
+	if err != nil {
+		return
+	}
+
+	title := buildTitle(ctr.Name, ctr.Config.Labels)
+	processContainer(ctr.ID, title, ctr.NetworkSettings.Ports)
+}
+
+// RebuildAutoNavigationForComposeProject 仅针对指定 Compose 项目重建自动导航项（不会影响其他项目）。
+func RebuildAutoNavigationForComposeProject(projectName string) {
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return
+	}
+
+	db := database.GetDB()
+	_, _ = db.Exec("DELETE FROM navigation_items WHERE is_auto = 1 AND title LIKE ?", projectName+"-%")
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		log.Printf("Error creating docker client for project rebuild: %v", err)
+		return
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", "com.docker.compose.project="+projectName),
+		),
+	})
+	if err != nil {
+		log.Printf("Error listing containers for project rebuild (%s): %v", projectName, err)
+		return
+	}
+
+	for _, ctr := range containers {
+		_, _ = db.Exec("DELETE FROM navigation_items WHERE container_id = ? AND is_auto = 1", ctr.ID)
+		updateNavigationForContainer(ctr)
+	}
+}
+
 // WatchContainerEvents 监听容器事件以更新导航项
 func WatchContainerEvents() {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -83,8 +188,18 @@ func handleContainerEvent(cli *client.Client, event events.Message) {
 		title := buildTitle(container.Name, container.Config.Labels)
 		processContainer(container.ID, title, container.NetworkSettings.Ports)
 
-	case "destroy", "die":
+	case "destroy":
 		// Remove navigation item if it was auto-created for this container
+		removeNavigationForContainer(event.Actor.ID)
+		if tx, err := database.GetDB().Begin(); err == nil {
+			if derr := database.DeleteReservedPortsByOwnerTx(tx, event.Actor.ID); derr != nil {
+				_ = tx.Rollback()
+			} else {
+				_ = tx.Commit()
+			}
+		}
+
+	case "die":
 		removeNavigationForContainer(event.Actor.ID)
 	}
 }
@@ -203,8 +318,8 @@ func registerNavigation(containerID, title, publicPort string) {
 	} else if err == nil {
 		// Update existing
 		_, err = db.Exec(
-			"UPDATE navigation_items SET title = ?, url = ?, lan_url = ?, wan_url = ?, icon = ?, category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-			title, finalUrl, lanUrl, wanUrl, icon, category, existingID,
+			"UPDATE navigation_items SET title = ?, url = ?, lan_url = ?, wan_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			title, finalUrl, lanUrl, wanUrl, existingID,
 		)
 		if err != nil {
 			log.Printf("Failed to update navigation for %s: %v", title, err)

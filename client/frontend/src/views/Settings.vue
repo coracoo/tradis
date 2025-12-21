@@ -68,14 +68,6 @@
           <div class="help-text">控制全局镜像更新检测的时间间隔，默认 30 分钟。</div>
         </el-form-item>
 
-        <!--<el-form-item label="应用商城服务器地址">
-          <el-input 
-            v-model="settingsForm.appStoreServerUrl" 
-            placeholder="https://template.cgakki.top:33333" 
-          />
-          <div class="help-text">用于从应用商城获取模板列表与详情。</div>
-        </el-form-item>-->
-
         <el-form-item>
           <el-button type="primary" @click="saveServerSettings" :loading="urlLoading">保存配置</el-button>
         </el-form-item>

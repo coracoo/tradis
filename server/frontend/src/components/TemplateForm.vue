@@ -608,14 +608,21 @@ const handleParseVariables = () => {
       if (service.environment) {
         const envs = Array.isArray(service.environment) 
           ? service.environment.reduce((acc, curr) => {
-              const [k, v] = curr.split('=')
-              acc[k] = v || ''
+              const idx = String(curr).indexOf('=')
+              if (idx === -1) {
+                acc[String(curr)] = ''
+                return acc
+              }
+
+              const k = String(curr).slice(0, idx)
+              const v = String(curr).slice(idx + 1)
+              acc[k] = v
               return acc
             }, {})
           : service.environment
 
         for (const [key, value] of Object.entries(envs)) {
-          if (key === 'TZ' || key === 'PATH') continue
+          if (key === 'PATH') continue
           
           const valStr = value ? String(value) : ''
           const item = {

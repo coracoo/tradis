@@ -33,13 +33,12 @@
 
 # Data & Runtime (Client Backend)
 client/backend/data/
+client/backend/project/
 client/backend/data.db
 client/backend/wget-log
-client/backend/docker-manager-backend
 
 # Server Backend (Assuming similar structure)
-server/backend/data/
-server/backend/data.db
+server/backend/*.db
 server/backend/main
 
 # Docker

@@ -110,7 +110,29 @@ func main() {
 	system.StartEventLogger()
 	api.StartImageUpdateScheduler()
 
-	r := gin.Default()
+	noisyPaths := map[string]struct{}{
+		"/api/settings/global": {},
+		"/api/system/events":   {},
+		"/api/system/info":     {},
+	}
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		if !settings.IsDebugEnabled() {
+			if _, ok := noisyPaths[param.Path]; ok {
+				return ""
+			}
+		}
+		return fmt.Sprintf("[GIN] %v |%3d |%13v |%15s |%-7s %#v\n",
+			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+			param.StatusCode,
+			param.Latency,
+			param.ClientIP,
+			param.Method,
+			param.Path,
+		)
+	}))
 
 	// Configure CORS
 	config := cors.DefaultConfig()
@@ -187,11 +209,15 @@ func main() {
 	})
 
 	port := strings.TrimSpace(os.Getenv("BACKEND_PORT"))
-	log.Printf("[DEBUG] Env BACKEND_PORT: '%s'", port)
+	if settings.IsDebugEnabled() {
+		log.Printf("[DEBUG] Env BACKEND_PORT: '%s'", port)
+	}
 
 	if port == "" {
 		port = "8080"
-		log.Printf("[DEBUG] Using default port: 8080")
+		if settings.IsDebugEnabled() {
+			log.Printf("[DEBUG] Using default port: 8080")
+		}
 	}
 
 	bind := os.Getenv("BACKEND_BIND")
@@ -199,6 +225,8 @@ func main() {
 		bind = fmt.Sprintf(":%s", port)
 	}
 
-	log.Printf("[DEBUG] Starting server on %s", bind)
+	if settings.IsDebugEnabled() {
+		log.Printf("[DEBUG] Starting server on %s", bind)
+	}
 	r.Run(bind)
 }

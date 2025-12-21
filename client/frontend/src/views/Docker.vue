@@ -40,12 +40,22 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="prune" :icon="Delete">清除未使用容器</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="Delete" :disabled="hasSelfContainer">清除未使用容器</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
       </div>
     </div>
+
+    <el-alert
+      v-if="hasSelfContainer"
+      type="info"
+      effect="light"
+      title="只读模式"
+      description="容器化部署模式下，自身项目/容器不支持操作"
+      :closable="false"
+      class="self-resource-alert"
+    />
 
     <div class="table-wrapper">
       <!-- 容器列表 -->
@@ -53,6 +63,7 @@
         :data="filteredContainers" 
         class="containers-table"
         v-loading="loading"
+        :row-class-name="rowClassName"
         @selection-change="handleSelectionChange"
         @sort-change="handleSortChange"
         :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
@@ -160,7 +171,10 @@
       <!-- 操作列右对齐并使用图标按钮 -->
       <el-table-column label="操作" width="240" align="left" header-align="left">
         <template #default="scope">
-          <el-button-group>
+          <div v-if="isSelfContainer(scope.row)" class="self-ops">
+            <el-tag size="small" type="warning" effect="plain">自身</el-tag>
+          </div>
+          <el-button-group v-else>
             <el-button size="small" @click="openLogs(scope.row)" title="日志"><el-icon><Document /></el-icon></el-button>
             <el-button size="small" @click="openTerminal(scope.row)" title="终端"><el-icon><Monitor /></el-icon></el-button>
             <el-button size="small" @click="openEdit(scope.row)" title="编辑"><el-icon><Edit /></el-icon></el-button>
@@ -231,6 +245,7 @@ import ContainerTerminal from '../components/ContainerTerminal.vue'
 import ContainerLogs from '../components/ContainerLogs.vue'
 import ContainerEdit from '../components/ContainerEdit.vue'
 import { useRouter, useRoute } from 'vue-router'
+import request from '../utils/request'
 
 // 变量定义
 const router = useRouter()
@@ -243,6 +258,7 @@ const pageSize = ref(10)
 const total = ref(0)
 const statusFilter = ref('')
 const searchQuery = ref('') // 添加搜索关键词
+const sortState = ref({ prop: '', order: '' })
 const currentContainer = ref(null)
 const terminalDialogVisible = ref(false)
 const logDialogVisible = ref(false)
@@ -255,6 +271,9 @@ const batchForceStop = () => batchAction('kill')
 const batchPause = () => batchAction('pause')
 const batchResume = () => batchAction('unpause')
 const batchDelete = () => batchAction('remove')
+const isSelfContainer = (c) => !!(c && c.isSelf)
+const rowClassName = ({ row }) => (isSelfContainer(row) ? 'self-row' : '')
+const hasSelfContainer = computed(() => (containers.value || []).some((c) => isSelfContainer(c)))
 
 const handleGlobalCommand = (command) => {
   if (command === 'prune') {
@@ -264,6 +283,10 @@ const handleGlobalCommand = (command) => {
 
 // 打开编辑弹窗
 const openEdit = (container) => {
+  if (isSelfContainer(container)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   currentContainer.value = container
   editDialogVisible.value = true
 }
@@ -272,6 +295,15 @@ const openEdit = (container) => {
 const batchAction = async (action) => {
   if (selectedContainers.value.length === 0) {
     ElMessage.warning('请选择容器')
+    return
+  }
+
+  const targets = selectedContainers.value.filter(c => !isSelfContainer(c))
+  if (targets.length !== selectedContainers.value.length) {
+    ElMessage.warning('已自动跳过自身容器')
+  }
+  if (targets.length === 0) {
+    ElMessage.warning('自身容器不支持该操作')
     return
   }
   
@@ -286,19 +318,19 @@ const batchAction = async (action) => {
       'remove': '删除'
     }
     
-    await ElMessageBox.confirm(`确定要${actionMap[action]}选中的 ${selectedContainers.value.length} 个容器吗？`, '确认', {
+    await ElMessageBox.confirm(`确定要${actionMap[action]}选中的 ${targets.length} 个容器吗？`, '确认', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning'
     })
     
     await Promise.all(
-      selectedContainers.value.map(container => 
+      targets.map(container => 
         api.containers[action](container.Id)
       )
     )
     
-    ElMessage.success(`已${actionMap[action]}${selectedContainers.value.length}个容器`)
+    ElMessage.success(`已${actionMap[action]}${targets.length}个容器`)
     fetchContainers()
   } catch (error) {
     if (error !== 'cancel') {
@@ -310,6 +342,10 @@ const batchAction = async (action) => {
 
 // 清理容器函数
 const clearContainers = async () => {
+  if ((containers.value || []).some(c => isSelfContainer(c))) {
+    ElMessage.warning('容器化部署模式下，不支持执行全局清理操作')
+    return
+  }
   try {
     await ElMessageBox.confirm('确定要清理所有已停止的容器吗？', '警告', {
       confirmButtonText: '确定',
@@ -330,6 +366,10 @@ const clearContainers = async () => {
 
 // 添加处理单个容器操作的函数
 const handleAction = async (container, action) => {
+  if (isSelfContainer(container)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     const actionMap = {
       'start': '启动',
@@ -350,6 +390,10 @@ const handleAction = async (container, action) => {
 
 // 添加处理单个容器删除的函数
 const handleDelete = async (container) => {
+  if (isSelfContainer(container)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   try {
     const containerName = container.Names?.[0]?.replace(/^\//, '') || container.Id.substring(0, 12)
     
@@ -378,6 +422,10 @@ const createContainer = () => {
 
 // 添加打开终端和日志的方法
 const openTerminal = (container) => {
+  if (isSelfContainer(container)) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身容器')
+    return
+  }
   currentContainer.value = container
   nextTick(() => {
     terminalDialogVisible.value = true;
@@ -385,6 +433,10 @@ const openTerminal = (container) => {
 };
 
 const openLogs = (container) => {
+  if (isSelfContainer(container)) {
+    ElMessage.warning('容器化部署模式下，不支持查看自身容器日志')
+    return
+  }
   currentContainer.value = container
   logDialogVisible.value = true
 }
@@ -439,6 +491,10 @@ const stateMap = {
 // 排序处理
 const handleSortChange = ({ prop, order }) => {
   sortState.value = { prop, order }
+  try {
+    const v = JSON.stringify(sortState.value)
+    request.post('/settings/kv/sort_docker', { value: v })
+  } catch (e) {}
 }
 
 // 状态标签类型获取函数
@@ -559,11 +615,20 @@ const handleCurrentChange = (val) => {
   fetchContainers()
 }
 
-onMounted(() => {
+onMounted(async () => {
   const q = route.query.status
   if (typeof q === 'string') {
     statusFilter.value = q
   }
+  try {
+    const res = await request.get('/settings/kv/sort_docker')
+    if (res && res.value) {
+      const s = JSON.parse(res.value)
+      if (s && s.prop && s.order) {
+        sortState.value = s
+      }
+    }
+  } catch (e) {}
   fetchContainers()
 })
 watch(() => route.query.status, (val) => {
@@ -636,6 +701,11 @@ const getImageTag = (image) => {
   border: 1px solid var(--el-border-color-light);
 }
 
+.self-resource-alert {
+  margin: 0 0 12px;
+  border-radius: 12px;
+}
+
 .filter-left, .filter-right {
   display: flex;
   align-items: center;
@@ -672,6 +742,22 @@ const getImageTag = (image) => {
   border-top: 1px solid #e2e8f0;
   display: flex;
   justify-content: flex-end;
+}
+
+.self-ops {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 32px;
+}
+
+:deep(.self-row td.el-table__cell) {
+  background: var(--el-color-warning-light-9);
+  color: var(--el-text-color-secondary);
+}
+
+:deep(.self-row:hover td.el-table__cell) {
+  background: var(--el-color-warning-light-8);
 }
 
 /* --------------------------------------------------------- */

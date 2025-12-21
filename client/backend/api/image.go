@@ -9,21 +9,59 @@ import (
 	"dockerpanel/backend/pkg/system"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	registrytypes "github.com/docker/docker/api/types/registry"
 	"github.com/gin-gonic/gin"
 )
+
+var remoteDigestErrorMu sync.Mutex
+var remoteDigestErrorLast = make(map[string]time.Time)
+
+func allowRemoteDigestErrorLog(repoTag string) bool {
+	repoTag = strings.TrimSpace(repoTag)
+	if repoTag == "" {
+		return true
+	}
+
+	now := time.Now()
+	window := 10 * time.Minute
+
+	remoteDigestErrorMu.Lock()
+	defer remoteDigestErrorMu.Unlock()
+
+	if last, ok := remoteDigestErrorLast[repoTag]; ok {
+		if now.Sub(last) < window {
+			return false
+		}
+	}
+
+	remoteDigestErrorLast[repoTag] = now
+
+	if len(remoteDigestErrorLast) > 1000 {
+		cutoff := now.Add(-30 * time.Minute)
+		for k, ts := range remoteDigestErrorLast {
+			if ts.Before(cutoff) {
+				delete(remoteDigestErrorLast, k)
+			}
+		}
+	}
+
+	return true
+}
 
 func RegisterImageRoutes(r *gin.RouterGroup) {
 	group := r.Group("/images")
@@ -340,6 +378,8 @@ func updateDockerProxy(c *gin.Context) {
 			HTTPSProxy: config.HTTPSProxy,
 			NoProxy:    config.NoProxy,
 		}
+	} else {
+		daemonConfig.ClearProxies = true
 	}
 
 	// 保存到 daemon.json
@@ -436,9 +476,24 @@ func pullImageProgress(c *gin.Context) {
 		return
 	}
 
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("X-Accel-Buffering", "no")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式输出"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
 	cli, err := docker.NewDockerClient()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.String(http.StatusInternalServerError, "data: %s\n\n", fmt.Sprintf(`{"error":%q}`, err.Error()))
+		flusher.Flush()
 		return
 	}
 	defer cli.Close()
@@ -472,35 +527,47 @@ func pullImageProgress(c *gin.Context) {
 		}
 	}
 
-	reader, err := cli.ImagePull(context.Background(), imageName, options)
+	reader, err := cli.ImagePull(ctx, imageName, options)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.String(http.StatusInternalServerError, "data: %s\n\n", fmt.Sprintf(`{"error":%q}`, err.Error()))
+		flusher.Flush()
 		return
 	}
 	defer reader.Close()
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("Transfer-Encoding", "chunked")
-	c.Header("Access-Control-Allow-Origin", "*")
+	enc := json.NewEncoder(c.Writer)
+	push := func(v any) {
+		_, _ = c.Writer.Write([]byte("data: "))
+		_ = enc.Encode(v)
+		_, _ = c.Writer.Write([]byte("\n"))
+		flusher.Flush()
+	}
 
-	// 读取并发送进度信息
-	buf := make([]byte, 32*1024)
+	dec := json.NewDecoder(reader)
 	for {
-		n, err := reader.Read(buf)
-		if err != nil {
-			if err == io.EOF {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		var payload map[string]any
+		if err := dec.Decode(&payload); err != nil {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			log.Printf("读取进度失败: %v", err)
-			continue
+			push(map[string]any{"error": err.Error()})
+			return
 		}
 
-		// 发送原始进度数据
-		c.Writer.Write(buf[:n])
-		c.Writer.Flush()
+		push(payload)
+		if _, hasErr := payload["error"]; hasErr {
+			return
+		}
 	}
+
+	push(map[string]any{"type": "done"})
 }
 
 // 拉取镜像
@@ -718,6 +785,7 @@ type imageUpdateInfo struct {
 	RepoTag      string `json:"repoTag"`
 	LocalDigest  string `json:"localDigest"`
 	RemoteDigest string `json:"remoteDigest"`
+	Notified     bool   `json:"notified"`
 }
 
 type imageUpdateCheckResult struct {
@@ -730,6 +798,36 @@ type imageUpdateCheckResult struct {
 }
 
 var imageUpdateLastRun int64
+
+func formatImageUpdateMessage(repoTags []string) string {
+	tags := make([]string, 0, len(repoTags))
+	seen := make(map[string]struct{}, len(repoTags))
+	for _, t := range repoTags {
+		tt := strings.TrimSpace(t)
+		if tt == "" {
+			continue
+		}
+		if _, ok := seen[tt]; ok {
+			continue
+		}
+		seen[tt] = struct{}{}
+		tags = append(tags, tt)
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+
+	sort.Strings(tags)
+	display := tags
+	if len(display) > 3 {
+		display = display[:3]
+	}
+	suffix := ""
+	if len(tags) > 3 {
+		suffix = fmt.Sprintf(" 等 %d 个", len(tags))
+	}
+	return fmt.Sprintf("%s%s 镜像有新版本，去及时查看", strings.Join(display, "、"), suffix)
+}
 
 func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
 	start := time.Now()
@@ -747,8 +845,16 @@ func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
 	}
 	result.TotalImages = len(images)
 
-	if err := database.ClearImageUpdates(); err != nil {
+	// 获取已有的更新记录，避免重复轮询同一镜像标签
+	existingUpdates, err := database.GetAllImageUpdates()
+	if err != nil {
 		return result, err
+	}
+	existingSet := make(map[string]bool, len(existingUpdates))
+	for _, u := range existingUpdates {
+		if u.RepoTag != "" {
+			existingSet[u.RepoTag] = true
+		}
 	}
 
 	var updates []imageUpdateInfo
@@ -771,10 +877,17 @@ func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
 			if localDigest == "" {
 				continue
 			}
+			// 跳过已有记录的镜像标签，直到该记录被删除后再重新轮询
+			if existingSet[tag] {
+				continue
+			}
 			remoteDigest, derr := getDockerHubDigest(tag)
 			if derr != nil {
 				remoteErrors++
-				log.Printf("获取远端镜像摘要失败 repoTag=%s: %v", tag, derr)
+				if allowRemoteDigestErrorLog(tag) {
+					log.Printf("获取远端镜像摘要失败 repoTag=%s: %v", tag, derr)
+					system.LogSimpleEvent("error", fmt.Sprintf("镜像远端摘要获取失败: %s, 错误: %v", tag, derr))
+				}
 				continue
 			}
 			if remoteDigest == "" || remoteDigest == localDigest {
@@ -791,6 +904,7 @@ func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
 				ImageID:      img.ID,
 				LocalDigest:  localDigest,
 				RemoteDigest: remoteDigest,
+				Notified:     false,
 			}); err != nil {
 				writeErrors++
 				log.Printf("写入 image_updates 失败 repoTag=%s: %v", tag, err)
@@ -849,13 +963,30 @@ func StartImageUpdateScheduler() {
 				continue
 			}
 
-			system.LogSimpleEvent("info", fmt.Sprintf(
-				"自动镜像更新检测完成: 总镜像 %d, 可更新 %d, 远端错误 %d, 耗时 %.1fs",
-				result.TotalImages,
-				result.FoundUpdates,
-				result.RemoteErrors,
-				result.Duration.Seconds(),
-			))
+			unnotified, err := database.GetUnnotifiedImageUpdates()
+			if err != nil {
+				system.LogSimpleEvent("error", fmt.Sprintf("读取待通知的镜像更新失败: %v", err))
+				continue
+			}
+			if len(unnotified) > 0 {
+				repoTags := make([]string, 0, len(unnotified))
+				for _, u := range unnotified {
+					repoTags = append(repoTags, u.RepoTag)
+				}
+				msg := formatImageUpdateMessage(repoTags)
+				if msg != "" {
+					system.LogSimpleEvent("info", msg)
+					_ = database.SaveNotification(&database.Notification{Type: "info", Message: msg, Read: false})
+				}
+				_ = database.MarkImageUpdatesNotifiedByRepoTags(repoTags)
+			} else if result.RemoteErrors > 0 {
+				system.LogSimpleEvent("warning", fmt.Sprintf(
+					"自动镜像更新检测存在远端错误: 总镜像 %d, 远端错误 %d, 耗时 %.1fs",
+					result.TotalImages,
+					result.RemoteErrors,
+					result.Duration.Seconds(),
+				))
+			}
 		}
 	}()
 }
@@ -879,13 +1010,23 @@ func checkImageUpdates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("写入镜像更新记录失败: %d 条", result.WriteErrors)})
 		return
 	}
-	system.LogSimpleEvent("info", fmt.Sprintf(
-		"手动镜像更新检测完成: 总镜像 %d, 可更新 %d, 远端错误 %d, 耗时 %.1fs",
-		result.TotalImages,
-		result.FoundUpdates,
-		result.RemoteErrors,
-		result.Duration.Seconds(),
-	))
+	if result.FoundUpdates > 0 {
+		repoTags := make([]string, 0, len(result.Updates))
+		for _, u := range result.Updates {
+			repoTags = append(repoTags, u.RepoTag)
+		}
+		msg := formatImageUpdateMessage(repoTags)
+		if msg != "" {
+			system.LogSimpleEvent("info", msg)
+		}
+	} else if result.RemoteErrors > 0 {
+		system.LogSimpleEvent("warning", fmt.Sprintf(
+			"手动镜像更新检测存在远端错误: 总镜像 %d, 远端错误 %d, 耗时 %.1fs",
+			result.TotalImages,
+			result.RemoteErrors,
+			result.Duration.Seconds(),
+		))
+	}
 	c.JSON(http.StatusOK, gin.H{"updates": result.Updates})
 }
 
@@ -901,6 +1042,7 @@ func listStoredImageUpdates(c *gin.Context) {
 			RepoTag:      item.RepoTag,
 			LocalDigest:  item.LocalDigest,
 			RemoteDigest: item.RemoteDigest,
+			Notified:     item.Notified,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"updates": updates})
@@ -964,6 +1106,7 @@ func applyImageUpdates(c *gin.Context) {
 	var failedTags []string
 
 	for _, item := range items {
+		// 计算镜像是否正在使用中
 		used := false
 		if item.ImageID != "" && usedImageIDs[item.ImageID] {
 			used = true
@@ -973,21 +1116,45 @@ func applyImageUpdates(c *gin.Context) {
 		}
 		if used {
 			skippedUsed++
+			system.LogSimpleEvent("warning", fmt.Sprintf("跳过正在使用中的镜像: %s", item.RepoTag))
 			continue
 		}
 
 		attempted++
 
-		reader, err := cli.ImagePull(context.Background(), item.RepoTag, types.ImagePullOptions{})
+		// 为非 docker.io 的镜像设置仓库认证
+		pullOpts := types.ImagePullOptions{}
+		if name, _ := parseImageName(item.RepoTag); name != "" {
+			if host := imageHost(name); host != "" {
+				if regs, e := database.GetAllRegistries(); e == nil {
+					if r := matchRegistry(regs, host); r != nil && (r.Username != "" || r.Password != "") {
+						authCfg := types.AuthConfig{
+							Username: r.Username,
+							Password: r.Password,
+						}
+						if r.URL != "" {
+							authCfg.ServerAddress = r.URL
+						}
+						if enc, mErr := json.Marshal(authCfg); mErr == nil {
+							pullOpts.RegistryAuth = base64.URLEncoding.EncodeToString(enc)
+						}
+					}
+				}
+			}
+		}
+
+		reader, err := cli.ImagePull(context.Background(), item.RepoTag, pullOpts)
 		if err != nil {
 			failed++
 			failedTags = append(failedTags, item.RepoTag)
+			system.LogSimpleEvent("error", fmt.Sprintf("镜像拉取失败: %s, 错误: %v", item.RepoTag, err))
 			continue
 		}
 		_, _ = io.Copy(io.Discard, reader)
 		reader.Close()
 
 		success++
+		system.LogSimpleEvent("success", fmt.Sprintf("镜像拉取成功: %s", item.RepoTag))
 		_ = database.DeleteImageUpdateByRepoTag(item.RepoTag)
 	}
 
@@ -1025,73 +1192,86 @@ func getDockerHubDigest(repoTag string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("invalid image")
 	}
-	if !isDockerHubImage(name) {
-		return "", fmt.Errorf("unsupported registry")
-	}
 
-	path := name
-	if !strings.Contains(name, "/") {
-		path = "library/" + name
-	}
-
-	values := url.Values{}
-	values.Set("service", "registry.docker.io")
-	values.Set("scope", fmt.Sprintf("repository:%s:pull", path))
-
-	tokenURL := "https://auth.docker.io/token?" + values.Encode()
-
-	resp, err := http.Get(tokenURL)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token request failed: %s", resp.Status)
-	}
-
-	var tokenResp struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", err
-	}
-	if tokenResp.Token == "" {
-		return "", fmt.Errorf("empty token")
-	}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://registry-1.docker.io/v2/%s/manifests/%s", path, tag), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+tokenResp.Token)
-	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-
-	client := &http.Client{}
-	resp2, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp2.Body.Close()
-
-	if resp2.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("manifest request failed: %s", resp2.Status)
-	}
-
-	digest := resp2.Header.Get("Docker-Content-Digest")
-	if digest == "" {
-		var body struct {
-			Config struct {
-				Digest string `json:"digest"`
-			} `json:"config"`
+	host := imageHost(name)
+	fullRef := ""
+	if host == "" {
+		path := name
+		if !strings.Contains(name, "/") {
+			path = "library/" + name
 		}
-		if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
-			return "", err
-		}
-		digest = body.Config.Digest
+		fullRef = "docker.io/" + path + ":" + tag
+	} else {
+		fullRef = name + ":" + tag
 	}
 
-	return digest, nil
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		return "", err
+	}
+	defer cli.Close()
+
+	encoded := ""
+	if host != "" {
+		if regs, e := database.GetAllRegistries(); e == nil {
+			if r := matchRegistry(regs, host); r != nil {
+				if r.Username != "" || r.Password != "" {
+					auth := registrytypes.AuthConfig{
+						Username:      r.Username,
+						Password:      r.Password,
+						ServerAddress: r.URL,
+					}
+					if s, ee := registrytypes.EncodeAuthConfig(auth); ee == nil {
+						encoded = s
+					}
+				}
+			}
+		}
+	}
+
+	di, err := cli.DistributionInspect(context.Background(), fullRef, encoded)
+	if err != nil {
+		return "", err
+	}
+
+	d := string(di.Descriptor.Digest)
+	if d == "" {
+		return "", fmt.Errorf("empty digest")
+	}
+	return d, nil
+}
+
+func imageHost(name string) string {
+	segments := strings.Split(name, "/")
+	if len(segments) == 0 {
+		return ""
+	}
+	host := segments[0]
+	if strings.Contains(host, ".") || strings.Contains(host, ":") || host == "localhost" {
+		return host
+	}
+	return ""
+}
+
+func matchRegistry(regs map[string]*database.Registry, host string) *database.Registry {
+	if regs == nil {
+		return nil
+	}
+	if r, ok := regs[host]; ok {
+		return r
+	}
+	if r, ok := regs["https://"+host]; ok {
+		return r
+	}
+	if r, ok := regs["http://"+host]; ok {
+		return r
+	}
+	for k, v := range regs {
+		if strings.Contains(k, host) {
+			return v
+		}
+	}
+	return nil
 }
 
 func parseImageName(repoTag string) (string, string) {

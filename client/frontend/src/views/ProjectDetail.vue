@@ -6,27 +6,38 @@
           <el-icon><Back /></el-icon>
         </el-button>
         <div class="title">{{ projectName }}</div>
+        <el-tag v-if="isSelfProject" size="small" type="warning" effect="plain">自身</el-tag>
       </div>
       <div class="header-right">
         <el-button @click="handleRefresh" plain size="medium" class="square-btn">
           <template #icon><el-icon><Refresh /></el-icon></template>
         </el-button>
         <el-button-group>
-          <el-button type="primary" :loading="isBuilding" @click="handleBuild" size="medium">
+          <el-button type="primary" :loading="isBuilding" :disabled="isSelfProject" @click="handleBuild" size="medium">
             重新构建
           </el-button>
-          <el-button type="success" :loading="isStarting" :disabled="isRunning" @click="handleStart" size="medium">
+          <el-button type="success" :loading="isStarting" :disabled="isRunning || isSelfProject" @click="handleStart" size="medium">
             启动
           </el-button>
-          <el-button type="danger" :loading="isStopping" :disabled="!isRunning" @click="handleStop" size="medium">
+          <el-button type="danger" :loading="isStopping" :disabled="!isRunning || isSelfProject" @click="handleStop" size="medium">
             停止
           </el-button>
-          <el-button type="warning" :loading="isRestarting" @click="handleRestart" size="medium">
+          <el-button type="warning" :loading="isRestarting" :disabled="isSelfProject" @click="handleRestart" size="medium">
             重启
           </el-button>
         </el-button-group>
       </div>
     </div>
+
+    <el-alert
+      v-if="isSelfProject"
+      type="info"
+      effect="light"
+      title="只读模式"
+      description="容器化部署模式下，自身项目/容器不支持操作"
+      :closable="false"
+      class="self-resource-alert"
+    />
 
     <!-- 构建日志弹窗 -->
     <el-dialog
@@ -45,6 +56,19 @@
       </div>
       <div class="build-logs" ref="buildLogsRef">
         <pre v-for="(log, index) in buildLogs" :key="index">{{ log }}</pre>
+      </div>
+    </el-dialog>
+
+    <!-- 操作日志弹窗 -->
+    <el-dialog
+      v-model="actionDialogVisible"
+      :title="actionDialogTitle"
+      width="800px"
+      :close-on-click-modal="false"
+      :before-close="handleCloseActionDialog"
+    >
+      <div class="build-logs" ref="actionLogsRef">
+        <pre v-for="(log, index) in actionLogs" :key="index">{{ log }}</pre>
       </div>
     </el-dialog>
 
@@ -94,6 +118,7 @@
                         size="small" 
                         type="primary"
                         @click="handleContainerRestart(scope.row)"
+                        :disabled="isSelfProject"
                       >
                         重启
                       </el-button>
@@ -101,6 +126,7 @@
                         size="small" 
                         type="danger"
                         @click="handleContainerStop(scope.row)"
+                        :disabled="isSelfProject"
                       >
                         停止
                       </el-button>
@@ -113,16 +139,26 @@
             <el-tab-pane label="日志" name="logs">
               <div class="logs-container">
                 <div class="logs-header">
-                  <el-switch
-                    v-model="autoScroll"
-                    active-text="自动滚动"
-                  />
-                  <el-button @click="handleClearLogs" size="small">
-                    清空日志
-                  </el-button>
+                  <div class="logs-options">
+                    <el-switch
+                      v-model="autoScroll"
+                      active-text="自动滚动"
+                    />
+                    <el-input
+                      v-model="logFilter"
+                      placeholder="检索日志"
+                      style="width: 220px"
+                      size="small"
+                    />
+                  </div>
+                  <el-button @click="handleClearLogs" size="small">清空日志</el-button>
                 </div>
                 <div class="logs-content" ref="logsRef">
-                  <pre v-for="(log, index) in logs" :key="index" :class="log.type">{{ log.content }}</pre>
+                  <pre
+                    v-for="(log, index) in filteredLogs"
+                    :key="index"
+                    :class="log.level"
+                  ><template v-if="log.service"><span class="service" :style="{ color: log.serviceColor }">{{ log.service }}</span><span class="pipe"> | </span><span class="msg">{{ log.message }}</span></template><template v-else>{{ log.content }}</template></pre>
                 </div>
               </div>
             </el-tab-pane>
@@ -139,6 +175,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, CircleClose, Refresh } from '@element-plus/icons-vue'
 import api from '../api'
+import { useSseLogStream } from '../utils/sseLogStream'
 
 const route = useRoute()
 const router = useRouter()
@@ -154,9 +191,32 @@ const isSaving = ref(false)
 const autoScroll = ref(true)
 const logsRef = ref(null)
 const containerList = ref([])  // 修改为空数组，等待从后端获取数据
-const logs = ref([])  // 添加日志数组
-const logWebSocket = ref(null)  // 移动到这里统一声明
 const yamlContent = ref('')
+const {
+  logs,
+  logFilter,
+  filteredLogs,
+  start: startLogStream,
+  stop: stopLogStream,
+  clear: clearLogs,
+  pushLine: pushLogLine
+} = useSseLogStream({
+  autoScroll,
+  scrollElRef: logsRef,
+  makeEntry: (line) => {
+    const content = String(line || '')
+    const level = inferLogLevel(content)
+    const { service, message } = parseComposeLogLine(content)
+    return {
+      level,
+      content,
+      service,
+      message: service ? message : '',
+      serviceColor: service ? serviceColorFor(service) : ''
+    }
+  },
+  getSearchText: (l) => `${String(l?.service || '')} ${String(l?.message || '')} ${String(l?.content || '')}`
+})
 
 // 构建弹窗相关状态
 const buildDialogVisible = ref(false)
@@ -166,6 +226,14 @@ const buildLogs = ref([])
 const isBuildingLogs = ref(false)
 const buildEventSource = ref(null)
 const buildLogsRef = ref(null)
+
+const actionDialogVisible = ref(false)
+const actionDialogTitle = ref('')
+const actionLogs = ref([])
+const isActionRunning = ref(false)
+const actionEventSource = ref(null)
+const actionLogsRef = ref(null)
+const isSelfProject = ref(false)
 
 // 返回按钮：根据管理模式跳转到对应页面（distributed: /projects，centralized: /compose）
 const goBack = () => {
@@ -177,10 +245,8 @@ const goBack = () => {
 const handleRefresh = async () => {
   isLoading.value = true
   try {
-    await Promise.all([
-      fetchContainers(),
-      fetchYamlContent()
-    ])
+    await fetchContainers()
+    await fetchYamlContent()
     ElMessage.success('刷新成功')
   } catch (error) {
     ElMessage.error('刷新失败')
@@ -193,6 +259,9 @@ const handleRefresh = async () => {
 const fetchContainers = async () => {
   try {
     const response = await api.compose.getStatus(projectName.value)
+    if (response && typeof response.isSelf !== 'undefined') {
+      isSelfProject.value = !!response.isSelf
+    }
     if (response && Array.isArray(response.containers)) {
       containerList.value = response.containers.map(container => ({
         name: container.name,
@@ -217,6 +286,10 @@ const fetchContainers = async () => {
 
 // 修改容器操作方法
 const handleContainerRestart = async (container) => {
+  if (isSelfProject.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     // 暂时没有单独重启容器的 API，先调用项目重启，或者需要后端增加单独重启容器接口
     // 这里保持原有逻辑，但提示可能需要优化
@@ -229,6 +302,10 @@ const handleContainerRestart = async (container) => {
 }
 
 const handleContainerStop = async (container) => {
+  if (isSelfProject.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   try {
     // 暂时没有单独停止容器的 API
     await api.compose.stop(projectName.value)
@@ -241,12 +318,20 @@ const handleContainerStop = async (container) => {
 
 // 修改项目操作方法
 const handleBuild = () => {
+  if (isSelfProject.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   buildDialogVisible.value = true
   buildLogs.value = []
   // 不重置 pullLatest，保留用户上次选择
 }
 
 const startBuild = () => {
+  if (isSelfProject.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   if (isBuildingLogs.value) return
   
   isBuildingLogs.value = true
@@ -332,57 +417,155 @@ const scrollToBuildBottom = () => {
 }
 
 const handleStart = async () => {
-  isStarting.value = true
-  ElMessage.info('正在发送启动指令...')
-  try {
-    await api.compose.start(projectName.value)
-    ElMessage.success('启动指令已发送，正在后台处理')
-    // 异步操作，无需立即设置为 true，等待 fetchContainers 更新
-    setTimeout(fetchContainers, 1000)
-    setTimeout(fetchContainers, 3000)
-    setTimeout(fetchContainers, 5000)
-  } catch (error) {
-    ElMessage.error('启动请求失败: ' + (error.response?.data?.error || error.message))
-  } finally {
-    isStarting.value = false
-  }
+  await runProjectAction('start')
 }
 
 const handleStop = async () => {
-  isStopping.value = true
-  ElMessage.info('正在发送停止指令...')
-  try {
-    await api.compose.stop(projectName.value)
-    ElMessage.success('停止指令已发送，正在后台处理')
-    setTimeout(fetchContainers, 1000)
-    setTimeout(fetchContainers, 3000)
-    setTimeout(fetchContainers, 5000)
-  } catch (error) {
-    ElMessage.error('停止请求失败: ' + (error.response?.data?.error || error.message))
-  } finally {
-    isStopping.value = false
-  }
+  await runProjectAction('stop')
 }
 
 const handleRestart = async () => {
-  isRestarting.value = true
-  ElMessage.info('正在发送重启指令...')
-  try {
-    await api.compose.restart(projectName.value)
-    ElMessage.success('重启指令已发送，正在后台处理')
-    setTimeout(fetchContainers, 1000)
-    setTimeout(fetchContainers, 3000)
-    setTimeout(fetchContainers, 5000)
-  } catch (error) {
-    ElMessage.error('重启请求失败: ' + (error.response?.data?.error || error.message))
-  } finally {
-    isRestarting.value = false
+  await runProjectAction('restart')
+}
+
+const scrollToActionBottom = () => {
+  if (!actionLogsRef.value) return
+  nextTick(() => {
+    actionLogsRef.value.scrollTop = actionLogsRef.value.scrollHeight
+  })
+}
+
+const closeActionEventSource = () => {
+  if (actionEventSource.value) {
+    try { actionEventSource.value.close() } catch {}
+    actionEventSource.value = null
   }
+  isActionRunning.value = false
+}
+
+const handleCloseActionDialog = (done) => {
+  if (isActionRunning.value) {
+    ElMessageBox.confirm('操作正在进行中，关闭窗口不会停止后台执行，确定关闭吗？')
+      .then(() => {
+        closeActionEventSource()
+        done()
+      })
+      .catch(() => {})
+  } else {
+    closeActionEventSource()
+    done()
+  }
+}
+
+const inferLogLevel = (line) => {
+  const raw = String(line || '')
+  const lower = raw.toLowerCase()
+  if (lower.startsWith('error:')) return 'error'
+  if (lower.startsWith('warning:')) return 'warning'
+  if (lower.startsWith('success:')) return 'success'
+  if (lower.startsWith('info:')) return 'info'
+  if (lower.includes('error') || lower.includes('err')) return 'error'
+  if (lower.includes('warn')) return 'warning'
+  return 'info'
+}
+
+const hashString = (s) => {
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h) + s.charCodeAt(i)
+    h |= 0
+  }
+  return h
+}
+
+const serviceColorFor = (service) => {
+  const palette = [
+    '--el-color-primary',
+    '--el-color-success',
+    '--el-color-warning',
+    '--el-color-danger',
+    '--el-color-info'
+  ]
+  const idx = Math.abs(hashString(service || '')) % palette.length
+  return `var(${palette[idx]})`
+}
+
+const parseComposeLogLine = (line) => {
+  const raw = String(line || '')
+  const split = raw.split(' | ')
+  if (split.length >= 2) {
+    const service = split[0].trim()
+    const message = split.slice(1).join(' | ')
+    if (service) {
+      return { service, message }
+    }
+  }
+  return { service: '', message: '' }
+}
+
+const runProjectAction = async (action) => {
+  if (isSelfProject.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
+  const titleMap = { start: '项目启动', stop: '项目停止', restart: '项目重启' }
+  actionDialogTitle.value = titleMap[action] || '项目操作'
+  actionDialogVisible.value = true
+  actionLogs.value = []
+  isActionRunning.value = true
+
+  if (actionEventSource.value) {
+    try { actionEventSource.value.close() } catch {}
+    actionEventSource.value = null
+  }
+
+  if (action === 'start') isStarting.value = true
+  if (action === 'stop') isStopping.value = true
+  if (action === 'restart') isRestarting.value = true
+
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/compose/${projectName.value}/${action}/events?token=${encodeURIComponent(token)}`
+  const es = new EventSource(url)
+  actionEventSource.value = es
+
+  es.addEventListener('log', (event) => {
+    actionLogs.value.push(event.data)
+    scrollToActionBottom()
+    if (String(event.data || '').includes('success:')) {
+      closeActionEventSource()
+      setTimeout(fetchContainers, 500)
+    }
+    if (String(event.data || '').includes('error:')) {
+      closeActionEventSource()
+    }
+  })
+
+  es.onerror = () => {
+    actionLogs.value.push('error: 连接错误')
+    closeActionEventSource()
+  }
+
+  const finalize = () => {
+    if (action === 'start') isStarting.value = false
+    if (action === 'stop') isStopping.value = false
+    if (action === 'restart') isRestarting.value = false
+  }
+
+  const stopWatcher = watch(isActionRunning, (running) => {
+    if (!running) {
+      finalize()
+      stopWatcher()
+    }
+  }, { immediate: true })
 }
 
 // 修改获取 YAML 配置的方法
 const fetchYamlContent = async () => {
   try {
+    if (isSelfProject.value) {
+      yamlContent.value = '容器化部署模式下，不支持查看自身项目配置'
+      return
+    }
     console.log('api.compose:', api.compose); // 添加调试日志
     const response = await api.compose.getYaml(projectName.value)
     console.log('YAML Response:', response); // 添加调试日志
@@ -405,6 +588,10 @@ const fetchYamlContent = async () => {
 
 // 修改保存 YAML 的方法
 const handleSaveYaml = async () => {
+  if (isSelfProject.value) {
+    ElMessage.warning('容器化部署模式下，不支持操作自身项目')
+    return
+  }
   isSaving.value = true
   ElMessage.info('正在保存配置...')
   try {
@@ -422,16 +609,11 @@ onMounted(async () => {
   isLoading.value = true
   try {
     // 并行获取项目信息和YAML配置
-    await Promise.all([
-      fetchContainers(),
-      fetchYamlContent()
-    ])
+    await fetchContainers()
+    await fetchYamlContent()
 
     // 设置定时刷新
     refreshTimer = setInterval(fetchContainers, 5000)
-    
-    // 设置WebSocket连接
-    setupWebSocket()
   } catch (error) {
     console.error('初始化失败:', error)
   } finally {
@@ -442,88 +624,27 @@ onMounted(async () => {
 // 添加定时刷新
 let refreshTimer = null
 
-onUnmounted(() => {
-  // 清理定时器
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-  
-  // 清理 EventSource
-  if (logWebSocket.value) {
-    logWebSocket.value.close()
-    logWebSocket.value = null
-  }
-  
-  // 清理数据
-  logs.value = []
-  containerList.value = []
-  yamlContent.value = ''
-})
-
-// 替换 setupWebSocket 函数
-const setupWebSocket = () => {
-  if (logWebSocket.value) {
-    logWebSocket.value.close()
-  }
-
-  const token = localStorage.getItem('token')
-  const tokenParam = token ? `?token=${encodeURIComponent(token)}` : ''
-  const eventSource = new EventSource(`/api/compose/${projectName.value}/logs${tokenParam}`)
-  
-  eventSource.onopen = () => {
-    console.log('SSE connection established')
-    logs.value.push({
-      type: 'info',
-      content: '已连接到日志服务'
-    })
-  }
-  
-  eventSource.onmessage = (event) => {
-    const data = event.data
-    if (data.startsWith('error:')) {
-      logs.value.push({
-        type: 'error',
-        content: data.substring(6)
-      })
-    } else {
-      logs.value.push({
-        type: 'info',
-        content: data
-      })
-    }
-    
-    if (autoScroll.value) {
-      scrollToBottom()
-    }
-  }
-  
-  eventSource.onerror = (error) => {
-    console.error('SSE error:', error)
-    logs.value.push({
-      type: 'error',
-      content: '日志连接错误'
-    })
-    eventSource.close()
-  }
-
-  // 保存 EventSource 实例以便后续清理
-  logWebSocket.value = eventSource
+const stopLogsStream = () => {
+  stopLogStream()
 }
 
-// 修改 onUnmounted 钩子中的清理代码
-onUnmounted(() => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-  }
-  if (logWebSocket.value) {
-    logWebSocket.value.close()
+const startLogsStream = () => {
+  const token = localStorage.getItem('token')
+  const tokenParam = token ? `?token=${encodeURIComponent(token)}` : ''
+  startLogStream(`/api/compose/${projectName.value}/logs${tokenParam}`, { reset: true })
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'logs') {
+    startLogsStream()
+  } else {
+    stopLogsStream()
   }
 })
 
 // 添加清理日志的方法
 const handleClearLogs = () => {
-  logs.value = []
+  clearLogs()
 }
 
 // 添加自动滚动相关代码
@@ -540,6 +661,22 @@ watch(logs, () => {
   if (autoScroll.value) {
     scrollToBottom()
   }
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  stopLogsStream()
+  if (buildEventSource.value) {
+    try { buildEventSource.value.close() } catch {}
+    buildEventSource.value = null
+  }
+  closeActionEventSource()
+  clearLogs()
+  containerList.value = []
+  yamlContent.value = ''
 })
 </script>
 
@@ -563,6 +700,11 @@ watch(logs, () => {
   border-radius: 12px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   flex-shrink: 0;
+}
+
+.self-resource-alert {
+  margin: 0 0 12px;
+  border-radius: 12px;
 }
 
 .header-left {
@@ -689,11 +831,17 @@ watch(logs, () => {
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
+.logs-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .logs-content {
   flex: 1;
   overflow-y: auto;
-  background: #1e1e1e;
-  color: #e2e8f0;
+  background: var(--el-bg-color-overlay);
+  color: var(--el-text-color-primary);
   padding: 16px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
@@ -706,16 +854,28 @@ watch(logs, () => {
   word-wrap: break-word;
 }
 
+.logs-content .service {
+  font-weight: 600;
+}
+
+.logs-content .pipe {
+  color: var(--el-text-color-secondary);
+}
+
 .logs-content .error {
-  color: #ef4444;
+  color: var(--el-color-danger);
 }
 
 .logs-content .success {
-  color: #22c55e;
+  color: var(--el-color-success);
+}
+
+.logs-content .warning {
+  color: var(--el-color-warning);
 }
 
 .logs-content .info {
-  color: #94a3b8;
+  color: var(--el-text-color-secondary);
 }
 
 .build-options {
@@ -727,8 +887,8 @@ watch(logs, () => {
 .build-logs {
   height: 400px;
   overflow-y: auto;
-  background: #1e1e1e;
-  color: #e2e8f0;
+  background: var(--el-bg-color-overlay);
+  color: var(--el-text-color-primary);
   padding: 16px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   border: 1px solid var(--el-border-color-lighter);

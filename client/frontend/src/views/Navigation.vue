@@ -16,6 +16,10 @@
           <template #icon><el-icon><Delete /></el-icon></template>
           {{ showDeleted ? '显示正常' : '回收站' }}
         </el-button>
+        <el-button type="danger" @click="handleRebuild" plain size="medium">
+          <template #icon><el-icon><Refresh /></el-icon></template>
+          重新识别
+        </el-button>
         <el-button @click="handleRefresh" plain size="medium">
           <template #icon><el-icon><Refresh /></el-icon></template>
           刷新
@@ -547,6 +551,17 @@ const openLan = (app) => {
 }
 const openWan = (app) => {
   openApp(app.wan_url)
+}
+
+const handleRebuild = async () => {
+  try {
+    await ElMessageBox.confirm('将清空导航数据库并按当前容器重新生成，确定继续？', '提示', { type: 'warning' })
+    await api.system.navigationRebuild()
+    ElMessage.success('导航已重新识别')
+    fetchApps()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('重新识别失败')
+  }
 }
 </script>
 

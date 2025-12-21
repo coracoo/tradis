@@ -377,6 +377,8 @@ import { QuestionFilled, ArrowRight, ArrowLeft, Plus, Remove, Refresh, MagicStic
 import { ElMessage, ElMessageBox, ElImageViewer } from 'element-plus'
 import api from '../api'
 import request from '../utils/request'
+import { useSseLogStream } from '../utils/sseLogStream'
+import { composeProjectNamePattern, isValidComposeProjectName, normalizeComposeProjectName } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -393,12 +395,83 @@ const formRef = ref(null)
 
 // 部署日志相关
 const showLogs = ref(false)
-const deployLogs = ref([])
 const logsContent = ref(null)
 const deploySuccess = ref(false)
 const activeTab = ref('deploy')
 const allocating = ref(false)
 const appStoreBase = ref('')
+const deployAutoScroll = ref(true)
+const taskLogSetRef = shallowRef(null)
+const taskTimeoutRef = shallowRef(null)
+
+const {
+  logs: deployLogs,
+  start: startDeployTaskStream,
+  stop: stopDeployTaskStream,
+  clear: clearDeployLogs,
+  pushLine: pushDeployLine
+} = useSseLogStream({
+  autoScroll: deployAutoScroll,
+  scrollElRef: logsContent,
+  makeEntry: (payload) => {
+    if (payload && typeof payload === 'object' && payload.type && payload.message) return payload
+    const text = String(payload || '')
+    const lower = text.toLowerCase()
+    const t = lower.includes('error') ? 'error' : (lower.includes('warn') ? 'warning' : 'info')
+    return { type: t, message: text, time: new Date().toISOString() }
+  },
+  getSearchText: (l) => `${String(l?.type || '')} ${String(l?.message || '')}`,
+  onOpenLine: '',
+  onErrorLine: '',
+  onMessage: (event, { pushLine, stop }) => {
+    let data = null
+    try {
+      data = JSON.parse(event.data)
+    } catch (e) {
+      pushLine({ type: 'warning', message: String(event.data || ''), time: new Date().toISOString() })
+      return
+    }
+
+    if (data && data.type === 'result') {
+      if (taskTimeoutRef.value) {
+        clearTimeout(taskTimeoutRef.value)
+        taskTimeoutRef.value = null
+      }
+      stop()
+      deploying.value = false
+      if (data.status === 'success') {
+        deploySuccess.value = true
+        pushLine({ type: 'success', message: '部署任务完成！', time: new Date().toISOString() })
+        ElMessage.success('部署成功')
+      } else {
+        pushLine({ type: 'error', message: `部署失败: ${data.message || '未知错误'}`, time: new Date().toISOString() })
+        ElMessage.error('部署失败')
+      }
+      return
+    }
+
+    const logSet = taskLogSetRef.value
+    const logKey = `${data?.type || 'info'}:${data?.message || ''}`
+    if (logSet && logSet.has(logKey)) return
+    if (logSet) logSet.add(logKey)
+
+    pushLine({
+      type: data?.type || 'info',
+      message: `[${new Date(data?.time || Date.now()).toLocaleTimeString()}] ${data?.message || ''}`,
+      time: data?.time || new Date().toISOString()
+    })
+  },
+  onError: ({ pushLine, stop }) => {
+    if (!deploying.value) return
+    if (taskTimeoutRef.value) {
+      clearTimeout(taskTimeoutRef.value)
+      taskTimeoutRef.value = null
+    }
+    pushLine({ type: 'error', message: '日志连接中断', time: new Date().toISOString() })
+    stop()
+    deploying.value = false
+  }
+})
 
 // 图片预览相关
 const showImageViewer = ref(false)
@@ -696,15 +769,7 @@ const submitDeploy = async () => {
     }
 
     const rawName = project.value.name || ''
-
-    const normalizeComposeName = (name) => {
-      const lower = String(name || '').toLowerCase()
-      const sanitized = lower.replace(/[^a-z0-9_-]/g, '')
-      const trimmed = sanitized.replace(/^[^a-z0-9]+/, '')
-      return trimmed || 'project'
-    }
-
-    const projectName = normalizeComposeName(rawName)
+    let projectName = normalizeComposeProjectName(rawName)
 
     if (projectName !== rawName) {
       try {
@@ -726,19 +791,30 @@ const submitDeploy = async () => {
     try {
       const installedRes = await api.compose.list()
       const installedList = installedRes.data || installedRes
-      if (installedList.some(p => p.name === projectName)) {
-         await ElMessageBox.confirm(
-          `项目 "${projectName}" 已存在，继续部署将覆盖原有项目。是否继续？`,
-          '项目已存在',
-          {
-            confirmButtonText: '覆盖部署',
-            cancelButtonText: '取消',
-            type: 'warning'
-          }
-        )
+      const exists = (name) => installedList.some(p => p.name === name)
+
+      while (exists(projectName)) {
+        try {
+          const { value } = await ElMessageBox.prompt(
+            `项目${projectName}已存在，请输入新的项目名（文件名）以继续安装`,
+            '项目已存在',
+            {
+              confirmButtonText: '继续安装',
+              cancelButtonText: '取消',
+              inputValue: `${projectName}-2`,
+              inputPattern: composeProjectNamePattern,
+              inputErrorMessage: '仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头'
+            }
+          )
+
+          const nextName = String(value || '').toLowerCase().trim()
+          if (!isValidComposeProjectName(nextName)) continue
+          projectName = nextName
+        } catch (e) {
+          return
+        }
       }
     } catch (error) {
-       if (error === 'cancel') return
        console.warn('Check installed projects failed', error)
     }
 
@@ -747,10 +823,16 @@ const submitDeploy = async () => {
     deploying.value = true
     deploySuccess.value = false
     deployLogs.value = []
+    taskLogSetRef.value = new Set()
+    if (taskTimeoutRef.value) {
+      clearTimeout(taskTimeoutRef.value)
+      taskTimeoutRef.value = null
+    }
+    stopDeployTaskStream()
 
     // 3. 调用部署接口
     const deployData = {
-      projectId: rawName,
+      projectId: String(projectId),
       projectName,
       compose: yamlContent,
       env: finalEnv, // 兼容旧逻辑
@@ -770,80 +852,25 @@ const submitDeploy = async () => {
       ElMessage.success('部署任务已提交，正在执行...')
       
       // 4. 使用 SSE 监听任务进度
-      const token = localStorage.getItem('token')
-      const eventSource = new EventSource(
-        `/api/appstore/tasks/${taskId}/events?token=${token}`
-      )
-      
-      // 用于去重
-      const logSet = new Set()
+      const token = localStorage.getItem('token') || ''
+      const url = `/api/appstore/tasks/${taskId}/events?token=${encodeURIComponent(token)}`
 
-      // 添加超时处理 (防止任务卡死或SSE断连)
-      const timeout = setTimeout(async () => {
-        deployLogs.value.push({
-          type: 'warning',
-          message: '日志连接超时，请稍后在容器列表查看状态'
-        })
-        eventSource.close()
+      taskTimeoutRef.value = setTimeout(() => {
+        pushDeployLine({ type: 'warning', message: '日志连接超时，请稍后在容器列表查看状态', time: new Date().toISOString() })
+        stopDeployTaskStream()
         deploying.value = false
-      }, 600000) // 10分钟超时
+      }, 600000)
 
-      eventSource.onmessage = async (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          
-          if (data.type === 'result') {
-            // 任务结束
-            clearTimeout(timeout)
-            eventSource.close()
-            deploying.value = false
-            
-            if (data.status === 'success') {
-              deploySuccess.value = true
-              deployLogs.value.push({ type: 'success', message: '部署任务完成！' })
-              ElMessage.success('部署成功')
-            } else {
-              deployLogs.value.push({ type: 'error', message: `部署失败: ${data.message || '未知错误'}` })
-              ElMessage.error('部署失败')
-            }
-          } else {
-            // 普通日志
-            const logKey = `${data.type}:${data.message}`
-            if (!logSet.has(logKey)) {
-               logSet.add(logKey)
-               deployLogs.value.push({
-                type: data.type,
-                message: `[${new Date(data.time).toLocaleTimeString()}] ${data.message}`
-              })
-            }
-          }
-
-          // 自动滚动到底部
-          nextTick(() => {
-            if (logsContent.value) {
-              logsContent.value.scrollTop = logsContent.value.scrollHeight
-            }
-          })
-        } catch (error) {
-          console.error('解析消息失败', error)
-        }
-      }
-
-      eventSource.onerror = (event) => {
-        if (deploying.value && eventSource.readyState === EventSource.CLOSED) {
-           clearTimeout(timeout)
-           deployLogs.value.push({
-             type: 'error',
-             message: '日志连接中断'
-           })
-           deploying.value = false
-           eventSource.close()
-        }
-      }
+      startDeployTaskStream(url, { reset: false })
 
     } catch (error) {
       console.error(error)
       deploying.value = false
+      stopDeployTaskStream()
+      if (taskTimeoutRef.value) {
+        clearTimeout(taskTimeoutRef.value)
+        taskTimeoutRef.value = null
+      }
       ElMessage.error('部署失败: ' + (error.response?.data?.error || error.message))
     }
 
@@ -851,6 +878,11 @@ const submitDeploy = async () => {
     console.error(error)
     ElMessage.error('准备部署失败: ' + error.message)
     deploying.value = false
+    stopDeployTaskStream()
+    if (taskTimeoutRef.value) {
+      clearTimeout(taskTimeoutRef.value)
+      taskTimeoutRef.value = null
+    }
   }
 }
 

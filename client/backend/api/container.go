@@ -37,6 +37,7 @@ func RegisterContainerRoutes(r *gin.RouterGroup) {
 		group.POST("/prune", pruneContainers) // 注册清理容器路由，注意要放在 :id 路由之前，避免冲突，或者使用不同的路径
 		group.DELETE("/:id", removeContainer)
 		group.GET("/:id/logs", getContainerLogs)
+		group.GET("/:id/logs/events", getContainerLogsEvents)
 		group.GET("/:id/terminal", containerTerminal)
 		group.GET("/:id/stats", getContainerStats)
 		group.GET("/:id/stats/stream", streamContainerStats)
@@ -45,6 +46,12 @@ func RegisterContainerRoutes(r *gin.RouterGroup) {
 
 // 清理停止的容器
 func pruneContainers(c *gin.Context) {
+	selfID, selfName, _, _ := getSelfIdentity()
+	if selfID != "" || selfName != "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "容器化部署模式下，禁止执行全局清理操作"})
+		return
+	}
+
 	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法连接到 Docker: " + err.Error()})
@@ -122,6 +129,16 @@ func ListContainers(c *gin.Context) {
 			runningTime = "未运行"
 		}
 
+		nameCandidate := ""
+		if len(container.Names) > 0 {
+			nameCandidate = strings.TrimPrefix(container.Names[0], "/")
+		}
+
+		var labels map[string]string
+		if inspect.Config != nil {
+			labels = inspect.Config.Labels
+		}
+
 		containerInfo := gin.H{
 			"Id":              container.ID,
 			"Names":           container.Names,
@@ -134,7 +151,8 @@ func ListContainers(c *gin.Context) {
 			"NetworkSettings": inspect.NetworkSettings,
 			"HostConfig":      inspect.HostConfig,
 			"RunningTime":     runningTime,
-			"Labels":          inspect.Config.Labels,
+			"Labels":          labels,
+			"isSelf":          isSelfOrProtectedContainer(container.ID, nameCandidate, container.Image, labels),
 		}
 		containersWithDetails = append(containersWithDetails, containerInfo)
 	}
@@ -145,6 +163,9 @@ func ListContainers(c *gin.Context) {
 // 获取单个容器的资源使用情况
 func getContainerStats(c *gin.Context) {
 	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 
 	cli, err := docker.NewDockerClient()
 	if err != nil {
@@ -204,11 +225,23 @@ func getContainerStats(c *gin.Context) {
 // 流式推送容器资源使用情况 (SSE)
 func streamContainerStats(c *gin.Context) {
 	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("X-Accel-Buffering", "no")
+
+	lastEventIDRaw := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	nextID := int64(1)
+	if lastEventIDRaw != "" {
+		if v, err := strconv.ParseInt(lastEventIDRaw, 10, 64); err == nil && v >= 0 {
+			nextID = v + 1
+		}
+	}
 
 	cli, err := docker.NewDockerClient()
 	if err != nil {
@@ -302,7 +335,8 @@ func streamContainerStats(c *gin.Context) {
 		}
 
 		b, _ := json.Marshal(payload)
-		c.Writer.Write([]byte("data: " + string(b) + "\n\n"))
+		c.Writer.Write([]byte(fmt.Sprintf("id: %d\ndata: %s\n\n", nextID, string(b))))
+		nextID++
 		if f, ok := c.Writer.(http.Flusher); ok {
 			f.Flush()
 		} else {
@@ -397,10 +431,19 @@ func GetContainer(c *gin.Context) {
 		imageConfig = imageInspect.Config
 	}
 
+	var env []string
+	var labels map[string]string
+	var configImage string
+	if inspect.Config != nil {
+		env = inspect.Config.Env
+		labels = inspect.Config.Labels
+		configImage = inspect.Config.Image
+	}
+
 	containerInfo := gin.H{
 		"Id":              inspect.ID,
 		"Name":            inspect.Name, // 注意：inspect.Name 通常包含前导斜杠
-		"Image":           inspect.Config.Image,
+		"Image":           configImage,
 		"State":           inspect.State.Status,
 		"Status":          inspect.State.Status, // 兼容前端
 		"Created":         inspect.Created,
@@ -413,10 +456,11 @@ func GetContainer(c *gin.Context) {
 		"RunningTime":     runningTime,
 		"Path":            inspect.Path,
 		"Args":            inspect.Args,
-		"Config":          inspect.Config, // 包含当前的 Cmd, Entrypoint, Env 等
-		"ImageConfig":     imageConfig,    // 新增：包含镜像默认的 Cmd, Entrypoint 等
-		"Env":             inspect.Config.Env,
-		"Labels":          inspect.Config.Labels,
+		"Config":          inspect.Config,
+		"ImageConfig":     imageConfig,
+		"Env":             env,
+		"Labels":          labels,
+		"isSelf":          isSelfOrProtectedContainer(inspect.ID, strings.TrimPrefix(inspect.Name, "/"), configImage, labels),
 	}
 
 	c.JSON(http.StatusOK, containerInfo)
@@ -424,6 +468,10 @@ func GetContainer(c *gin.Context) {
 
 // 重启容器
 func restartContainer(c *gin.Context) {
+	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -431,7 +479,6 @@ func restartContainer(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
 	if err := cli.ContainerRestart(context.Background(), id, container.StopOptions{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -442,6 +489,10 @@ func restartContainer(c *gin.Context) {
 
 // 暂停容器
 func pauseContainer(c *gin.Context) {
+	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -449,7 +500,6 @@ func pauseContainer(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
 	if err := cli.ContainerPause(context.Background(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -460,6 +510,10 @@ func pauseContainer(c *gin.Context) {
 
 // 恢复容器
 func unpauseContainer(c *gin.Context) {
+	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -467,7 +521,6 @@ func unpauseContainer(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
 	if err := cli.ContainerUnpause(context.Background(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -478,6 +531,10 @@ func unpauseContainer(c *gin.Context) {
 
 // 启动容器
 func startContainer(c *gin.Context) {
+	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法连接到 Docker: " + err.Error()})
@@ -485,7 +542,6 @@ func startContainer(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
 	// 先检查容器是否存在
 	inspect, err := cli.ContainerInspect(context.Background(), id)
 	if err != nil {
@@ -533,6 +589,10 @@ func startContainer(c *gin.Context) {
 
 // 停止容器
 func stopContainer(c *gin.Context) {
+	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 	cli, err := docker.NewDockerClient()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -540,7 +600,6 @@ func stopContainer(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
 	// 先检查容器是否存在
 	_, err = cli.ContainerInspect(context.Background(), id)
 	if err != nil {
@@ -563,6 +622,10 @@ func stopContainer(c *gin.Context) {
 
 // 删除容器
 func removeContainer(c *gin.Context) {
+	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 
 	cli, err := docker.NewDockerClient()
 	if err != nil {
@@ -571,7 +634,6 @@ func removeContainer(c *gin.Context) {
 	}
 	defer cli.Close()
 
-	id := c.Param("id")
 	var hostPorts []int
 	inspect, ierr := cli.ContainerInspect(context.Background(), id)
 	if ierr == nil {
@@ -755,6 +817,9 @@ type RenameContainerRequest struct {
 // 这里我们提供一个 rename 接口，直接调用 Docker 的 rename API
 func renameContainer(c *gin.Context) {
 	id := c.Param("id")
+	if forbidIfSelfContainer(c, id) {
+		return
+	}
 	var req RenameContainerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})

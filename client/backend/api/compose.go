@@ -3,14 +3,18 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -28,6 +32,290 @@ func getProjectsBaseDir() string {
 	return settings.GetProjectRoot()
 }
 
+func normalizeComposeBindMountsForHost(composeContent string, hostProjectDir string) (string, error) {
+	hostProjectDir = strings.TrimSpace(hostProjectDir)
+	if hostProjectDir == "" {
+		return composeContent, nil
+	}
+
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &root); err != nil {
+		return "", err
+	}
+
+	servicesRaw, ok := root["services"]
+	if !ok {
+		return composeContent, nil
+	}
+	services, ok := servicesRaw.(map[string]interface{})
+	if !ok {
+		return composeContent, nil
+	}
+
+	rewriteSource := func(source string) (string, bool) {
+		src := strings.TrimSpace(source)
+		if src == "" {
+			return source, false
+		}
+		if src == "." {
+			return filepath.Clean(hostProjectDir), true
+		}
+		if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+			return filepath.Clean(filepath.Join(hostProjectDir, src)), true
+		}
+		return source, false
+	}
+
+	for _, svcRaw := range services {
+		svc, ok := svcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		volRaw, ok := svc["volumes"]
+		if !ok {
+			continue
+		}
+		vols, ok := volRaw.([]interface{})
+		if !ok {
+			continue
+		}
+
+		for i := range vols {
+			switch v := vols[i].(type) {
+			case string:
+				parts := strings.Split(v, ":")
+				if len(parts) < 2 {
+					continue
+				}
+				newSrc, changed := rewriteSource(parts[0])
+				if !changed {
+					continue
+				}
+				parts[0] = newSrc
+				vols[i] = strings.Join(parts, ":")
+			case map[string]interface{}:
+				srcVal, ok := v["source"]
+				if !ok {
+					continue
+				}
+				srcStr, ok := srcVal.(string)
+				if !ok {
+					continue
+				}
+				newSrc, changed := rewriteSource(srcStr)
+				if !changed {
+					continue
+				}
+				v["source"] = newSrc
+				vols[i] = v
+			}
+		}
+
+		svc["volumes"] = vols
+	}
+
+	out, err := yaml.Marshal(root)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+var selfIdentityOnce sync.Once
+var selfContainerID string
+var selfContainerName string
+var selfComposeProject string
+var selfComposeDirName string
+
+const protectedComposeProjectName = "tradis"
+const protectedImageRepo = "coracoo/tradis"
+
+func isProtectedImage(image string) bool {
+	v := strings.TrimSpace(image)
+	if v == "" {
+		return false
+	}
+	return v == protectedImageRepo || strings.HasPrefix(v, protectedImageRepo+":") || strings.HasPrefix(v, protectedImageRepo+"@")
+}
+
+func isProtectedLabels(labels map[string]string) bool {
+	if len(labels) == 0 {
+		return false
+	}
+	return strings.TrimSpace(labels["com.docker.compose.project"]) == protectedComposeProjectName
+}
+
+func isProtectedContainer(image string, labels map[string]string) bool {
+	return isProtectedImage(image) || isProtectedLabels(labels)
+}
+
+func isSelfOrProtectedContainer(containerID string, containerName string, image string, labels map[string]string) bool {
+	if containerID != "" && isSelfContainerID(containerID) {
+		return true
+	}
+	if containerName != "" && isSelfContainerID(containerName) {
+		return true
+	}
+	return isProtectedContainer(image, labels)
+}
+
+func getSelfIdentity() (containerID string, containerName string, composeProject string, composeDirName string) {
+	selfIdentityOnce.Do(func() {
+		id := detectSelfContainerID()
+		if id == "" {
+			return
+		}
+
+		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		if err != nil {
+			return
+		}
+		defer cli.Close()
+
+		inspect, err := cli.ContainerInspect(context.Background(), id)
+		if err != nil {
+			if len(id) >= 8 {
+				containers, listErr := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
+				if listErr == nil {
+					for _, ctr := range containers {
+						if strings.HasPrefix(ctr.ID, id) {
+							inspect, err = cli.ContainerInspect(context.Background(), ctr.ID)
+							if err == nil {
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
+
+		selfContainerID = inspect.ID
+		selfContainerName = strings.TrimPrefix(inspect.Name, "/")
+		if inspect.Config != nil && inspect.Config.Labels != nil {
+			selfComposeProject = strings.TrimSpace(inspect.Config.Labels["com.docker.compose.project"])
+			workingDir := strings.TrimSpace(inspect.Config.Labels["com.docker.compose.project.working_dir"])
+			if workingDir != "" {
+				selfComposeDirName = filepath.Base(workingDir)
+			} else {
+				configFiles := strings.TrimSpace(inspect.Config.Labels["com.docker.compose.project.config_files"])
+				if configFiles != "" {
+					selfComposeDirName = filepath.Base(filepath.Dir(configFiles))
+				}
+			}
+		}
+	})
+	return selfContainerID, selfContainerName, selfComposeProject, selfComposeDirName
+}
+
+func detectSelfContainerID() string {
+	hostname, _ := os.Hostname()
+	h := strings.TrimSpace(strings.ToLower(hostname))
+	idRe := regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+	if idRe.MatchString(h) {
+		return h
+	}
+
+	cgroupBytes, err := os.ReadFile("/proc/self/cgroup")
+	if err == nil {
+		lines := strings.Split(string(cgroupBytes), "\n")
+		findRe := regexp.MustCompile(`([0-9a-f]{64}|[0-9a-f]{12})`)
+		for _, line := range lines {
+			l := strings.ToLower(line)
+			if !strings.Contains(l, "docker") && !strings.Contains(l, "kubepods") && !strings.Contains(l, "containerd") {
+				continue
+			}
+			m := findRe.FindStringSubmatch(l)
+			if len(m) > 1 {
+				return m[1]
+			}
+		}
+	}
+
+	return ""
+}
+
+func isSelfContainerID(id string) bool {
+	selfID, selfName, _, _ := getSelfIdentity()
+	if selfID == "" && selfName == "" {
+		return false
+	}
+	raw := strings.TrimSpace(strings.TrimPrefix(id, "/"))
+	if raw == "" {
+		return false
+	}
+	if selfName != "" && raw == selfName {
+		return true
+	}
+	if selfID == "" {
+		return false
+	}
+	return raw == selfID || strings.HasPrefix(selfID, raw) || strings.HasPrefix(raw, selfID)
+}
+
+func forbidIfSelfContainer(c *gin.Context, containerID string) bool {
+	if isSelfContainerID(containerID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "容器化部署模式下，禁止管理自身容器"})
+		return true
+	}
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return false
+	}
+	defer cli.Close()
+
+	inspect, err := cli.ContainerInspect(context.Background(), containerID)
+	if err != nil {
+		return false
+	}
+
+	if inspect.Config != nil && isProtectedContainer(inspect.Config.Image, inspect.Config.Labels) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "容器化部署模式下，禁止管理自身容器"})
+		return true
+	}
+
+	return false
+}
+
+func isSelfProjectName(name string) bool {
+	if strings.TrimSpace(name) == protectedComposeProjectName {
+		return true
+	}
+	_, _, composeProject, composeDir := getSelfIdentity()
+	if composeProject == "" && composeDir == "" {
+		return false
+	}
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return false
+	}
+	return (composeProject != "" && n == composeProject) || (composeDir != "" && n == composeDir)
+}
+
+func forbidIfSelfProject(c *gin.Context, projectName string) bool {
+	if !isSelfProjectName(projectName) {
+		return false
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "容器化部署模式下，禁止管理自身项目"})
+	return true
+}
+
+var composeNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func validateComposeProjectName(raw string) (string, bool) {
+	name := strings.TrimSpace(strings.ToLower(raw))
+	if name == "" {
+		return "", false
+	}
+	if !composeNameRe.MatchString(name) {
+		return "", false
+	}
+	return name, true
+}
+
 // ComposeProject 定义项目结构
 type ComposeProject struct {
 	Name       string    `json:"name"`
@@ -37,6 +325,114 @@ type ComposeProject struct {
 	Containers int       `json:"containers"`
 	Status     string    `json:"status"`
 	CreateTime time.Time `json:"createTime"`
+	IsSelf     bool      `json:"isSelf"`
+}
+
+func setSSEHeaders(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("X-Accel-Buffering", "no")
+}
+
+func sseNextIDFromLastEventID(c *gin.Context) int64 {
+	raw := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	if raw == "" {
+		return 1
+	}
+	last, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || last < 0 {
+		return 1
+	}
+	return last + 1
+}
+
+func sseWriteStringEvent(c *gin.Context, id int64, event string, data string) {
+	_, _ = fmt.Fprintf(c.Writer, "id: %d\n", id)
+	if event != "" && event != "message" {
+		_, _ = fmt.Fprintf(c.Writer, "event: %s\n", event)
+	}
+
+	payload := strings.ReplaceAll(string(data), "\r\n", "\n")
+	payload = strings.TrimRight(payload, "\n")
+	if payload == "" {
+		_, _ = c.Writer.WriteString("data:\n\n")
+		c.Writer.Flush()
+		return
+	}
+
+	for _, line := range strings.Split(payload, "\n") {
+		_, _ = fmt.Fprintf(c.Writer, "data: %s\n", line)
+	}
+	_, _ = c.Writer.WriteString("\n")
+	c.Writer.Flush()
+}
+
+func sseWriteJSONEvent(c *gin.Context, id int64, event string, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		sseWriteStringEvent(c, id, event, fmt.Sprintf(`{"type":"error","message":"marshal failed: %s"}`, err.Error()))
+		return
+	}
+	sseWriteStringEvent(c, id, event, string(b))
+}
+
+func runCommandStreamLines(ctx context.Context, dir string, env []string, args []string, onLine func(string)) error {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	pr, pw := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(pw, stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(pw, stderr)
+	}()
+	go func() {
+		wg.Wait()
+		_ = pw.Close()
+	}()
+
+	scanner := bufio.NewScanner(pr)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		onLine(line)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runComposeStreamLines(ctx context.Context, projectDir string, args []string, onLine func(string)) error {
+	env := []string{"COMPOSE_PROGRESS=plain", "COMPOSE_NO_COLOR=1"}
+	return runCommandStreamLines(ctx, projectDir, env, args, onLine)
 }
 
 // findComposeFile 在项目目录中查找可用的 compose 配置文件
@@ -89,8 +485,11 @@ func RegisterComposeRoutes(r *gin.RouterGroup) {
 		group.GET("/list", listProjects)
 		group.GET("/deploy/events", deployEvents)
 		group.POST("/:name/start", startProject)
+		group.GET("/:name/start/events", startProjectEvents)
 		group.POST("/:name/stop", stopProject)
-		group.POST("/:name/restart", restartProject)         // 添加重启路由
+		group.GET("/:name/stop/events", stopProjectEvents)
+		group.POST("/:name/restart", restartProject) // 添加重启路由
+		group.GET("/:name/restart/events", restartProjectEvents)
 		group.POST("/:name/build", buildProject)             // 保留 POST 构建路由用于兼容
 		group.GET("/:name/build/events", buildProjectEvents) // 添加 SSE 构建路由
 		group.GET("/:name/status", getStackStatus)
@@ -104,7 +503,14 @@ func RegisterComposeRoutes(r *gin.RouterGroup) {
 
 // startProject 启动项目
 func startProject(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
 	// 异步执行启动命令
@@ -123,7 +529,14 @@ func startProject(c *gin.Context) {
 
 // stopProject 停止项目
 func stopProject(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
 	// 异步执行停止命令
@@ -142,7 +555,14 @@ func stopProject(c *gin.Context) {
 
 // restartProject 重启项目
 func restartProject(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
 	// 异步执行重启命令
@@ -159,59 +579,256 @@ func restartProject(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"message": "项目重启指令已发送"})
 }
 
-// buildProjectEvents 构建项目并推送 SSE 事件
-func buildProjectEvents(c *gin.Context) {
-	name := c.Param("name")
-	pull := c.Query("pull") == "true"
+// startProjectEvents 启动项目并推送 SSE 日志
+func startProjectEvents(c *gin.Context) {
+	setSSEHeaders(c)
+	nextID := sseNextIDFromLastEventID(c)
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		sseWriteStringEvent(c, nextID, "log", "error: 项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头")
+		return
+	}
+	if isSelfProjectName(name) {
+		sseWriteStringEvent(c, nextID, "log", "error: 容器化部署模式下，禁止管理自身项目")
+		return
+	}
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("Access-Control-Allow-Origin", "*")
-
-	messageChan := make(chan string)
+	messageChan := make(chan string, 128)
+	ctx := c.Request.Context()
 
 	go func() {
 		defer close(messageChan)
 
-		// 准备构建命令
-		args := []string{"compose", "build"}
+		send := func(line string) {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case messageChan <- line:
+				return
+			}
+		}
+
+		if _, err := os.Stat(projectDir); err != nil {
+			send("error: 项目目录不存在")
+			return
+		}
+
+		send("info: 开始启动服务...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "up", "-d"}, send); err != nil {
+			send(fmt.Sprintf("error: 启动失败: %s", err.Error()))
+			return
+		}
+
+		send("success: 启动完成")
+	}()
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case msg, ok := <-messageChan:
+			if !ok {
+				return false
+			}
+			sseWriteStringEvent(c, nextID, "log", msg)
+			nextID++
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
+}
+
+// stopProjectEvents 停止项目并推送 SSE 日志
+func stopProjectEvents(c *gin.Context) {
+	setSSEHeaders(c)
+	nextID := sseNextIDFromLastEventID(c)
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		sseWriteStringEvent(c, nextID, "log", "error: 项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头")
+		return
+	}
+	if isSelfProjectName(name) {
+		sseWriteStringEvent(c, nextID, "log", "error: 容器化部署模式下，禁止管理自身项目")
+		return
+	}
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+
+	messageChan := make(chan string, 128)
+	ctx := c.Request.Context()
+
+	go func() {
+		defer close(messageChan)
+
+		send := func(line string) {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case messageChan <- line:
+				return
+			}
+		}
+
+		if _, err := os.Stat(projectDir); err != nil {
+			send("error: 项目目录不存在")
+			return
+		}
+
+		send("info: 开始停止服务...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "stop", "-t", "2"}, send); err != nil {
+			send(fmt.Sprintf("error: 停止失败: %s", err.Error()))
+			return
+		}
+
+		send("success: 停止完成")
+	}()
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case msg, ok := <-messageChan:
+			if !ok {
+				return false
+			}
+			sseWriteStringEvent(c, nextID, "log", msg)
+			nextID++
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
+}
+
+// restartProjectEvents 重启项目并推送 SSE 日志
+func restartProjectEvents(c *gin.Context) {
+	setSSEHeaders(c)
+	nextID := sseNextIDFromLastEventID(c)
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		sseWriteStringEvent(c, nextID, "log", "error: 项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头")
+		return
+	}
+	if isSelfProjectName(name) {
+		sseWriteStringEvent(c, nextID, "log", "error: 容器化部署模式下，禁止管理自身项目")
+		return
+	}
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+
+	messageChan := make(chan string, 128)
+	ctx := c.Request.Context()
+
+	go func() {
+		defer close(messageChan)
+
+		send := func(line string) {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case messageChan <- line:
+				return
+			}
+		}
+
+		if _, err := os.Stat(projectDir); err != nil {
+			send("error: 项目目录不存在")
+			return
+		}
+
+		send("info: 开始重启服务...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "restart", "-t", "2"}, send); err != nil {
+			send(fmt.Sprintf("error: 重启失败: %s", err.Error()))
+			return
+		}
+
+		send("success: 重启完成")
+	}()
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case msg, ok := <-messageChan:
+			if !ok {
+				return false
+			}
+			sseWriteStringEvent(c, nextID, "log", msg)
+			nextID++
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
+}
+
+// buildProjectEvents 构建项目并推送 SSE 事件
+func buildProjectEvents(c *gin.Context) {
+	setSSEHeaders(c)
+	nextID := sseNextIDFromLastEventID(c)
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		sseWriteStringEvent(c, nextID, "log", "error: 项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头")
+		return
+	}
+	if isSelfProjectName(name) {
+		sseWriteStringEvent(c, nextID, "log", "error: 容器化部署模式下，禁止管理自身项目")
+		return
+	}
+	pull := c.Query("pull") == "true"
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+
+	messageChan := make(chan string, 128)
+	ctx := c.Request.Context()
+
+	go func() {
+		defer close(messageChan)
+
+		send := func(line string) {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case messageChan <- line:
+				return
+			}
+		}
+
+		if _, err := os.Stat(projectDir); err != nil {
+			send("error: 项目目录不存在")
+			return
+		}
+
 		if pull {
-			args = append(args, "--pull")
+			send("info: 开始拉取最新镜像...")
+			if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "pull"}, send); err != nil {
+				send(fmt.Sprintf("error: 拉取镜像失败: %s", err.Error()))
+				return
+			}
 		}
 
-		cmd := exec.Command("docker", args...)
-		cmd.Dir = projectDir
-
-		// 获取输出管道
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			messageChan <- fmt.Sprintf("error: 创建输出管道失败: %s", err.Error())
-			return
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			messageChan <- fmt.Sprintf("error: 创建错误管道失败: %s", err.Error())
+		send("info: 开始构建服务...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "build"}, send); err != nil {
+			send(fmt.Sprintf("error: 构建失败: %s", err.Error()))
 			return
 		}
 
-		if err := cmd.Start(); err != nil {
-			messageChan <- fmt.Sprintf("error: 启动构建失败: %s", err.Error())
+		send("info: 开始重新创建服务...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "up", "-d", "--remove-orphans", "--force-recreate"}, send); err != nil {
+			send(fmt.Sprintf("error: 重建失败: %s", err.Error()))
 			return
 		}
 
-		// 读取输出
-		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
-		for scanner.Scan() {
-			messageChan <- scanner.Text()
-		}
-
-		if err := cmd.Wait(); err != nil {
-			messageChan <- fmt.Sprintf("error: 构建失败: %s", err.Error())
-		} else {
-			messageChan <- "success: 构建完成"
-		}
+		send("success: 构建完成")
 	}()
 
 	// 发送事件
@@ -221,8 +838,8 @@ func buildProjectEvents(c *gin.Context) {
 			if !ok {
 				return false
 			}
-			// 简单的日志行作为 data 发送
-			c.SSEvent("log", msg)
+			sseWriteStringEvent(c, nextID, "log", msg)
+			nextID++
 			return true
 		case <-c.Request.Context().Done():
 			return false
@@ -232,7 +849,14 @@ func buildProjectEvents(c *gin.Context) {
 
 // buildProject 构建项目
 func buildProject(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
 	// 使用 docker compose build 命令构建项目
@@ -330,6 +954,7 @@ func listProjects(c *gin.Context) {
 				Containers: 0,
 				Status:     "已停止",
 				CreateTime: time.Unix(container.Created, 0),
+				IsSelf:     isSelfProjectName(projectName) || isSelfProjectName(displayName),
 			}
 		}
 
@@ -351,6 +976,9 @@ func listProjects(c *gin.Context) {
 				continue
 			}
 			projectName := entry.Name()
+			if projectName == "#recycle" {
+				continue
+			}
 			projectDir := filepath.Join(projectBaseDir, projectName)
 
 			// 如果该目录路径已经被某个项目使用（例如通过容器 label 推导出来），则不再重复创建项目
@@ -374,6 +1002,7 @@ func listProjects(c *gin.Context) {
 						Containers: 0,
 						Status:     "已停止",
 						CreateTime: info.ModTime(), // 使用目录修改时间作为创建时间
+						IsSelf:     isSelfProjectName(projectName),
 					}
 				}
 			}
@@ -412,34 +1041,45 @@ func listProjects(c *gin.Context) {
 
 // deployEvents 处理部署事件
 func deployEvents(c *gin.Context) {
-	projectName := c.Query("name")
+	projectNameRaw := c.Query("name")
 	compose := c.Query("compose")
 
-	if projectName == "" || compose == "" {
+	if projectNameRaw == "" || compose == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名称和配置内容不能为空"})
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("Access-Control-Allow-Origin", "*")
+	projectName, ok := validateComposeProjectName(projectNameRaw)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, projectName) {
+		return
+	}
 
-	messageChan := make(chan map[string]interface{})
+	setSSEHeaders(c)
+	nextID := sseNextIDFromLastEventID(c)
+
+	messageChan := make(chan map[string]interface{}, 128)
 	doneChan := make(chan bool)
+	ctx := c.Request.Context()
 
 	go func() {
 		defer close(messageChan)
 
 		sendMessage := func(msgType, msg string) {
+			payload := map[string]interface{}{
+				"type":    msgType,
+				"message": msg,
+			}
 			select {
+			case <-ctx.Done():
+				return
 			case <-doneChan: // 检查是否已完成
 				return
-			default:
-				messageChan <- map[string]interface{}{
-					"type":    msgType,
-					"message": msg,
-				}
+			case messageChan <- payload:
+				return
 			}
 		}
 
@@ -463,65 +1103,44 @@ func deployEvents(c *gin.Context) {
 			return
 		}
 
-		// 保存 compose 文件，使用从请求中获取的compose内容
-		if err := os.WriteFile(composePath, []byte(compose), 0644); err != nil {
+		composeToWrite := compose
+		if hostRoot := settings.GetHostProjectRoot(); hostRoot != "" {
+			hostProjectDir := filepath.Join(hostRoot, projectName)
+			if normalized, nerr := normalizeComposeBindMountsForHost(composeToWrite, hostProjectDir); nerr == nil {
+				composeToWrite = normalized
+			} else {
+				sendMessage("error", "处理相对路径失败: "+nerr.Error())
+				return
+			}
+		}
+
+		if err := os.WriteFile(composePath, []byte(composeToWrite), 0644); err != nil {
 			sendMessage("error", "保存配置文件失败: "+err.Error())
 			return
 		}
 
-		sendMessage("info", "正在启动服务...")
-
-		// 使用 docker compose 命令
-		cmd := exec.Command("docker", "compose", "up", "-d")
-		cmd.Dir = projectDir
-
-		// 获取命令的标准输出和错误输出管道
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			sendMessage("error", "创建输出管道失败: "+err.Error())
-			return
-		}
-		stderr, stderrErr := cmd.StderrPipe()
-		if stderrErr != nil {
-			sendMessage("error", "创建错误输出管道失败: "+stderrErr.Error())
-			return
-		}
-
-		// 启动命令
-		if startErr := cmd.Start(); startErr != nil {
-			sendMessage("error", "启动命令失败: "+startErr.Error())
-			return
-		}
-
-		// 创建扫描器读取输出
-		scannerDone := make(chan bool)
-		go func() {
-			defer close(scannerDone)
-			scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
-			for scanner.Scan() {
-				line := scanner.Text()
-				// 根据输出内容判断类型
-				msgType := "info"
-				if strings.Contains(line, "error") || strings.Contains(line, "Error") {
-					msgType = "error"
-				} else if strings.Contains(line, "Created") || strings.Contains(line, "Started") {
-					msgType = "success"
-				}
-
-				select {
-				case <-doneChan: // 检查是否已完成
-					return
-				default:
-					sendMessage(msgType, line)
-				}
+		sendMessage("info", "开始拉取镜像...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "pull"}, func(line string) {
+			msgType := "info"
+			if strings.Contains(line, "error") || strings.Contains(line, "Error") {
+				msgType = "error"
 			}
-		}()
+			sendMessage(msgType, line)
+		}); err != nil {
+			sendMessage("error", "拉取镜像失败: "+err.Error())
+			return
+		}
 
-		// 等待命令完成
-		err = cmd.Wait()
-		<-scannerDone // 等待扫描器完成
-
-		if err != nil {
+		sendMessage("info", "正在启动服务...")
+		if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "up", "-d"}, func(line string) {
+			msgType := "info"
+			if strings.Contains(line, "error") || strings.Contains(line, "Error") {
+				msgType = "error"
+			} else if strings.Contains(line, "Created") || strings.Contains(line, "Started") {
+				msgType = "success"
+			}
+			sendMessage(msgType, line)
+		}); err != nil {
 			sendMessage("error", "部署失败: "+err.Error())
 			return
 		}
@@ -568,7 +1187,8 @@ func deployEvents(c *gin.Context) {
 				close(doneChan) // 标记为已完成
 				return false
 			}
-			c.SSEvent("message", msg)
+			sseWriteJSONEvent(c, nextID, "message", msg)
+			nextID++
 			return true
 		case <-c.Request.Context().Done():
 			close(doneChan)
@@ -579,7 +1199,11 @@ func deployEvents(c *gin.Context) {
 
 // getStackStatus 获取堆栈状态
 func getStackStatus(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -620,6 +1244,7 @@ func getStackStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"containers": containerList,
+		"isSelf":     isSelfProjectName(name),
 	})
 }
 
@@ -657,6 +1282,16 @@ func cleanProjectResources(name string) error {
 	})
 
 	if err == nil {
+		hostPortDedup := make(map[int]struct{})
+		for _, container := range containers {
+			for _, p := range container.Ports {
+				if p.PublicPort == 0 {
+					continue
+				}
+				hostPortDedup[int(p.PublicPort)] = struct{}{}
+			}
+		}
+
 		for _, container := range containers {
 			// 强制删除容器 (Force=true 会先停止容器)
 			removeOpts := types.ContainerRemoveOptions{
@@ -667,6 +1302,20 @@ func cleanProjectResources(name string) error {
 				fmt.Printf("Warning: Failed to force remove container %s (%s): %v\n", container.ID, container.Names, err)
 			} else {
 				fmt.Printf("Successfully removed container %s (%s)\n", container.ID, container.Names)
+			}
+		}
+
+		if len(hostPortDedup) > 0 {
+			var hostPorts []int
+			for p := range hostPortDedup {
+				hostPorts = append(hostPorts, p)
+			}
+			if tx, txErr := database.GetDB().Begin(); txErr == nil {
+				if derr := database.DeleteReservedPortsByPortsTx(tx, hostPorts); derr != nil {
+					_ = tx.Rollback()
+				} else {
+					_ = tx.Commit()
+				}
 			}
 		}
 	} else {
@@ -703,7 +1352,14 @@ func cleanProjectResources(name string) error {
 
 // downProject 停止并移除项目容器和网络，但保留目录
 func downProject(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 
 	if err := cleanProjectResources(name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -719,7 +1375,14 @@ func downProject(c *gin.Context) {
 // 2. 扫描并强制删除所有带有 com.docker.compose.project=name 标签的残留容器
 // 3. 删除项目文件目录
 func removeProject(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 
 	// 清理资源
@@ -747,82 +1410,45 @@ func removeProject(c *gin.Context) {
 
 // 添加获取 compose 日志的处理函数
 func getComposeLogs(c *gin.Context) {
-	name := c.Param("name")
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
 		return
 	}
-	defer cli.Close()
-
-	// 获取项目的所有容器
-	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label", "com.docker.compose.project="+name),
-		),
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+	if _, err := os.Stat(projectDir); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目目录不存在"})
 		return
 	}
 
-	// 设置响应头，支持 SSE
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+	setSSEHeaders(c)
+	nextID := sseNextIDFromLastEventID(c)
 
-	// 创建一个通道来接收所有容器的日志
-	logsChan := make(chan string)
-	done := make(chan bool)
+	lines := make(chan string, 128)
+	ctx := c.Request.Context()
 
-	// 为每个容器启动一个 goroutine 来读取日志
-	for _, container := range containers {
-		containerName := strings.TrimPrefix(container.Names[0], "/")
-		go func(containerID, containerName string) {
-			options := types.ContainerLogsOptions{
-				ShowStdout: true,
-				ShowStderr: true,
-				Follow:     true,
-				Timestamps: true,
-				Tail:       "100",
-			}
-
-			logs, err := cli.ContainerLogs(context.Background(), containerID, options)
-			if err != nil {
-				logsChan <- fmt.Sprintf("error: 获取容器 %s 日志失败: %s", containerName, err.Error())
+	go func() {
+		defer close(lines)
+		_ = runComposeStreamLines(ctx, projectDir, []string{"compose", "logs", "-f", "--tail", "200"}, func(line string) {
+			select {
+			case <-ctx.Done():
+				return
+			case lines <- line:
 				return
 			}
-			defer logs.Close()
-
-			reader := bufio.NewReader(logs)
-			for {
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err != io.EOF {
-						logsChan <- fmt.Sprintf("error: 读取容器 %s 日志失败: %s", containerName, err.Error())
-					}
-					break
-				}
-				logsChan <- fmt.Sprintf("data: [%s] %s", containerName, line)
-			}
-		}(container.ID, containerName)
-	}
-
-	// 监听客户端断开连接
-	go func() {
-		<-c.Request.Context().Done()
-		close(done)
+		})
 	}()
 
-	// 发送日志到客户端
 	c.Stream(func(w io.Writer) bool {
 		select {
-		case <-done:
+		case <-ctx.Done():
 			return false
-		case msg := <-logsChan:
-			c.SSEvent("message", msg)
+		case msg, ok := <-lines:
+			if !ok {
+				return false
+			}
+			sseWriteStringEvent(c, nextID, "message", msg)
+			nextID++
 			return true
 		}
 	})
@@ -831,7 +1457,14 @@ func getComposeLogs(c *gin.Context) {
 // 添加获取 YAML 配置的处理函数
 // getProjectYaml 获取项目 YAML 配置
 func getProjectYaml(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 
 	projectDir := filepath.Join(getProjectsBaseDir(), name)
 	yamlPath, err := findComposeFile(projectDir)
@@ -858,7 +1491,14 @@ func getProjectYaml(c *gin.Context) {
 
 // 添加保存 YAML 配置的处理函数
 func saveProjectYaml(c *gin.Context) {
-	name := c.Param("name")
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
 	var data struct {
 		Content string `json:"content"`
 	}
