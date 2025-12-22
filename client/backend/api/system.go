@@ -4,6 +4,7 @@ import (
 	"context"
 	"dockerpanel/backend/pkg/database"
 	"dockerpanel/backend/pkg/docker"
+	"dockerpanel/backend/pkg/settings"
 	"dockerpanel/backend/pkg/system"
 	"encoding/json"
 	"fmt"
@@ -224,6 +225,8 @@ func getSystemInfo(c *gin.Context) {
 		"Images":                  info.Images,
 		"Volumes":                 volumeCount,
 		"Networks":                networkCount,
+		"ProjectRoot":             settings.GetProjectRoot(),
+		"HostProjectRoot":         settings.GetHostProjectRoot(),
 	}
 
 	c.JSON(http.StatusOK, response)

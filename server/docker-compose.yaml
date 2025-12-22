@@ -3,11 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    image: coracoo/tradis-backend:v0.1
-    container_name: tradis-backend
+    image: coracoo/tradis:server_b_0.1.0
+    container_name: tradis-server-backend
     restart: unless-stopped
     ports:
-      - "${BACKEND_PORT:-3002}:3002"
+      - "33333:3002"
     volumes:
       - ./data:/app/data
     environment:
@@ -18,10 +18,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    image: coracoo/tradis-frontend:v0.1
-    container_name: tradis-frontend
+    image: coracoo/tradis:server_f_0.1.0
+    container_name: tradis-server-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "33332:80"
     depends_on:
       - tradis-backend

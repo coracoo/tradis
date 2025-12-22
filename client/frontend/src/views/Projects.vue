@@ -395,10 +395,11 @@ const projectForm = ref({
   compose: '',
   autoStart: true
 })
+const projectRoot = ref('')
 
 watch(() => projectForm.value.name, (newName) => {
   if (dialogTitle.value === '新建项目') {
-    const basePath = 'project'
+    const basePath = projectRoot.value ? String(projectRoot.value).replace(/\/$/, '') : 'project'
     const normalized = normalizeComposeProjectName(newName)
     projectForm.value.path = normalized ? `${basePath}/${normalized}` : basePath
   }
@@ -648,6 +649,13 @@ onMounted(async () => {
       if (s && s.prop && s.order) {
         sortState.value = s
       }
+    }
+  } catch (e) {}
+  try {
+    const res = await api.system.info()
+    const data = res?.data || res
+    if (data && typeof data.ProjectRoot === 'string') {
+      projectRoot.value = data.ProjectRoot
     }
   } catch (e) {}
   handleRefresh()

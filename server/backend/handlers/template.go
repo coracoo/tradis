@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -79,21 +80,54 @@ func (s *StringArray) Scan(value interface{}) error {
 }
 
 type Template struct {
-	ID          uint           `gorm:"primarykey" json:"id"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"deleted_at"`
-	Name        string         `json:"name"`
-	Category    string         `json:"category"`
-	Description string         `json:"description"`
-	Version     string         `json:"version"`
-	Website     string         `json:"website"`
-	Logo        string         `json:"logo"`
-	Tutorial    string         `json:"tutorial"`
-	Compose     string         `json:"compose"`
-	Screenshots StringArray    `json:"screenshots" gorm:"type:text"`
-	Schema      Variables      `json:"schema" gorm:"type:text"`
-	Enabled     bool           `json:"enabled" gorm:"default:true"`
+	ID          uint              `gorm:"primarykey" json:"id"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt    `gorm:"index" json:"deleted_at"`
+	Name        string            `json:"name"`
+	Category    string            `json:"category"`
+	Description string            `json:"description"`
+	Version     string            `json:"version"`
+	Website     string            `json:"website"`
+	Logo        string            `json:"logo"`
+	Tutorial    string            `json:"tutorial"`
+	Dotenv      string            `json:"dotenv" gorm:"type:text"`
+	DotenvJSON  map[string]string `json:"dotenv_json,omitempty" gorm:"-"`
+	Compose     string            `json:"compose"`
+	Screenshots StringArray       `json:"screenshots" gorm:"type:text"`
+	Schema      Variables         `json:"schema" gorm:"type:text"`
+	Enabled     bool              `json:"enabled" gorm:"default:true"`
+}
+
+func parseDotenvToMap(content string) map[string]string {
+	out := make(map[string]string)
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		idx := strings.Index(line, "=")
+		if idx <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if key == "" {
+			continue
+		}
+
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		out[key] = val
+	}
+	return out
 }
 
 func ListTemplates(db *gorm.DB) gin.HandlerFunc {
@@ -102,6 +136,9 @@ func ListTemplates(db *gorm.DB) gin.HandlerFunc {
 		if err := db.Find(&templates).Error; err != nil {
 			c.JSON(500, gin.H{"error": "获取模板列表失败"})
 			return
+		}
+		for i := range templates {
+			templates[i].DotenvJSON = parseDotenvToMap(templates[i].Dotenv)
 		}
 		c.JSON(200, templates)
 	}
@@ -124,6 +161,7 @@ func GetTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(404, gin.H{"error": "模板不存在"})
 			return
 		}
+		template.DotenvJSON = parseDotenvToMap(template.Dotenv)
 		c.JSON(200, template)
 	}
 }
@@ -175,6 +213,7 @@ func UpdateTemplate(db *gorm.DB) gin.HandlerFunc {
 		existingTemplate.Website = input.Website
 		existingTemplate.Logo = input.Logo
 		existingTemplate.Tutorial = input.Tutorial
+		existingTemplate.Dotenv = input.Dotenv
 		existingTemplate.Compose = input.Compose
 		existingTemplate.Screenshots = input.Screenshots
 		existingTemplate.Schema = input.Schema
@@ -184,6 +223,7 @@ func UpdateTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": "更新模板失败"})
 			return
 		}
+		existingTemplate.DotenvJSON = parseDotenvToMap(existingTemplate.Dotenv)
 		c.JSON(200, existingTemplate)
 	}
 }

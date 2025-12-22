@@ -7,6 +7,17 @@
 *.log
 *.tmp
 .env
+**/.env
+!**/.env.example
+!**/.env.sample
+!**/.env.template
+*.pid
+*.out
+*.test
+coverage/
+**/coverage/
+.cache/
+**/.cache/
 
 # Dev & Tools
 .trae
@@ -31,18 +42,19 @@
 **/obj/
 **/main
 
-# Data & Runtime (Client Backend)
+# Client Backend Runtime / Artifacts
 client/backend/data/
 client/backend/project/
-client/backend/data.db
+client/backend/dist/
+client/backend/main
+client/backend/server
 client/backend/wget-log
 
-# Server Backend (Assuming similar structure)
+server/frontend/node_modules/
 server/backend/*.db
-server/backend/main
+server/backend/uploads/
+server/server
 
 # Docker
-.dockerignore
-
 # Scripts
 upload_to_github_pages.sh

@@ -5,7 +5,10 @@
         <el-button link @click="goBack">
           <el-icon><Back /></el-icon>
         </el-button>
-        <div class="title">{{ projectName }}</div>
+        <div class="title-block">
+          <div class="title">{{ projectName }}</div>
+          <div class="path">{{ displayProjectPath }}</div>
+        </div>
         <el-tag v-if="isSelfProject" size="small" type="warning" effect="plain">自身</el-tag>
       </div>
       <div class="header-right">
@@ -170,7 +173,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, CircleClose, Refresh } from '@element-plus/icons-vue'
@@ -180,6 +183,14 @@ import { useSseLogStream } from '../utils/sseLogStream'
 const route = useRoute()
 const router = useRouter()
 const projectName = ref(route.params.name || '')
+const projectRoot = ref('')
+const displayProjectPath = computed(() => {
+  const root = String(projectRoot.value || '').replace(/\/$/, '')
+  const name = String(projectName.value || '')
+  if (!name) return root || ''
+  if (root) return `${root}/${name}`
+  return `project/${name}`
+})
 const activeTab = ref('yaml')
 const isRunning = ref(true)
 const isLoading = ref(true)
@@ -245,6 +256,7 @@ const goBack = () => {
 const handleRefresh = async () => {
   isLoading.value = true
   try {
+    await loadProjectRoot()
     await fetchContainers()
     await fetchYamlContent()
     ElMessage.success('刷新成功')
@@ -253,6 +265,16 @@ const handleRefresh = async () => {
   } finally {
     isLoading.value = false
   }
+}
+
+const loadProjectRoot = async () => {
+  try {
+    const res = await api.system.info()
+    const data = res?.data || res
+    if (data && typeof data.ProjectRoot === 'string') {
+      projectRoot.value = data.ProjectRoot
+    }
+  } catch (e) {}
 }
 
 // 添加获取容器列表的方法
@@ -609,6 +631,7 @@ onMounted(async () => {
   isLoading.value = true
   try {
     // 并行获取项目信息和YAML配置
+    await loadProjectRoot()
     await fetchContainers()
     await fetchYamlContent()
 
@@ -713,10 +736,22 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .title {
   font-size: 18px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.path {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.2;
 }
 
 .header-right {

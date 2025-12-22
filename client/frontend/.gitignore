@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+.vite
+coverage
+*.tsbuildinfo
+.pnpm-store
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

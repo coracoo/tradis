@@ -518,6 +518,7 @@ const dialogVisible = ref(false)
 const dialogTitle = ref('新建项目')
 const logsContent = ref(null)
 const deployLogs = ref([])
+const projectRoot = ref('')
 const projectForm = ref({
   name: '',
   path: '',
@@ -765,6 +766,16 @@ const refreshAll = async () => {
   }
 }
 
+const loadProjectRoot = async () => {
+  try {
+    const res = await api.system.info()
+    const data = res?.data || res
+    if (data && typeof data.ProjectRoot === 'string') {
+      projectRoot.value = data.ProjectRoot
+    }
+  } catch (e) {}
+}
+
 onMounted(async () => {
   try {
     const res = await request.get('/settings/kv/sort_compose')
@@ -775,6 +786,7 @@ onMounted(async () => {
       }
     }
   } catch (e) {}
+  await loadProjectRoot()
   refreshAll()
 })
 
@@ -782,7 +794,7 @@ watch(
   () => projectForm.value.name,
   (newName) => {
     if (dialogTitle.value === '新建项目') {
-      const basePath = 'project'
+      const basePath = projectRoot.value ? String(projectRoot.value).replace(/\/$/, '') : 'project'
       const normalized = normalizeComposeProjectName(newName)
       projectForm.value.path = normalized ? `${basePath}/${normalized}` : basePath
     }

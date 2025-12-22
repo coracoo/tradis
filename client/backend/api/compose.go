@@ -1012,8 +1012,7 @@ func listProjects(c *gin.Context) {
 	// 转换为数组
 	result := make([]*ComposeProject, 0, len(projects))
 	// projectRoot := settings.GetProjectRoot() // 不再使用 projectRoot 进行相对路径计算，而是使用 CWD
-
-	cwd, _ := os.Getwd()
+	projectRoot := getProjectsBaseDir()
 
 	for _, project := range projects {
 		if composePath, err := findComposeFile(project.Path); err == nil {
@@ -1022,10 +1021,12 @@ func listProjects(c *gin.Context) {
 			}
 		}
 
-		// 将绝对路径转换为相对路径 (相对于程序运行目录)
-		// 这样可以保留 project/ 前缀，方便前端识别
-		if relPath, err := filepath.Rel(cwd, project.Path); err == nil {
-			project.Path = filepath.ToSlash(relPath)
+		if relPath, err := filepath.Rel(projectRoot, project.Path); err == nil && !strings.HasPrefix(relPath, "..") {
+			if relPath == "." {
+				project.Path = "project"
+			} else {
+				project.Path = filepath.ToSlash(filepath.Join("project", relPath))
+			}
 		}
 
 		result = append(result, project)
