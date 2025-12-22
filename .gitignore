@@ -18,6 +18,7 @@ coverage/
 **/coverage/
 .cache/
 **/.cache/
+**/.vite/
 
 # Dev & Tools
 .trae
