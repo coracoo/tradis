@@ -70,6 +70,19 @@
               </template>
             </el-alert>
           </div>
+
+          <div class="dotenv-bar">
+            <el-form-item label=".env（可选）">
+              <el-input
+                v-model="dotenvText"
+                type="textarea"
+                :rows="6"
+                placeholder="可粘贴或编辑 .env 内容（用于 Compose 插值/ env_file）"
+                class="dotenv-textarea"
+              />
+              <div class="dotenv-hint">部署变量优先级：配置参数 > .env > Compose environment 默认值</div>
+            </el-form-item>
+          </div>
           <div v-if="Object.keys(groupedSchema).length === 0">
             <el-empty description="暂无配置参数" />
           </div>
@@ -341,6 +354,15 @@
             {{ deploySuccess ? '部署成功' : '部署失败' }}
           </el-tag>
         </div>
+        <div class="logs-progress">
+          <el-progress
+            :percentage="deployProgressPercent"
+            :status="deployProgressStatus"
+            :stroke-width="10"
+            :text-inside="true"
+          />
+          <div v-if="deployProgressText" class="progress-text">{{ deployProgressText }}</div>
+        </div>
         <div ref="logsContent" class="logs-content">
           <div v-for="(log, index) in deployLogs" :key="index" :class="['log-line', log.type]">
             {{ log.message }}
@@ -409,10 +431,15 @@ const {
   start: startDeployTaskStream,
   stop: stopDeployTaskStream,
   clear: clearDeployLogs,
-  pushLine: pushDeployLine
+  pushLine: pushDeployLine,
+  progressPercent: deployProgressPercent,
+  progressText: deployProgressText,
+  progressStatus: deployProgressStatus,
+  setProgress: setDeployProgress
 } = useSseLogStream({
   autoScroll: deployAutoScroll,
   scrollElRef: logsContent,
+  enableProgress: true,
   makeEntry: (payload) => {
     if (payload && typeof payload === 'object' && payload.type && payload.message) return payload
     const text = String(payload || '')
@@ -423,12 +450,10 @@ const {
   getSearchText: (l) => `${String(l?.type || '')} ${String(l?.message || '')}`,
   onOpenLine: '',
   onErrorLine: '',
-  onMessage: (event, { pushLine, stop }) => {
-    let data = null
-    try {
-      data = JSON.parse(event.data)
-    } catch (e) {
-      pushLine({ type: 'warning', message: String(event.data || ''), time: new Date().toISOString() })
+  onMessage: (event, { pushLine, stop, payload, setProgress }) => {
+    const data = (payload && typeof payload === 'object') ? payload : null
+    if (!data) {
+      pushLine({ type: 'warning', message: String(event?.data || ''), time: new Date().toISOString() })
       return
     }
 
@@ -437,6 +462,8 @@ const {
         clearTimeout(taskTimeoutRef.value)
         taskTimeoutRef.value = null
       }
+      if (data.status === 'success') setProgress({ percent: 100, status: 'success', text: String(data.message || '任务结束') })
+      if (data.status === 'error') setProgress({ percent: 100, status: 'exception', text: String(data.message || '任务结束') })
       stop()
       deploying.value = false
       if (data.status === 'success') {
@@ -515,6 +542,7 @@ const tutorialHtml = computed(() => renderMarkdown(project.value?.tutorial || ''
 // 表单验证规则
 const formData = ref({})
 const rules = reactive({})
+const dotenvText = ref('')
 
 const handleImageError = (e) => {
   e.target.src = 'https://cdn-icons-png.flaticon.com/512/873/873133.png'
@@ -627,6 +655,7 @@ const handleRemoveParam = (config) => {
 }
 
 const initForm = () => {
+  dotenvText.value = String(project.value?.dotenv || '')
   if (!project.value || !project.value.schema) return
 
   // 深拷贝 schema 到 deployConfig，作为表单数据源
@@ -836,6 +865,7 @@ const submitDeploy = async () => {
       projectName,
       compose: yamlContent,
       env: finalEnv, // 兼容旧逻辑
+      dotenv: dotenvText.value,
       config: deployConfig.value // 新逻辑：传递完整配置数组
     }
 
@@ -1053,6 +1083,25 @@ onMounted(() => {
   border-radius: 8px;
 }
 
+.dotenv-bar {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.dotenv-textarea :deep(.el-textarea__inner) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.5;
+}
+
+.dotenv-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .allocate-header {
   display: flex;
   justify-content: space-between;
@@ -1166,6 +1215,19 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.logs-progress {
+  padding: 12px 16px;
+  background-color: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.progress-text {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  word-break: break-word;
 }
 
 .logs-content {

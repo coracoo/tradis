@@ -1,5 +1,13 @@
 <template>
   <div class="app-store-view">
+    <el-alert
+      class="disclaimer-alert"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="免责声明"
+      description="本商城所有项目均来源互联网。本项目不对项目合规性、使用效果与风险承担责任。从商城部署即视为同意本条款；使用相关问题请联系具体项目作者。"
+    />
     <div class="filter-bar">
       <div class="filter-left">
         <el-input
@@ -253,6 +261,11 @@ const resolvePicUrl = (u) => {
   box-sizing: border-box;
   overflow: hidden;
   padding: 12px 24px;
+}
+
+.disclaimer-alert {
+  margin-bottom: 12px;
+  border-radius: 12px;
 }
 
 /* Filter Bar - Same as Compose.vue */

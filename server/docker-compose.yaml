@@ -13,6 +13,8 @@ services:
     environment:
       - PORT=3002
       - GIN_MODE=release
+      - ADMIN_ALLOWLIST=${ADMIN_ALLOWLIST:-127.0.0.1,::1}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
 
   tradis-frontend:
     build:

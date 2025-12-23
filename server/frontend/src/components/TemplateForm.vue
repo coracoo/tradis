@@ -87,27 +87,54 @@
 
     <el-divider content-position="left">部署配置</el-divider>
 
-    <el-form-item label="Compose" required>
-      <div class="compose-editor-container">
-        <el-upload
-          class="compose-uploader-btn"
-          action="/api/upload"
-          :show-file-list="false"
-          :on-success="handleComposeSuccess"
-          accept=".yml,.yaml"
-        >
-          <el-button type="primary" size="small">从文件导入</el-button>
-        </el-upload>
-        <el-input
-          type="textarea"
-          v-model="form.compose"
-          :rows="15"
-          placeholder="在此粘贴 Docker Compose 内容"
-          class="code-editor"
-          @blur="handleParseVariables"
-        />
-      </div>
-    </el-form-item>
+    <el-row :gutter="20" class="deploy-config-row">
+      <el-col :span="12">
+        <el-form-item label=".env (可选)">
+          <div class="dotenv-editor-container">
+            <el-upload
+              class="dotenv-uploader-btn"
+              action="/api/upload"
+              :show-file-list="false"
+              :on-success="handleDotenvSuccess"
+              accept=".env,.txt"
+            >
+              <el-button type="primary" size="small">从文件导入</el-button>
+            </el-upload>
+            <el-input
+              type="textarea"
+              v-model="form.dotenv"
+              :rows="15"
+              placeholder="在此粘贴 .env 内容（可选）"
+              class="code-editor"
+              @blur="handleParseVariables"
+            />
+          </div>
+        </el-form-item>
+      </el-col>
+      <el-col :span="12">
+        <el-form-item label="Compose" required>
+          <div class="compose-editor-container">
+            <el-upload
+              class="compose-uploader-btn"
+              action="/api/upload"
+              :show-file-list="false"
+              :on-success="handleComposeSuccess"
+              accept=".yml,.yaml"
+            >
+              <el-button type="primary" size="small">从文件导入</el-button>
+            </el-upload>
+            <el-input
+              type="textarea"
+              v-model="form.compose"
+              :rows="15"
+              placeholder="在此粘贴 Docker Compose 内容"
+              class="code-editor"
+              @blur="handleParseVariables"
+            />
+          </div>
+        </el-form-item>
+      </el-col>
+    </el-row>
 
     <el-divider content-position="left">配置标准</el-divider>
 
@@ -123,6 +150,38 @@
           <el-button size="small" type="danger" @click="handleClearSchema">
             清空所有参数
           </el-button>
+        </div>
+
+        <div v-if="parseReport.errors.length || parseReport.warnings.length" class="parse-report">
+          <el-alert
+            v-if="parseReport.errors.length"
+            type="error"
+            :closable="false"
+            show-icon
+            title="解析错误"
+            class="parse-report-alert"
+          >
+            <template #default>
+              <div class="parse-report-lines">
+                <div v-for="(msg, idx) in parseReport.errors" :key="`e-${idx}`">{{ msg }}</div>
+              </div>
+            </template>
+          </el-alert>
+
+          <el-alert
+            v-if="parseReport.warnings.length"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="解析告警"
+            class="parse-report-alert"
+          >
+            <template #default>
+              <div class="parse-report-lines">
+                <div v-for="(msg, idx) in parseReport.warnings" :key="`w-${idx}`">{{ msg }}</div>
+              </div>
+            </template>
+          </el-alert>
         </div>
         
         <div v-if="form.schema.length === 0" class="empty-schema">
@@ -210,8 +269,8 @@
                 <span class="section-title">环境变量 (Env)</span>
                 <span class="section-desc">Key=Value</span>
               </div>
-              <div v-for="(item, idx) in group.env" :key="item._id" class="config-row">
-                <div class="config-col-type">
+            <div v-for="(item, idx) in group.env" :key="item._id" class="config-row">
+              <div class="config-col-type">
                    <el-select v-model="item.paramType" size="small">
                       <el-option label="端口" value="port" />
                       <el-option label="路径" value="path" />
@@ -219,15 +278,31 @@
                       <el-option label="硬件" value="hardware" />
                       <el-option label="其它" value="other" />
                    </el-select>
+              </div>
+              <div class="config-label">
+                <el-input v-model="item.label" placeholder="标签(Label)" size="small" />
+                <el-input v-model="item.description" placeholder="备注(说明)" size="small" />
+                <div class="config-var-name">
+                  {{ item.name }}
+                  <el-tag
+                    v-if="isDotenvDefined(item.name)"
+                    size="small"
+                    type="success"
+                    effect="plain"
+                    class="dotenv-tag"
+                  >已在 .env 定义</el-tag>
+                  <el-tag
+                    v-else
+                    size="small"
+                    type="warning"
+                    effect="plain"
+                    class="dotenv-tag"
+                  >未定义</el-tag>
                 </div>
-                <div class="config-label">
-                  <el-input v-model="item.label" placeholder="标签(Label)" size="small" />
-                  <el-input v-model="item.description" placeholder="备注(说明)" size="small" />
-                  <div class="config-var-name">{{ item.name }}</div>
-                </div>
-                <div class="config-value">
-                  <el-input v-model="item.default" placeholder="Value" />
-                </div>
+              </div>
+              <div class="config-value">
+                <el-input v-model="item.default" placeholder="Value" />
+              </div>
                 <div class="config-meta">
                   <el-select v-model="item.category" size="small" style="width: 100px">
                     <el-option label="基础" value="basic" />
@@ -340,7 +415,7 @@ import { ref, computed, watch, defineProps, defineEmits } from 'vue'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import yaml from 'js-yaml'
+import { parseComposeTemplateVariables, parseDotenvText } from '../utils/composeTemplateParser'
 
 const props = defineProps({
   template: {
@@ -359,6 +434,7 @@ const form = ref({
   website: '',
   logo: '',
   screenshots: [],
+  dotenv: '',
   compose: '',
   tutorial: '',
   schema: [],
@@ -367,6 +443,8 @@ const form = ref({
 const newScreenshotUrl = ref('')
 
 const activeServices = ref([])
+const parseReport = ref({ warnings: [], errors: [] })
+const dotenvKeySetRef = ref(new Set())
 
 // 定义 handleReset 为普通函数，确保提升
 function handleReset() {
@@ -378,17 +456,21 @@ function handleReset() {
     website: '',
     logo: '',
     screenshots: [],
+    dotenv: '',
     compose: '',
     tutorial: '',
     schema: [],
     enabled: true
   }
   activeServices.value = []
+  parseReport.value = { warnings: [], errors: [] }
+  dotenvKeySetRef.value = new Set()
 }
 
 watch(() => props.template, (newVal) => {
   if (newVal) {
     form.value = { ...newVal }
+    if (typeof form.value.dotenv !== 'string') form.value.dotenv = ''
     // 确保 screenshots 是数组
     if (!Array.isArray(form.value.screenshots)) {
         try {
@@ -525,138 +607,84 @@ const handleComposeSuccess = async (response) => {
   }
 }
 
+const handleDotenvSuccess = async (response) => {
+  try {
+    const res = await fetch(response.url)
+    const text = await res.text()
+
+    if (text.trim().toLowerCase().startsWith('<!doctype') || text.trim().toLowerCase().startsWith('<html')) {
+      throw new Error('读取到的文件内容格式错误(HTML)，请检查文件路径或服务器配置')
+    }
+
+    form.value.dotenv = text
+    ElMessage.success('.env 文件上传成功')
+    handleParseVariables()
+  } catch (error) {
+    console.error('读取 .env 文件失败:', error)
+    ElMessage.error(error.message || '读取 .env 文件失败')
+    form.value.dotenv = ''
+  }
+}
+
+const isDotenvDefined = (key) => {
+  return dotenvKeySetRef.value && dotenvKeySetRef.value.has(String(key || ''))
+}
+
 const handleParseVariables = () => {
   const composeContent = form.value.compose || ''
-  
-  try {
-    const parsed = yaml.load(composeContent)
-    if (!parsed || !parsed.services) {
-      parseRegexVariables(composeContent)
-      return
-    }
-    
-    const newSchema = []
-    const servicesFound = new Set()
 
-    for (const [serviceName, service] of Object.entries(parsed.services)) {
-      servicesFound.add(serviceName)
-      
-      // Ports
-      if (service.ports) {
-        service.ports.forEach(port => {
-          const portStr = typeof port === 'string' ? port : `${port.published}:${port.target}`
-          if (portStr.includes(':')) {
-             const parts = portStr.split(':')
-             // Handle standard "host:container" format
-             if (parts.length >= 2) {
-                 const containerPort = parts[parts.length - 1]
-                 const hostPort = parts[parts.length - 2]
-                 
-                 // User Requirement: name = host value (left), value = container value (right)
-                 // We map this to our Schema: Name -> Name, Default -> Value
-                 const item = {
-                    name: hostPort,     // Host Port (Left)
-                    default: containerPort, // Container Port (Right)
-                    label: '',          // Removed as requested, but keeping empty string for struct compatibility
-                    category: 'basic', 
-                    type: 'port',
-                    paramType: 'port',
-                    serviceName: serviceName,
-                    description: `Port mapping ${hostPort}:${containerPort}`
-                 }
+  const { dotenv, warnings: dotenvWarnings, errors: dotenvErrors } = parseDotenvText(form.value.dotenv || '')
+  dotenvKeySetRef.value = new Set(Object.keys(dotenv || {}))
 
-                 // Avoid duplicates
-                 if (!schemaExists(item.name, serviceName, 'port')) {
-                    newSchema.push(item)
-                 }
-             }
-          }
-        })
-      }
+  const { schema, warnings, errors, refs } = parseComposeTemplateVariables(composeContent)
 
-      // Volumes
-      if (service.volumes) {
-        service.volumes.forEach((vol, idx) => {
-          const volStr = typeof vol === 'string' ? vol : `${vol.source}:${vol.target}`
-          if (volStr.includes(':')) {
-             const parts = volStr.split(':')
-             const hostPath = parts[0]
-             const containerPath = parts[1]
-             
-             // Only parameterize local paths or explicitly requested paths
-             if (hostPath.startsWith('./') || hostPath.startsWith('/')) {
-                 const item = {
-                    name: hostPath,      // Host Path (Left)
-                    default: containerPath, // Container Path (Right)
-                    label: '',
-                    category: 'basic',
-                    type: 'path',
-                    paramType: 'path', // volume -> path in our system
-                    serviceName: serviceName,
-                    description: `Volume mapping ${hostPath}:${containerPath}`
-                 }
+  const missingRefs = (refs || [])
+    .filter(r => r && !r.hasDefault)
+    .map(r => r.name)
+    .filter(name => name && !Object.prototype.hasOwnProperty.call(dotenv, name))
 
-                 if (!schemaExists(item.name, serviceName, 'path')) {
-                    newSchema.push(item)
-                 }
-             }
-          }
-        })
-      }
+  const mergedErrors = [
+    ...(dotenvErrors || []).map(m => `[.env] ${m}`),
+    ...(errors || []).map(m => `[compose] ${m}`)
+  ]
+  const mergedWarnings = [
+    ...(dotenvWarnings || []).map(m => `[.env] ${m}`),
+    ...(warnings || []).map(m => `[compose] ${m}`),
+    ...Array.from(new Set(missingRefs)).map(n => `[变量引用] 发现未定义的 ${n}（未在 .env 中定义，且 compose 未提供 default）`)
+  ]
 
-      // Environment
-      if (service.environment) {
-        const envs = Array.isArray(service.environment) 
-          ? service.environment.reduce((acc, curr) => {
-              const idx = String(curr).indexOf('=')
-              if (idx === -1) {
-                acc[String(curr)] = ''
-                return acc
-              }
+  parseReport.value = { warnings: mergedWarnings, errors: mergedErrors }
 
-              const k = String(curr).slice(0, idx)
-              const v = String(curr).slice(idx + 1)
-              acc[k] = v
-              return acc
-            }, {})
-          : service.environment
+  if (mergedErrors.length > 0) {
+    ElMessage.error(mergedErrors[0])
+  } else if (mergedWarnings.length > 0) {
+    ElMessage.warning(mergedWarnings[0])
+  }
 
-        for (const [key, value] of Object.entries(envs)) {
-          if (key === 'PATH') continue
-          
-          const valStr = value ? String(value) : ''
-          const item = {
-              name: key,          // Env Key (Left)
-              default: valStr,    // Env Value (Right)
-              label: '',
-              category: 'basic', 
-              type: key.toLowerCase().includes('password') || key.toLowerCase().includes('secret') ? 'password' : 'string',
-              paramType: 'env',   // environment -> env
-              serviceName: serviceName,
-              description: ''
-          }
-          
-          if (!schemaExists(item.name, serviceName, 'env')) {
-            newSchema.push(item)
-          }
-        }
-      }
-    }
+  const servicesFound = new Set()
+  let newCount = 0
 
-    // IMPORTANT: Do NOT modify form.value.compose anymore. 
-    // We keep the original YAML. The Client will use the JSON Schema to reconstruct/override the YAML.
+  schema.forEach((item) => {
+    const serviceName = item.serviceName || 'Global'
+    const paramType = item.paramType || 'env'
+    servicesFound.add(serviceName)
 
-    if (newSchema.length > 0) {
-      form.value.schema.push(...newSchema)
-      activeServices.value = Array.from(servicesFound)
-      ElMessage.success(`自动解析出 ${newSchema.length} 个配置项`)
-    } else {
-      ElMessage.info('未解析出新的参数')
-    }
+    if (schemaExists(item.name, serviceName, paramType)) return
 
-  } catch (e) {
-    console.warn('YAML Parse Error, fallback to regex', e)
-    parseRegexVariables(composeContent)
+    form.value.schema.push({
+      ...item,
+      _id: Math.random().toString(36).substr(2, 9)
+    })
+    newCount++
+  })
+
+  if (newCount > 0) {
+    const nextActive = new Set(activeServices.value || [])
+    servicesFound.forEach(s => nextActive.add(s))
+    activeServices.value = Array.from(nextActive)
+    ElMessage.success(`自动解析出 ${newCount} 个配置项`)
+  } else {
+    ElMessage.info('未解析出新的参数')
   }
 }
 
@@ -680,7 +708,7 @@ const parseRegexVariables = (content) => {
   
   let newCount = 0
   variables.forEach(varName => {
-    if (!schemaExists(varName)) {
+    if (!schemaExists(varName, 'Global', 'env')) {
       form.value.schema.push({
         name: varName,
         label: varName,
@@ -784,6 +812,22 @@ const handleSubmit = async () => {
 }
 .screenshot-url-adder { margin-top: 8px; display: flex; align-items: center; }
 
+.deploy-config-row {
+  width: 100%;
+}
+
+.dotenv-editor-container {
+  position: relative;
+  width: 100%;
+}
+
+.dotenv-uploader-btn {
+  position: absolute;
+  right: 10px;
+  top: 5px;
+  z-index: 10;
+}
+
 .compose-editor-container {
   position: relative;
   width: 100%;
@@ -815,6 +859,24 @@ const handleSubmit = async () => {
     margin-bottom: 10px;
     display: flex;
     gap: 10px;
+}
+
+.parse-report {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.parse-report-lines {
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.dotenv-tag {
+    margin-left: 8px;
+    transform: translateY(-1px);
 }
 
 .empty-schema {

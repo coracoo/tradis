@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -93,15 +94,24 @@ type Template struct {
 	Tutorial    string            `json:"tutorial"`
 	Dotenv      string            `json:"dotenv" gorm:"type:text"`
 	DotenvJSON  map[string]string `json:"dotenv_json,omitempty" gorm:"-"`
+	DotenvWarns []string          `json:"dotenv_warnings,omitempty" gorm:"-"`
+	DotenvErrs  []string          `json:"dotenv_errors,omitempty" gorm:"-"`
 	Compose     string            `json:"compose"`
 	Screenshots StringArray       `json:"screenshots" gorm:"type:text"`
 	Schema      Variables         `json:"schema" gorm:"type:text"`
 	Enabled     bool              `json:"enabled" gorm:"default:true"`
 }
 
-func parseDotenvToMap(content string) map[string]string {
+// parseDotenvDetailed 解析 dotenv 文本为 map，并输出可展示的告警/错误信息（用于前端提示）
+func parseDotenvDetailed(content string) (map[string]string, []string, []string) {
 	out := make(map[string]string)
-	for _, rawLine := range strings.Split(content, "\n") {
+	warnings := make([]string, 0)
+	errorsList := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	lines := strings.Split(content, "\n")
+	for i, rawLine := range lines {
+		lineNo := i + 1
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -111,23 +121,52 @@ func parseDotenvToMap(content string) map[string]string {
 		}
 
 		idx := strings.Index(line, "=")
-		if idx <= 0 {
+		if idx < 0 {
+			key := strings.TrimSpace(line)
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				warnings = append(warnings, fmt.Sprintf(".env 第%d行：重复 key %s", lineNo, key))
+			}
+			seen[key] = struct{}{}
+			out[key] = ""
+			warnings = append(warnings, fmt.Sprintf(".env 第%d行：未赋值 %s（已按空值处理）", lineNo, key))
 			continue
 		}
-		key := strings.TrimSpace(line[:idx])
-		val := strings.TrimSpace(line[idx+1:])
-		if key == "" {
+		if idx == 0 {
+			warnings = append(warnings, fmt.Sprintf(".env 第%d行：无法解析（key 为空）: %s", lineNo, strings.TrimSpace(rawLine)))
 			continue
 		}
 
-		if len(val) >= 2 {
-			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
-				val = val[1 : len(val)-1]
+		key := strings.TrimSpace(line[:idx])
+		valRaw := strings.TrimSpace(line[idx+1:])
+		if key == "" {
+			warnings = append(warnings, fmt.Sprintf(".env 第%d行：无法解析（key 为空）: %s", lineNo, strings.TrimSpace(rawLine)))
+			continue
+		}
+
+		if _, ok := seen[key]; ok {
+			warnings = append(warnings, fmt.Sprintf(".env 第%d行：重复 key %s（后者覆盖前者）", lineNo, key))
+		}
+		seen[key] = struct{}{}
+
+		val := valRaw
+		if len(valRaw) >= 2 {
+			if (valRaw[0] == '"' && valRaw[len(valRaw)-1] == '"') || (valRaw[0] == '\'' && valRaw[len(valRaw)-1] == '\'') {
+				val = valRaw[1 : len(valRaw)-1]
+			} else if valRaw[0] == '"' || valRaw[0] == '\'' {
+				// 引号不闭合
+				warnings = append(warnings, fmt.Sprintf(".env 第%d行：引号未闭合（保留原值）: %s", lineNo, strings.TrimSpace(rawLine)))
+				val = valRaw
 			}
 		}
+
 		out[key] = val
 	}
-	return out
+
+	_ = errorsList
+	return out, warnings, errorsList
 }
 
 func ListTemplates(db *gorm.DB) gin.HandlerFunc {
@@ -138,7 +177,10 @@ func ListTemplates(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 		for i := range templates {
-			templates[i].DotenvJSON = parseDotenvToMap(templates[i].Dotenv)
+			m, w, e := parseDotenvDetailed(templates[i].Dotenv)
+			templates[i].DotenvJSON = m
+			templates[i].DotenvWarns = w
+			templates[i].DotenvErrs = e
 		}
 		c.JSON(200, templates)
 	}
@@ -161,7 +203,10 @@ func GetTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(404, gin.H{"error": "模板不存在"})
 			return
 		}
-		template.DotenvJSON = parseDotenvToMap(template.Dotenv)
+		m, w, e := parseDotenvDetailed(template.Dotenv)
+		template.DotenvJSON = m
+		template.DotenvWarns = w
+		template.DotenvErrs = e
 		c.JSON(200, template)
 	}
 }
@@ -187,6 +232,10 @@ func CreateTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": "创建模板失败"})
 			return
 		}
+		m, w, e := parseDotenvDetailed(template.Dotenv)
+		template.DotenvJSON = m
+		template.DotenvWarns = w
+		template.DotenvErrs = e
 		c.JSON(201, template)
 	}
 }
@@ -223,7 +272,10 @@ func UpdateTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": "更新模板失败"})
 			return
 		}
-		existingTemplate.DotenvJSON = parseDotenvToMap(existingTemplate.Dotenv)
+		m, w, e := parseDotenvDetailed(existingTemplate.Dotenv)
+		existingTemplate.DotenvJSON = m
+		existingTemplate.DotenvWarns = w
+		existingTemplate.DotenvErrs = e
 		c.JSON(200, existingTemplate)
 	}
 }

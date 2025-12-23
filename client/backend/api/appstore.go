@@ -50,6 +50,7 @@ type App struct {
 	Logo        string     `json:"logo"`
 	Website     string     `json:"website"`
 	Tutorial    string     `json:"tutorial"`
+	Dotenv      string     `json:"dotenv"`
 	Compose     string     `json:"compose"` // Compose 从 map 改为 string
 	Screenshots []string   `json:"screenshots"`
 	Schema      []Variable `json:"schema"`
@@ -252,6 +253,7 @@ func getApp(c *gin.Context) {
 type DeployRequest struct {
 	Compose     string            `json:"compose"`
 	Env         map[string]string `json:"env"`
+	Dotenv      string            `json:"dotenv"`
 	Config      []Variable        `json:"config"`
 	ProjectName string            `json:"projectName"`
 }
@@ -313,6 +315,287 @@ func removeExplicitContainerNames(composeContent string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+type envFileRef struct {
+	Path     string
+	Required bool
+}
+
+// isLikelyEnvKey 判断是否是常见的环境变量 key（避免将异常 key 注入到 docker compose 进程环境）
+func isLikelyEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	b0 := key[0]
+	if !((b0 >= 'A' && b0 <= 'Z') || (b0 >= 'a' && b0 <= 'z') || b0 == '_') {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		b := key[i]
+		if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// parseDotenvToMap 将 dotenv 文本解析为 map，用于变量优先级合并与 Compose 插值
+func parseDotenvToMap(content string) map[string]string {
+	out := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		idx := strings.Index(line, "=")
+		if idx < 0 {
+			key := strings.TrimSpace(line)
+			if key == "" {
+				continue
+			}
+			out[key] = ""
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if key == "" {
+			continue
+		}
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		out[key] = val
+	}
+	return out
+}
+
+// renderDotenvFromMap 将 map 渲染为 dotenv 文本（兼容旧版仅传 env map 的行为）
+func renderDotenvFromMap(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for k, v := range env {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(v)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// collectComposeEnvironmentDefaults 从 Compose 的 environment 字段提取默认值，辅助变量插值（不修改容器环境）
+func collectComposeEnvironmentDefaults(composeContent string) map[string]string {
+	out := make(map[string]string)
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return out
+	}
+	services, ok := data["services"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+
+	for _, serviceRaw := range services {
+		svc, ok := serviceRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		envRaw, ok := svc["environment"]
+		if !ok {
+			continue
+		}
+		switch e := envRaw.(type) {
+		case map[string]interface{}:
+			for k, v := range e {
+				key := strings.TrimSpace(fmt.Sprintf("%v", k))
+				if key == "" {
+					continue
+				}
+				out[key] = fmt.Sprintf("%v", v)
+			}
+		case []interface{}:
+			for _, item := range e {
+				s := strings.TrimSpace(fmt.Sprintf("%v", item))
+				if s == "" {
+					continue
+				}
+				parts := strings.SplitN(s, "=", 2)
+				key := strings.TrimSpace(parts[0])
+				if key == "" {
+					continue
+				}
+				if len(parts) == 2 {
+					out[key] = strings.TrimSpace(parts[1])
+				} else {
+					if _, exists := out[key]; !exists {
+						out[key] = ""
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// extractEnvFileRefs 提取 services.*.env_file 的引用路径（支持 string / list / {path,required}）
+func extractEnvFileRefs(composeContent string) ([]envFileRef, error) {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil, err
+	}
+	services, ok := data["services"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	merged := make(map[string]bool)
+	for _, serviceRaw := range services {
+		svc, ok := serviceRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		envFileRaw, ok := svc["env_file"]
+		if !ok {
+			continue
+		}
+		addRef := func(p string, required bool) {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				return
+			}
+			if prev, ok := merged[p]; ok {
+				merged[p] = prev || required
+				return
+			}
+			merged[p] = required
+		}
+
+		switch v := envFileRaw.(type) {
+		case string:
+			addRef(v, true)
+		case []interface{}:
+			for _, item := range v {
+				switch it := item.(type) {
+				case string:
+					addRef(it, true)
+				case map[string]interface{}:
+					pathVal, _ := it["path"]
+					reqVal, hasReq := it["required"]
+					pathStr := strings.TrimSpace(fmt.Sprintf("%v", pathVal))
+					required := true
+					if hasReq {
+						if b, ok := reqVal.(bool); ok {
+							required = b
+						} else {
+							s := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", reqVal)))
+							if s == "false" || s == "0" || s == "no" {
+								required = false
+							}
+						}
+					}
+					addRef(pathStr, required)
+				default:
+					addRef(fmt.Sprintf("%v", it), true)
+				}
+			}
+		default:
+			addRef(fmt.Sprintf("%v", v), true)
+		}
+	}
+
+	out := make([]envFileRef, 0, len(merged))
+	for p, required := range merged {
+		out = append(out, envFileRef{Path: p, Required: required})
+	}
+	return out, nil
+}
+
+// ensureEnvFiles 在部署目录中落盘保存 .env 及 Compose 引用的 env_file 文件
+func ensureEnvFiles(composeDir string, dotenvText string, envFiles []envFileRef, t *task.Task) error {
+	writeFile := func(relPath string, content string) error {
+		clean := filepath.Clean(relPath)
+		if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+			return fmt.Errorf("env_file 路径不安全: %s", relPath)
+		}
+		full := filepath.Join(composeDir, clean)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(full, []byte(content), 0644)
+	}
+
+	dotenvClean := filepath.Clean(".env")
+	if strings.TrimSpace(dotenvText) != "" {
+		if err := writeFile(dotenvClean, dotenvText); err != nil {
+			return err
+		}
+	}
+
+	for _, ref := range envFiles {
+		p := strings.TrimSpace(ref.Path)
+		if p == "" {
+			continue
+		}
+		clean := filepath.Clean(p)
+		if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+			if t != nil {
+				t.AddLog("warning", fmt.Sprintf("跳过不安全的 env_file 路径: %s", p))
+			}
+			continue
+		}
+
+		if clean == ".env" || strings.HasSuffix(clean, string(filepath.Separator)+".env") {
+			if strings.TrimSpace(dotenvText) != "" {
+				if err := writeFile(clean, dotenvText); err != nil {
+					return err
+				}
+				continue
+			}
+			if ref.Required {
+				if t != nil {
+					t.AddLog("warning", fmt.Sprintf("env_file %s 为 required，但未提供 .env 内容，已创建空文件", p))
+				}
+				if err := writeFile(clean, ""); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		full := filepath.Join(composeDir, clean)
+		if _, err := os.Stat(full); err == nil {
+			continue
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+
+		if ref.Required {
+			if t != nil {
+				t.AddLog("warning", fmt.Sprintf("env_file %s 为 required，但未找到对应文件内容，已创建空文件占位", p))
+			}
+		} else {
+			if t != nil {
+				t.AddLog("info", fmt.Sprintf("env_file %s 未找到对应文件，已创建空文件占位（required=false）", p))
+			}
+		}
+		if err := writeFile(clean, ""); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // 部署应用
@@ -430,34 +713,9 @@ func deployApp(c *gin.Context) {
 			}
 			composeContent = modified
 		} else if len(deployReq.Env) > 0 {
-			// 兼容旧逻辑：仅注入环境变量
-			// 1. 生成 .env 文件 (用于支持 Compose 文件中的 ${VAR} 变量替换)
-			envFile := filepath.Join(composeDir, ".env")
-			var envContent string
-			for k, v := range deployReq.Env {
-				envContent += fmt.Sprintf("%s=%s\n", k, v)
-			}
-			if err := os.WriteFile(envFile, []byte(envContent), 0644); err != nil {
-				t.AddLog("warning", fmt.Sprintf("保存 .env 文件失败: %v", err))
-			}
-
-			// 2. 将环境变量直接注入到 YAML 的 environment 字段 (用于确保容器内能读取到变量)
-			if modified, err := injectEnvToYaml(composeContent, deployReq.Env); err == nil {
-				composeContent = modified
-			} else {
-				t.AddLog("warning", fmt.Sprintf("注入环境变量失败: %v", err))
-			}
-
-			// 3. 替换 YAML 内容中的 ${VAR} 占位符 (确保端口、路径等非 environment 字段的变量也被替换)
-			// 使用 os.Expand 风格的替换，但优先匹配 map 中的 key
-			composeContent = os.Expand(composeContent, func(key string) string {
-				// fmt.Printf("[Debug] Replacing var: %s\n", key)
-				if v, ok := deployReq.Env[key]; ok {
-					// fmt.Printf("[Debug] Replaced %s with %s\n", key, v)
-					return v
-				}
-				return "${" + key + "}" // 如果没有对应的值，保持原样
-			})
+			// 兼容旧逻辑：仅传递 env map
+			// 说明：不再将变量注入 Compose 的 environment 字段，避免将本地变量强行写入容器环境
+			// Compose 的变量替换由 docker compose 在执行时根据 .env 与进程环境变量完成
 		} else {
 			t.AddLog("warning", "未接收到任何配置参数，将使用默认模板部署")
 		}
@@ -488,6 +746,48 @@ func deployApp(c *gin.Context) {
 			return
 		}
 
+		dotenvText := deployReq.Dotenv
+		if strings.TrimSpace(dotenvText) == "" {
+			if len(deployReq.Env) > 0 {
+				dotenvText = renderDotenvFromMap(deployReq.Env)
+			} else if len(deployReq.Config) == 0 && strings.TrimSpace(app.Dotenv) != "" {
+				dotenvText = app.Dotenv
+			}
+		}
+
+		envFileRefs, efErr := extractEnvFileRefs(composeContent)
+		if efErr != nil {
+			t.AddLog("warning", fmt.Sprintf("解析 env_file 失败，将仅保存 .env: %v", efErr))
+		}
+		if err := ensureEnvFiles(composeDir, dotenvText, envFileRefs, t); err != nil {
+			t.AddLog("error", fmt.Sprintf("保存 .env/env_file 文件失败: %v", err))
+			t.Finish(task.StatusFailed, nil, err.Error())
+			os.RemoveAll(composeDir)
+			return
+		}
+
+		composeEnvDefaults := collectComposeEnvironmentDefaults(composeContent)
+		interpolationEnv := make(map[string]string)
+		for k, v := range composeEnvDefaults {
+			interpolationEnv[k] = v
+		}
+		for k, v := range parseDotenvToMap(dotenvText) {
+			interpolationEnv[k] = v
+		}
+		for k, v := range deployReq.Env {
+			interpolationEnv[k] = v
+		}
+		for _, item := range deployReq.Config {
+			key := strings.TrimSpace(item.Name)
+			if key == "" {
+				continue
+			}
+			if strings.TrimSpace(item.Default) == "" {
+				continue
+			}
+			interpolationEnv[key] = item.Default
+		}
+
 		// 使用 docker compose 命令行部署，以确保原生行为（包括相对路径处理）
 		t.AddLog("info", "开始执行 Docker Compose 部署...")
 
@@ -495,6 +795,13 @@ func deployApp(c *gin.Context) {
 		cmd.Dir = composeDir // 设置工作目录为项目目录
 		// 优化输出为纯文本，便于流式展示进度
 		cmd.Env = append(os.Environ(), "COMPOSE_PROGRESS=plain", "COMPOSE_NO_COLOR=1")
+		for k, v := range interpolationEnv {
+			k = strings.TrimSpace(k)
+			if k == "" || strings.Contains(k, "=") || !isLikelyEnvKey(k) {
+				continue
+			}
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
 
 		// 获取输出管道
 		stdout, err := cmd.StdoutPipe()
