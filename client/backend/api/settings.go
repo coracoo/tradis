@@ -34,6 +34,7 @@ type UpdateSettingsRequest struct {
 	AppStoreServerUrl          string `json:"appStoreServerUrl"`
 	AllocPortStart             int    `json:"allocPortStart"`
 	AllocPortEnd               int    `json:"allocPortEnd"`
+	AllowAutoAllocPort         bool   `json:"allowAutoAllocPort"`
 	ImageUpdateIntervalMinutes int    `json:"imageUpdateIntervalMinutes"`
 }
 
@@ -49,9 +50,10 @@ func updateGlobalSettings(c *gin.Context) {
 	}
 	if settings.IsDebugEnabled() {
 		log.Printf(
-			"Bound request: allocPortStart=%d allocPortEnd=%d imageUpdateIntervalMinutes=%d appStoreServerUrl=%s",
+			"Bound request: allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d appStoreServerUrl=%s",
 			req.AllocPortStart,
 			req.AllocPortEnd,
+			req.AllowAutoAllocPort,
 			req.ImageUpdateIntervalMinutes,
 			settings.RedactAppStoreURL(req.AppStoreServerUrl),
 		)
@@ -63,6 +65,7 @@ func updateGlobalSettings(c *gin.Context) {
 		AppStoreServerUrl:          req.AppStoreServerUrl,
 		AllocPortStart:             req.AllocPortStart,
 		AllocPortEnd:               req.AllocPortEnd,
+		AllowAutoAllocPort:         req.AllowAutoAllocPort,
 		ImageUpdateIntervalMinutes: req.ImageUpdateIntervalMinutes,
 	})
 	if err != nil {

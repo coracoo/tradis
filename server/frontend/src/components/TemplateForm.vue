@@ -87,31 +87,63 @@
 
     <el-divider content-position="left">部署配置</el-divider>
 
-    <el-row :gutter="20" class="deploy-config-row">
-      <el-col :span="12">
-        <el-form-item label=".env (可选)">
-          <div class="dotenv-editor-container">
-            <el-upload
-              class="dotenv-uploader-btn"
-              action="/api/upload"
-              :show-file-list="false"
-              :on-success="handleDotenvSuccess"
-              accept=".env,.txt"
-            >
-              <el-button type="primary" size="small">从文件导入</el-button>
-            </el-upload>
-            <el-input
-              type="textarea"
-              v-model="form.dotenv"
-              :rows="15"
-              placeholder="在此粘贴 .env 内容（可选）"
-              class="code-editor"
-              @blur="handleParseVariables"
-            />
+    <div class="global-env-bar">
+      <el-form-item label="全局变量（.env）">
+        <div class="dotenv-editor-container">
+          <div class="dotenv-form">
+            <div class="dotenv-form-header">
+              <div class="dotenv-form-title">全局变量表单</div>
+              <el-upload
+                class="dotenv-uploader-inline"
+                action="/api/upload"
+                :show-file-list="false"
+                :on-success="handleDotenvSuccess"
+                accept=".env,.txt"
+              >
+                <el-button type="primary" size="small">从文件导入</el-button>
+              </el-upload>
+            </div>
+            <div class="dotenv-form-desc">这里的变量会写入 .env，供整个 Compose 项目引用</div>
+            <div v-if="globalEnvRows.length === 0" class="empty-schema">
+              暂无全局变量，请点击“添加全局变量”或从文件导入。
+            </div>
+            <div v-else class="config-section">
+              <div class="section-header">
+                <span class="section-title">环境变量 (Env)</span>
+                <span class="section-desc">Key=Value</span>
+              </div>
+              <div v-for="(row, idx) in globalEnvRows" :key="row.key || idx" class="config-row">
+                <div class="config-col-type">
+                  <el-select :model-value="'env'" size="small" disabled>
+                    <el-option label="端口" value="port" />
+                    <el-option label="路径" value="path" />
+                    <el-option label="变量" value="env" />
+                    <el-option label="硬件" value="hardware" />
+                    <el-option label="其它" value="other" />
+                  </el-select>
+                </div>
+                <div class="config-label">
+                  <div class="config-var-name">{{ row.key }}</div>
+                </div>
+                <div class="config-value">
+                  <el-input
+                    :model-value="row.value"
+                    placeholder="Value"
+                    @update:model-value="(val) => handleSetGlobalEnvValue(row.key, val)"
+                  />
+                </div>
+                <div class="config-meta">
+                  <el-button type="danger" link :icon="Delete" @click="handleRemoveGlobalEnv(row.key)" />
+                </div>
+              </div>
+            </div>
           </div>
-        </el-form-item>
-      </el-col>
-      <el-col :span="12">
+        </div>
+      </el-form-item>
+    </div>
+
+    <el-row :gutter="20" class="deploy-config-row">
+      <el-col :span="24">
         <el-form-item label="Compose" required>
           <div class="compose-editor-container">
             <el-upload
@@ -143,6 +175,9 @@
         <div class="schema-actions">
           <el-button type="primary" size="small" @click="handleParseVariables">
             从 Compose 解析变量
+          </el-button>
+          <el-button type="success" size="small" @click="handleAddGlobalEnv">
+            添加全局变量
           </el-button>
           <el-button size="small" @click="handleAddVariable">
             添加自定义参数
@@ -190,9 +225,9 @@
 
         <el-collapse v-model="activeServices" class="schema-collapse">
           <el-collapse-item 
-            v-for="(group, serviceName) in groupedSchema" 
+            v-for="(group, serviceName) in groupedSchemaWithoutGlobal" 
             :key="serviceName" 
-            :title="serviceName === 'Global' ? '全局配置' : `服务: ${serviceName}`" 
+            :title="`服务: ${serviceName}`" 
             :name="serviceName"
           >
             <!-- Ports -->
@@ -563,6 +598,50 @@ const groupedSchema = computed(() => {
   return groups
 })
 
+const groupedSchemaWithoutGlobal = computed(() => {
+  const groups = groupedSchema.value || {}
+  const out = {}
+  Object.entries(groups).forEach(([k, v]) => {
+    if (k === 'Global') return
+    out[k] = v
+  })
+  return out
+})
+
+const globalEnvRows = computed(() => {
+  const { dotenv } = parseDotenvText(form.value.dotenv || '')
+  const dotenvObj = dotenv || {}
+  const dotenvKeys = Object.keys(dotenvObj)
+  const inDotenvKeySet = new Set(dotenvKeys)
+
+  const schemaKeySet = new Set()
+  const schemaKeysInOrder = []
+
+  ;(form.value.schema || []).forEach((item) => {
+    const serviceName = String(item?.serviceName || 'Global')
+    const paramType = String(inferSchemaParamType(item) || '')
+    if (serviceName !== 'Global') return
+    if (paramType !== 'env') return
+    const k = String(item?.name || '').trim()
+    if (!k) return
+    if (schemaKeySet.has(k)) return
+    schemaKeySet.add(k)
+    schemaKeysInOrder.push(k)
+  })
+
+  const orderedKeys = [...dotenvKeys]
+  schemaKeysInOrder.forEach((k) => {
+    if (!inDotenvKeySet.has(k)) orderedKeys.push(k)
+  })
+
+  return orderedKeys.map((k) => ({
+    key: k,
+    value: Object.prototype.hasOwnProperty.call(dotenvObj, k) ? dotenvObj[k] : '',
+    inDotenv: Object.prototype.hasOwnProperty.call(dotenvObj, k),
+    inSchema: schemaKeySet.has(k)
+  }))
+})
+
 const handleLogoSuccess = (response) => {
   form.value.logo = response.url
 }
@@ -624,6 +703,127 @@ const handleDotenvSuccess = async (response) => {
     ElMessage.error(error.message || '读取 .env 文件失败')
     form.value.dotenv = ''
   }
+}
+
+const buildUniqueDotenvKey = (baseKey) => {
+  const { dotenv } = parseDotenvText(form.value.dotenv || '')
+  const exists = new Set(Object.keys(dotenv || {}))
+  const raw = String(baseKey || '').trim() || 'NEW_VAR'
+  const safe = raw.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase()
+  if (!exists.has(safe)) return safe
+  for (let i = 2; i < 10000; i++) {
+    const k = `${safe}_${i}`
+    if (!exists.has(k)) return k
+  }
+  return `${safe}_${Date.now()}`
+}
+
+const appendDotenvLines = (currentText, linesToAdd) => {
+  const current = String(currentText || '')
+  const lines = Array.isArray(linesToAdd) ? linesToAdd : []
+  const content = current.replace(/\r\n/g, '\n')
+  const out = content.trimEnd()
+  const suffix = lines.filter(Boolean).join('\n')
+  if (!suffix) return content
+  if (!out) return suffix + '\n'
+  return out + '\n' + suffix + '\n'
+}
+
+const handleAddGlobalEnv = () => {
+  const key = buildUniqueDotenvKey('NEW_VAR')
+  form.value.dotenv = appendDotenvLines(form.value.dotenv, [`${key}=`])
+  ElMessage.success('已添加全局变量，请在上方全局变量表单编辑')
+  handleParseVariables()
+}
+
+/**
+ * inferSchemaParamType 兼容旧数据：从 schema item 推断 paramType
+ */
+function inferSchemaParamType(item) {
+  const explicit = String(item?.paramType || '').trim()
+  if (explicit) return explicit
+  const t = String(item?.type || '').trim()
+  if (t === 'port') return 'port'
+  if (t === 'path') return 'path'
+  if (['string', 'password', 'number', 'boolean'].includes(t)) return 'env'
+  return 'other'
+}
+
+/**
+ * formatDotenvValue 将值格式化为 .env 行里的 value（必要时加引号）
+ */
+function formatDotenvValue(value) {
+  const raw = String(value ?? '')
+  const needsQuote = /[\s#"'\r\n]/.test(raw)
+  if (!needsQuote) return raw
+  const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return `"${escaped}"`
+}
+
+/**
+ * upsertDotenvKeyValue 将 key=value 写入 .env 文本（尽量只替换最后一次出现）
+ */
+function upsertDotenvKeyValue(dotenvText, key, value) {
+  const k = String(key || '').trim()
+  if (!k) return String(dotenvText || '')
+
+  const lines = String(dotenvText || '').replace(/\r\n/g, '\n').split('\n')
+  const keyRegex = new RegExp(`^\\s*(?:export\\s+)?${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`)
+
+  let lastIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]
+    const trimmed = String(raw || '').trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    if (keyRegex.test(raw)) lastIdx = i
+  }
+
+  const newLine = `${k}=${formatDotenvValue(value)}`
+  if (lastIdx >= 0) {
+    lines[lastIdx] = newLine
+    return lines.join('\n').replace(/\n*$/, '\n')
+  }
+  return appendDotenvLines(dotenvText, [newLine])
+}
+
+/**
+ * removeDotenvKey 从 .env 文本中移除指定 key 的所有定义行
+ */
+function removeDotenvKey(dotenvText, key) {
+  const k = String(key || '').trim()
+  if (!k) return String(dotenvText || '')
+  const lines = String(dotenvText || '').replace(/\r\n/g, '\n').split('\n')
+  const keyRegex = new RegExp(`^\\s*(?:export\\s+)?${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:=|$)`)
+  const out = lines.filter((raw) => {
+    const trimmed = String(raw || '').trim()
+    if (!trimmed || trimmed.startsWith('#')) return true
+    return !keyRegex.test(raw)
+  })
+  return out.join('\n').replace(/\n*$/, '\n')
+}
+
+/**
+ * refreshDotenvKeySet 重新计算 .env key 集合（用于 UI 里的 “已定义/未定义” 标记）
+ */
+function refreshDotenvKeySet() {
+  const { dotenv } = parseDotenvText(form.value.dotenv || '')
+  dotenvKeySetRef.value = new Set(Object.keys(dotenv || {}))
+}
+
+/**
+ * handleSetGlobalEnvValue 在表单里修改全局变量时，同步写回 .env 文本
+ */
+function handleSetGlobalEnvValue(key, value) {
+  form.value.dotenv = upsertDotenvKeyValue(form.value.dotenv, key, value)
+  refreshDotenvKeySet()
+}
+
+/**
+ * handleRemoveGlobalEnv 删除全局变量（从 .env 中移除）
+ */
+function handleRemoveGlobalEnv(key) {
+  form.value.dotenv = removeDotenvKey(form.value.dotenv, key)
+  refreshDotenvKeySet()
 }
 
 const isDotenvDefined = (key) => {
@@ -699,8 +899,8 @@ const schemaExists = (name, serviceName, paramType) => {
 
 const parseRegexVariables = (content) => {
   const variables = new Set()
-  // 匹配 ${VAR} 或 $VAR
-  const regex = /\$\{?([A-Z0-9_]+)\}?/g
+  // 仅匹配 ${VAR}（兼容 ${VAR:-default} / ${VAR-default} 等形式），不处理 $VAR
+  const regex = /\$\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}/g
   let match
   while ((match = regex.exec(content)) !== null) {
     variables.add(match[1])
@@ -816,7 +1016,71 @@ const handleSubmit = async () => {
   width: 100%;
 }
 
+.global-env-bar {
+  border: 1px solid rgba(103, 194, 58, 0.35);
+  background: rgba(103, 194, 58, 0.08);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.dotenv-form {
+  margin-bottom: 10px;
+}
+
+.dotenv-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.dotenv-uploader-inline {
+  display: inline-flex;
+}
+
+.dotenv-form-title {
+  font-weight: 600;
+  color: #2f7a1c;
+}
+
+.dotenv-form-desc {
+  font-size: 12px;
+  color: rgba(103, 194, 58, 0.9);
+}
+
+.dotenv-key {
+  font-family: Consolas, Monaco, monospace;
+  color: #303133;
+}
+
+.dotenv-missing-tag {
+  margin-left: 8px;
+  transform: translateY(-1px);
+}
+
+.dotenv-table :deep(.el-table__header-wrapper th) {
+  background: rgba(103, 194, 58, 0.06);
+}
+
+.global-env-textarea :deep(.el-textarea__inner) {
+  font-family: Consolas, Monaco, monospace;
+  border-color: rgba(103, 194, 58, 0.55);
+  background: rgba(103, 194, 58, 0.04);
+}
+
+.dotenv-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #67c23a;
+  line-height: 1.4;
+}
+
 .dotenv-editor-container {
+  width: 100%;
+}
+
+.dotenv-raw-editor {
   position: relative;
   width: 100%;
 }

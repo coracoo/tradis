@@ -32,6 +32,18 @@ func getProjectsBaseDir() string {
 	return settings.GetProjectRoot()
 }
 
+func dockerComposeCmd(projectDir string, args ...string) *exec.Cmd {
+	base := []string{"compose"}
+	envPath := filepath.Join(projectDir, ".env")
+	if _, err := os.Stat(envPath); err == nil {
+		base = append(base, "--env-file", envPath)
+	}
+	base = append(base, args...)
+	cmd := exec.Command("docker", base...)
+	cmd.Dir = projectDir
+	return cmd
+}
+
 func normalizeComposeBindMountsForHost(composeContent string, hostProjectDir string) (string, error) {
 	hostProjectDir = strings.TrimSpace(hostProjectDir)
 	if hostProjectDir == "" {
@@ -114,11 +126,199 @@ func normalizeComposeBindMountsForHost(composeContent string, hostProjectDir str
 		svc["volumes"] = vols
 	}
 
-	out, err := yaml.Marshal(root)
+	out, err := marshalComposeYAMLOrdered(root)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// marshalComposeYAMLOrdered 将 Compose 数据结构序列化为 YAML，并统一字段顺序。
+func marshalComposeYAMLOrdered(v any) (string, error) {
+	b, err := yaml.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return "", err
+	}
+	if len(doc.Content) > 0 {
+		reorderComposeRootNode(doc.Content[0])
+	}
+
+	if len(doc.Content) == 0 {
+		return string(b), nil
+	}
+
+	out, err := yaml.Marshal(doc.Content[0])
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func reorderComposeRootNode(root *yaml.Node) {
+	if root == nil {
+		return
+	}
+	if root.Kind != yaml.MappingNode {
+		return
+	}
+
+	reorderMappingNodeWithPreferredKeys(root, []string{"version", "name", "services", "networks", "volumes", "configs", "secrets"})
+
+	services := mappingGetValue(root, "services")
+	if services != nil {
+		reorderComposeServicesNode(services)
+	}
+}
+
+func reorderComposeServicesNode(services *yaml.Node) {
+	if services == nil {
+		return
+	}
+	if services.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(services.Content); i += 2 {
+		svcVal := services.Content[i+1]
+		reorderComposeServiceNode(svcVal)
+	}
+}
+
+func reorderComposeServiceNode(service *yaml.Node) {
+	if service == nil {
+		return
+	}
+	if service.Kind != yaml.MappingNode {
+		return
+	}
+
+	firstKeys := map[string]bool{"image": true, "ports": true, "volumes": true, "env_file": true, "environment": true}
+	lastKeys := map[string]bool{"healthcheck": true, "command": true, "cmd": true, "entrypoint": true}
+
+	content := service.Content
+	first := make([]*yaml.Node, 0, len(content))
+	others := make([]*yaml.Node, 0, len(content))
+	health := make([]*yaml.Node, 0, 2)
+	cmd := make([]*yaml.Node, 0, 2)
+
+	pushPair := func(dst *[]*yaml.Node, k *yaml.Node, v *yaml.Node) {
+		*dst = append(*dst, k, v)
+	}
+
+	seen := map[string]bool{}
+	getPair := func(name string) (*yaml.Node, *yaml.Node, bool) {
+		for i := 0; i+1 < len(content); i += 2 {
+			k := content[i]
+			v := content[i+1]
+			if k.Kind == yaml.ScalarNode && k.Value == name {
+				return k, v, true
+			}
+		}
+		return nil, nil, false
+	}
+
+	for _, kname := range []string{"image", "ports", "volumes", "env_file", "environment"} {
+		k, v, ok := getPair(kname)
+		if !ok {
+			continue
+		}
+		pushPair(&first, k, v)
+		seen[kname] = true
+	}
+
+	for i := 0; i+1 < len(content); i += 2 {
+		k := content[i]
+		v := content[i+1]
+		name := ""
+		if k.Kind == yaml.ScalarNode {
+			name = k.Value
+		}
+		if name != "" {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			if firstKeys[name] {
+				continue
+			}
+			if lastKeys[name] {
+				switch name {
+				case "healthcheck":
+					pushPair(&health, k, v)
+				case "command", "cmd", "entrypoint":
+					pushPair(&cmd, k, v)
+				}
+				continue
+			}
+		}
+		pushPair(&others, k, v)
+	}
+
+	newContent := make([]*yaml.Node, 0, len(content))
+	newContent = append(newContent, first...)
+	newContent = append(newContent, others...)
+	newContent = append(newContent, health...)
+	newContent = append(newContent, cmd...)
+	service.Content = newContent
+}
+
+func reorderMappingNodeWithPreferredKeys(node *yaml.Node, preferred []string) {
+	if node == nil {
+		return
+	}
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+
+	content := node.Content
+	if len(content) < 2 {
+		return
+	}
+
+	used := make([]bool, len(content))
+	newContent := make([]*yaml.Node, 0, len(content))
+
+	for _, key := range preferred {
+		for i := 0; i+1 < len(content); i += 2 {
+			k := content[i]
+			if k.Kind == yaml.ScalarNode && k.Value == key {
+				newContent = append(newContent, content[i], content[i+1])
+				used[i] = true
+				used[i+1] = true
+				break
+			}
+		}
+	}
+
+	for i := 0; i+1 < len(content); i += 2 {
+		if used[i] {
+			continue
+		}
+		newContent = append(newContent, content[i], content[i+1])
+	}
+
+	node.Content = newContent
+}
+
+func mappingGetValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		k := node.Content[i]
+		v := node.Content[i+1]
+		if k.Kind == yaml.ScalarNode && k.Value == key {
+			return v
+		}
+	}
+	return nil
 }
 
 var selfIdentityOnce sync.Once
@@ -430,9 +630,69 @@ func runCommandStreamLines(ctx context.Context, dir string, env []string, args [
 	return nil
 }
 
+// withComposeEnvFile 为 docker compose 命令自动补充 --env-file 参数（若项目目录存在 .env）
+// 目的：确保通过 AppStore/模板部署时生成的合并 .env 能在后续 start/stop/restart 等管理操作中参与插值
+func withComposeEnvFile(projectDir string, args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	if args[0] != "compose" {
+		return args
+	}
+	for _, a := range args {
+		if a == "--env-file" {
+			return args
+		}
+	}
+
+	envFile := filepath.Join(projectDir, ".env")
+	if _, err := os.Stat(envFile); err != nil {
+		return args
+	}
+
+	out := make([]string, 0, len(args)+2)
+	out = append(out, "compose", "--env-file", envFile)
+	out = append(out, args[1:]...)
+	return out
+}
+
 func runComposeStreamLines(ctx context.Context, projectDir string, args []string, onLine func(string)) error {
 	env := []string{"COMPOSE_PROGRESS=plain", "COMPOSE_NO_COLOR=1"}
-	return runCommandStreamLines(ctx, projectDir, env, args, onLine)
+	return runCommandStreamLines(ctx, projectDir, env, withComposeEnvFile(projectDir, args), onLine)
+}
+
+// upsertDotenvKeyValue 在 dotenv 文本中更新/插入 KEY=VALUE（尽量保留原注释与格式）
+func upsertDotenvKeyValue(dotenvText string, key string, val string) string {
+	key = strings.TrimSpace(key)
+	if !isLikelyEnvKey(key) {
+		return dotenvText
+	}
+	lines := strings.Split(strings.ReplaceAll(dotenvText, "\r\n", "\n"), "\n")
+	needle := key + "="
+	for i := 0; i < len(lines); i++ {
+		raw := lines[i]
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		prefix := ""
+		line := trimmed
+		if strings.HasPrefix(line, "export ") {
+			prefix = "export "
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		if strings.HasPrefix(line, needle) || line == key {
+			lines[i] = prefix + key + "=" + val
+			return strings.Join(lines, "\n")
+		}
+	}
+	if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
+		lines = append(lines, "")
+	}
+	lines = append(lines, key+"="+val)
+	return strings.Join(lines, "\n")
 }
 
 // findComposeFile 在项目目录中查找可用的 compose 配置文件
@@ -484,6 +744,10 @@ func RegisterComposeRoutes(r *gin.RouterGroup) {
 	{
 		group.GET("/list", listProjects)
 		group.GET("/deploy/events", deployEvents)
+		group.POST("/deploy", deployComposeTask)
+		group.GET("/tasks", listComposeTasks)
+		group.GET("/tasks/:id", getComposeTask)
+		group.GET("/tasks/:id/events", composeTaskEvents)
 		group.POST("/:name/start", startProject)
 		group.GET("/:name/start/events", startProjectEvents)
 		group.POST("/:name/stop", stopProject)
@@ -497,7 +761,349 @@ func RegisterComposeRoutes(r *gin.RouterGroup) {
 		group.DELETE("/remove/:name", removeProject) // 修改为匹配当前请求格式
 		group.GET("/:name/logs", getComposeLogs)     // 确保这个路由已添加
 		group.GET("/:name/yaml", getProjectYaml)     // 添加获取 YAML 路由
+		group.GET("/:name/env", getProjectEnv)       // 添加获取 .env 路由
 		group.POST("/:name/yaml", saveProjectYaml)   // 添加保存 YAML 路由
+		group.POST("/:name/env", saveProjectEnv)     // 添加保存 .env 路由
+	}
+}
+
+type composeDeployRequest struct {
+	Name      string `json:"name"`
+	Compose   string `json:"compose"`
+	Dotenv    string `json:"dotenv"`
+	Env       string `json:"env"`
+	AutoStart *bool  `json:"autoStart"`
+}
+
+func deployComposeTask(c *gin.Context) {
+	var req composeDeployRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
+		return
+	}
+
+	projectNameRaw := strings.TrimSpace(req.Name)
+	composeRaw := strings.TrimSpace(req.Compose)
+	if projectNameRaw == "" || composeRaw == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名称和配置内容不能为空"})
+		return
+	}
+
+	projectName, ok := validateComposeProjectName(projectNameRaw)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, projectName) {
+		return
+	}
+
+	autoStart := true
+	if req.AutoStart != nil {
+		autoStart = *req.AutoStart
+	}
+
+	taskID := fmt.Sprintf("%d", time.Now().UnixNano())
+	_ = database.UpsertTask(taskID, "compose_deploy", "pending")
+
+	go runComposeDeployTask(taskID, projectName, req.Compose, req.Dotenv, req.Env, autoStart)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "部署任务已提交",
+		"taskId":  taskID,
+	})
+}
+
+func runComposeDeployTask(taskID string, projectName string, compose string, dotenvRaw string, envRaw string, autoStart bool) {
+	seq := int64(0)
+	appendLog := func(logType string, message string) {
+		seq++
+		_ = database.AppendTaskLogWithSeq(taskID, seq, time.Now(), logType, message)
+	}
+
+	done := false
+	finish := func(status string, result any, errStr string) {
+		if done {
+			return
+		}
+		done = true
+		_ = database.FinishTask(taskID, status, result, errStr)
+
+		st := strings.ToLower(strings.TrimSpace(status))
+		notifyType := "info"
+		notifyMsg := fmt.Sprintf("Compose 项目 %s 部署任务结束", projectName)
+		if st == "success" || st == "completed" {
+			notifyType = "success"
+			notifyMsg = fmt.Sprintf("Compose 项目 %s 部署成功", projectName)
+		} else {
+			notifyType = "error"
+			errText := strings.TrimSpace(errStr)
+			if errText == "" {
+				errText = "未知错误"
+			}
+			notifyMsg = fmt.Sprintf("Compose 项目 %s 部署失败：%s", projectName, errText)
+		}
+		_ = database.SaveNotification(&database.Notification{
+			Type:    notifyType,
+			Message: notifyMsg,
+			Read:    false,
+		})
+	}
+
+	_ = database.UpsertTask(taskID, "compose_deploy", "running")
+	appendLog("info", fmt.Sprintf("开始部署项目：%s", projectName))
+
+	projectDir := filepath.Join(getProjectsBaseDir(), projectName)
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	envPath := filepath.Join(projectDir, ".env")
+
+	if _, err := os.Stat(projectDir); err == nil {
+		appendLog("error", fmt.Sprintf("项目 '%s' 已存在，如需重新部署请先删除现有项目", projectName))
+		finish("error", nil, "project exists")
+		return
+	} else if !os.IsNotExist(err) {
+		appendLog("error", "检查项目目录失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		appendLog("error", "创建项目目录失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	composeToWrite := compose
+	if hostRoot := settings.GetHostProjectRoot(); hostRoot != "" {
+		hostProjectDir := filepath.Join(hostRoot, projectName)
+		if normalized, nerr := normalizeComposeBindMountsForHost(composeToWrite, hostProjectDir); nerr == nil {
+			composeToWrite = normalized
+		} else {
+			appendLog("error", "处理相对路径失败: "+nerr.Error())
+			finish("error", nil, nerr.Error())
+			return
+		}
+	}
+
+	if err := os.WriteFile(composePath, []byte(composeToWrite), 0644); err != nil {
+		appendLog("error", "保存配置文件失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	envMap := make(map[string]string)
+	if strings.TrimSpace(envRaw) != "" {
+		if err := json.Unmarshal([]byte(envRaw), &envMap); err != nil {
+			appendLog("warning", "解析 env 参数失败，将仅使用 dotenv: "+err.Error())
+			envMap = make(map[string]string)
+		}
+	}
+
+	dotenvText := strings.ReplaceAll(dotenvRaw, "\r\n", "\n")
+	if strings.TrimSpace(dotenvText) == "" && len(envMap) > 0 {
+		dotenvText = renderDotenvFromMap(envMap)
+	} else if len(envMap) > 0 {
+		for k, v := range envMap {
+			dotenvText = upsertDotenvKeyValue(dotenvText, k, v)
+		}
+	}
+
+	allowedKeys := extractComposeInterpolationKeys(composeToWrite)
+	dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
+
+	if err := os.WriteFile(envPath, []byte(dotenvText), 0644); err != nil {
+		appendLog("error", "保存 .env 文件失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	appendLog("success", "配置已保存")
+	if !autoStart {
+		finish("success", gin.H{"project": projectName, "autoStart": false}, "")
+		return
+	}
+
+	ctx := context.Background()
+	appendLog("info", "开始拉取镜像...")
+	if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "pull"}, func(line string) {
+		msgType := "info"
+		if strings.Contains(line, "error") || strings.Contains(line, "Error") {
+			msgType = "error"
+		}
+		appendLog(msgType, line)
+	}); err != nil {
+		appendLog("error", "拉取镜像失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	appendLog("info", "正在启动服务...")
+	if err := runComposeStreamLines(ctx, projectDir, []string{"compose", "up", "-d"}, func(line string) {
+		msgType := "info"
+		if strings.Contains(line, "error") || strings.Contains(line, "Error") {
+			msgType = "error"
+		} else if strings.Contains(line, "Created") || strings.Contains(line, "Started") {
+			msgType = "success"
+		}
+		appendLog(msgType, line)
+	}); err != nil {
+		appendLog("error", "部署失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		appendLog("error", "Docker客户端初始化失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", "com.docker.compose.project="+projectName),
+		),
+	})
+	if err != nil {
+		appendLog("error", "获取容器状态失败: "+err.Error())
+		finish("error", nil, err.Error())
+		return
+	}
+
+	allRunning := true
+	for _, container := range containers {
+		if container.State != "running" {
+			allRunning = false
+			break
+		}
+	}
+	if allRunning {
+		appendLog("success", "所有服务已成功启动")
+		finish("success", gin.H{"project": projectName, "containers": len(containers)}, "")
+		return
+	}
+
+	appendLog("warning", "部分服务可能未正常启动，请检查状态")
+	finish("success", gin.H{"project": projectName, "containers": len(containers), "warning": true}, "")
+}
+
+func listComposeTasks(c *gin.Context) {
+	typesRaw := strings.TrimSpace(c.Query("types"))
+	statusesRaw := strings.TrimSpace(c.Query("statuses"))
+	limitRaw := strings.TrimSpace(c.Query("limit"))
+
+	var taskTypes []string
+	if typesRaw != "" {
+		for _, s := range strings.Split(typesRaw, ",") {
+			if v := strings.TrimSpace(s); v != "" {
+				taskTypes = append(taskTypes, v)
+			}
+		}
+	}
+	if len(taskTypes) == 0 {
+		taskTypes = []string{"compose_deploy"}
+	}
+
+	var statuses []string
+	if statusesRaw != "" {
+		for _, s := range strings.Split(statusesRaw, ",") {
+			if v := strings.TrimSpace(s); v != "" {
+				statuses = append(statuses, v)
+			}
+		}
+	}
+
+	limit := 50
+	if limitRaw != "" {
+		if v, err := strconv.Atoi(limitRaw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+
+	list, err := database.ListTasks(taskTypes, statuses, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
+func getComposeTask(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "任务不存在"})
+		return
+	}
+	t, err := database.GetTask(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, t)
+}
+
+func composeTaskEvents(c *gin.Context) {
+	taskID := strings.TrimSpace(c.Param("id"))
+	if taskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "任务ID不能为空"})
+		return
+	}
+
+	setSSEHeaders(c)
+	ctx := c.Request.Context()
+
+	lastEventIDRaw := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	afterSeq := int64(0)
+	if lastEventIDRaw != "" {
+		if v, err := strconv.ParseInt(lastEventIDRaw, 10, 64); err == nil && v > 0 {
+			afterSeq = v
+		}
+	}
+
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
+	writeLine := func(seq int64, payload any) {
+		sseWriteJSONEvent(c, seq, "message", payload)
+		c.Writer.Flush()
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		logs, err := database.GetTaskLogsAfter(taskID, afterSeq, 500)
+		if err != nil {
+			writeLine(afterSeq+1, gin.H{"type": "error", "message": "读取任务日志失败: " + err.Error(), "time": time.Now().Format(time.RFC3339)})
+			return
+		}
+		for _, r := range logs {
+			writeLine(r.Seq, gin.H{"type": strings.TrimSpace(r.Type), "message": r.Message, "time": r.Time})
+			afterSeq = r.Seq
+		}
+
+		t, terr := database.GetTask(taskID)
+		if terr == nil {
+			st := strings.ToLower(strings.TrimSpace(t.Status))
+			if st == "success" || st == "error" || st == "failed" || st == "completed" {
+				writeLine(afterSeq+1, gin.H{"type": "result", "status": st, "taskId": taskID, "error": t.Error})
+				return
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-keepalive.C:
+			_, _ = fmt.Fprint(c.Writer, ": ping\n\n")
+			c.Writer.Flush()
+		case <-time.After(800 * time.Millisecond):
+		}
 	}
 }
 
@@ -516,7 +1122,8 @@ func startProject(c *gin.Context) {
 	// 异步执行启动命令
 	go func() {
 		// 使用 docker compose up 命令启动项目
-		cmd := exec.Command("docker", "compose", "up", "-d")
+		args := withComposeEnvFile(projectDir, []string{"compose", "up", "-d"})
+		cmd := exec.Command("docker", args...)
 		cmd.Dir = projectDir
 
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -542,7 +1149,8 @@ func stopProject(c *gin.Context) {
 	// 异步执行停止命令
 	go func() {
 		// 使用 docker compose stop 命令停止项目，添加 -t 2 缩短超时
-		cmd := exec.Command("docker", "compose", "stop", "-t", "2")
+		args := withComposeEnvFile(projectDir, []string{"compose", "stop", "-t", "2"})
+		cmd := exec.Command("docker", args...)
 		cmd.Dir = projectDir
 
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -568,7 +1176,8 @@ func restartProject(c *gin.Context) {
 	// 异步执行重启命令
 	go func() {
 		// 使用 docker compose restart 命令重启项目，添加 -t 2 缩短超时
-		cmd := exec.Command("docker", "compose", "restart", "-t", "2")
+		args := withComposeEnvFile(projectDir, []string{"compose", "restart", "-t", "2"})
+		cmd := exec.Command("docker", args...)
 		cmd.Dir = projectDir
 
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -861,7 +1470,8 @@ func buildProject(c *gin.Context) {
 
 	// 使用 docker compose build 命令构建项目
 	// 可以添加 --pull 选项确保拉取最新基础镜像，但这可能会慢
-	cmd := exec.Command("docker", "compose", "build")
+	args := withComposeEnvFile(projectDir, []string{"compose", "build"})
+	cmd := exec.Command("docker", args...)
 	cmd.Dir = projectDir
 
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -1044,6 +1654,8 @@ func listProjects(c *gin.Context) {
 func deployEvents(c *gin.Context) {
 	projectNameRaw := c.Query("name")
 	compose := c.Query("compose")
+	dotenvRaw := c.Query("dotenv")
+	envRaw := c.Query("env")
 
 	if projectNameRaw == "" || compose == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名称和配置内容不能为空"})
@@ -1086,6 +1698,7 @@ func deployEvents(c *gin.Context) {
 
 		projectDir := filepath.Join(getProjectsBaseDir(), projectName)
 		composePath := filepath.Join(projectDir, "docker-compose.yml")
+		envPath := filepath.Join(projectDir, ".env")
 
 		// 检查项目目录是否已存在
 		if _, err := os.Stat(projectDir); err == nil {
@@ -1117,6 +1730,31 @@ func deployEvents(c *gin.Context) {
 
 		if err := os.WriteFile(composePath, []byte(composeToWrite), 0644); err != nil {
 			sendMessage("error", "保存配置文件失败: "+err.Error())
+			return
+		}
+
+		envMap := make(map[string]string)
+		if strings.TrimSpace(envRaw) != "" {
+			if err := json.Unmarshal([]byte(envRaw), &envMap); err != nil {
+				sendMessage("warning", "解析 env 参数失败，将仅使用 dotenv: "+err.Error())
+				envMap = make(map[string]string)
+			}
+		}
+
+		dotenvText := strings.ReplaceAll(dotenvRaw, "\r\n", "\n")
+		if strings.TrimSpace(dotenvText) == "" && len(envMap) > 0 {
+			dotenvText = renderDotenvFromMap(envMap)
+		} else if len(envMap) > 0 {
+			for k, v := range envMap {
+				dotenvText = upsertDotenvKeyValue(dotenvText, k, v)
+			}
+		}
+
+		allowedKeys := extractComposeInterpolationKeys(composeToWrite)
+		dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
+
+		if err := os.WriteFile(envPath, []byte(dotenvText), 0644); err != nil {
+			sendMessage("error", "保存 .env 文件失败: "+err.Error())
 			return
 		}
 
@@ -1258,7 +1896,8 @@ func cleanProjectResources(name string) error {
 
 	// 1. 尝试使用 docker compose down 命令停止并删除容器
 	if _, err := os.Stat(projectDir); err == nil {
-		cmd := exec.Command("docker", "compose", "down")
+		args := withComposeEnvFile(projectDir, []string{"compose", "down"})
+		cmd := exec.Command("docker", args...)
 		cmd.Dir = projectDir
 
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -1488,6 +2127,66 @@ func getProjectYaml(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"content": string(content),
 	})
+}
+
+// getProjectEnv 获取项目 .env 内容
+func getProjectEnv(c *gin.Context) {
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
+
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+	envPath := filepath.Join(projectDir, ".env")
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"content": ""})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取 .env 文件失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"content": string(content)})
+}
+
+// saveProjectEnv 保存项目 .env 内容
+func saveProjectEnv(c *gin.Context) {
+	name, ok := validateComposeProjectName(c.Param("name"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目名不合法：仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头"})
+		return
+	}
+	if forbidIfSelfProject(c, name) {
+		return
+	}
+
+	var data struct {
+		Content string `json:"content"`
+	}
+	if err := c.BindJSON(&data); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据"})
+		return
+	}
+
+	projectDir := filepath.Join(getProjectsBaseDir(), name)
+	if _, err := os.Stat(projectDir); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "项目目录不存在"})
+		return
+	}
+
+	envPath := filepath.Join(projectDir, ".env")
+	content := strings.ReplaceAll(data.Content, "\r\n", "\n")
+	if err := os.WriteFile(envPath, []byte(content), 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 .env 文件失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": ".env 已保存"})
 }
 
 // 添加保存 YAML 配置的处理函数

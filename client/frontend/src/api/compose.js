@@ -8,11 +8,26 @@ export default {
     })
   },
   
-  deploy(data) {
+  deployTask(data) {
     return request({
-      url: '/compose/project',
+      url: '/compose/deploy',
       method: 'post',
       data
+    })
+  },
+
+  listTasks(params) {
+    return request({
+      url: '/compose/tasks',
+      method: 'get',
+      params
+    })
+  },
+
+  getTask(id) {
+    return request({
+      url: `/compose/tasks/${id}`,
+      method: 'get'
     })
   },
   
@@ -69,6 +84,21 @@ export default {
     return request({
       url: `/compose/${name}/yaml`,
       method: 'get'
+    })
+  },
+
+  getEnv(name) {
+    return request({
+      url: `/compose/${name}/env`,
+      method: 'get'
+    })
+  },
+
+  saveEnv(name, content) {
+    return request({
+      url: `/compose/${name}/env`,
+      method: 'post',
+      data: { content }
     })
   },
   

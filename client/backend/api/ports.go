@@ -264,10 +264,10 @@ func allocatePorts(c *gin.Context) {
 
 		// Validate
 		if startP <= 0 {
-			startP = 10000
+			startP = 55500
 		}
 		if endP <= 0 {
-			endP = 20000
+			endP = 56000
 		}
 		if endP < startP {
 			endP = startP

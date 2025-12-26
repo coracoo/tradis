@@ -789,12 +789,14 @@ type imageUpdateInfo struct {
 }
 
 type imageUpdateCheckResult struct {
-	Updates      []imageUpdateInfo
-	TotalImages  int
-	FoundUpdates int
-	RemoteErrors int
-	WriteErrors  int
-	Duration     time.Duration
+	Updates            []imageUpdateInfo
+	TotalImages        int
+	FoundUpdates       int
+	RemoteErrors       int
+	SkippedBackoff     int
+	SkippedUnavailable int
+	WriteErrors        int
+	Duration           time.Duration
 }
 
 var imageUpdateLastRun int64
@@ -829,7 +831,7 @@ func formatImageUpdateMessage(repoTags []string) string {
 	return fmt.Sprintf("%s%s 镜像有新版本，去及时查看", strings.Join(display, "、"), suffix)
 }
 
-func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
+func runImageUpdateCheck(ctx context.Context, force bool) (imageUpdateCheckResult, error) {
 	start := time.Now()
 	result := imageUpdateCheckResult{}
 
@@ -881,15 +883,35 @@ func runImageUpdateCheck(ctx context.Context) (imageUpdateCheckResult, error) {
 			if existingSet[tag] {
 				continue
 			}
+
+			if force {
+				_ = database.ResetImageRemoteDigestStatus(tag)
+			} else {
+				st, serr := database.GetImageRemoteDigestStatus(tag)
+				if serr == nil {
+					if st.Unavailable {
+						result.SkippedUnavailable++
+						continue
+					}
+					if t, ok := database.ParseSQLiteTime(st.NextCheckAt); ok && time.Now().Before(t) {
+						result.SkippedBackoff++
+						continue
+					}
+				}
+			}
+
 			remoteDigest, derr := getDockerHubDigest(tag)
 			if derr != nil {
 				remoteErrors++
+				policy := settings.GetImageRemoteDigestBackoffPolicy()
+				_, _ = database.RecordImageRemoteDigestFailure(tag, derr.Error(), policy.FirstFailBackoff, policy.SecondFailBackoff, policy.MaxConsecutiveFail)
 				if allowRemoteDigestErrorLog(tag) {
 					log.Printf("获取远端镜像摘要失败 repoTag=%s: %v", tag, derr)
 					system.LogSimpleEvent("error", fmt.Sprintf("镜像远端摘要获取失败: %s, 错误: %v", tag, derr))
 				}
 				continue
 			}
+			_ = database.ResetImageRemoteDigestStatus(tag)
 			if remoteDigest == "" || remoteDigest == localDigest {
 				continue
 			}
@@ -942,7 +964,7 @@ func StartImageUpdateScheduler() {
 			}
 
 			ctx := context.Background()
-			result, cerr := runImageUpdateCheck(ctx)
+			result, cerr := runImageUpdateCheck(ctx, false)
 			now := time.Now()
 			atomic.StoreInt64(&imageUpdateLastRun, now.Unix())
 
@@ -992,7 +1014,12 @@ func StartImageUpdateScheduler() {
 }
 
 func checkImageUpdates(c *gin.Context) {
-	result, err := runImageUpdateCheck(context.Background())
+	force := false
+	v := strings.TrimSpace(strings.ToLower(c.Query("force")))
+	if v == "1" || v == "true" || v == "yes" || v == "on" {
+		force = true
+	}
+	result, err := runImageUpdateCheck(context.Background(), force)
 	if err != nil {
 		system.LogSimpleEvent("error", fmt.Sprintf("手动镜像更新检测失败: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1027,7 +1054,12 @@ func checkImageUpdates(c *gin.Context) {
 			result.Duration.Seconds(),
 		))
 	}
-	c.JSON(http.StatusOK, gin.H{"updates": result.Updates})
+	c.JSON(http.StatusOK, gin.H{
+		"updates":            result.Updates,
+		"remoteErrors":       result.RemoteErrors,
+		"skippedBackoff":     result.SkippedBackoff,
+		"skippedUnavailable": result.SkippedUnavailable,
+	})
 }
 
 func listStoredImageUpdates(c *gin.Context) {

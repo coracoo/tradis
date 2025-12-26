@@ -142,10 +142,10 @@ const getEventIcon = (type) => {
 
 const getEventLabel = (type) => {
   switch (type?.toLowerCase()) {
-    case 'success': return '启动类'
-    case 'warning': return '停止类'
-    case 'error': return '删除类'
-    default: return '信息'
+    case 'success': return 'info'
+    case 'warning': return 'warm'
+    case 'error': return 'danger'
+    default: return 'info'
   }
 }
 

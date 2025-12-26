@@ -31,7 +31,22 @@ type Settings struct {
 	AppStoreServerUrl          string `json:"appStoreServerUrl"`
 	AllocPortStart             int    `json:"allocPortStart"`
 	AllocPortEnd               int    `json:"allocPortEnd"`
+	AllowAutoAllocPort         bool   `json:"allowAutoAllocPort"`
 	ImageUpdateIntervalMinutes int    `json:"imageUpdateIntervalMinutes"`
+}
+
+type ImageRemoteDigestBackoffPolicy struct {
+	FirstFailBackoff  time.Duration
+	SecondFailBackoff time.Duration
+	MaxConsecutiveFail int
+}
+
+func GetImageRemoteDigestBackoffPolicy() ImageRemoteDigestBackoffPolicy {
+	return ImageRemoteDigestBackoffPolicy{
+		FirstFailBackoff:  24 * time.Hour,
+		SecondFailBackoff: 48 * time.Hour,
+		MaxConsecutiveFail: 3,
+	}
 }
 
 // IsDebugEnabled 判断是否启用调试日志（通过环境变量控制）。
@@ -133,13 +148,16 @@ func InitSettingsTable() error {
 	if err := insertDefault("appstore_server_url", DefaultAppStoreServerURL); err != nil {
 		return err
 	}
-	if err := insertDefault("alloc_port_start", "20000"); err != nil {
+	if err := insertDefault("alloc_port_start", "55500"); err != nil {
 		return err
 	}
-	if err := insertDefault("alloc_port_end", "30000"); err != nil {
+	if err := insertDefault("alloc_port_end", "56000"); err != nil {
 		return err
 	}
-	if err := insertDefault("image_update_interval_minutes", "30"); err != nil {
+	if err := insertDefault("allow_auto_alloc_port", "false"); err != nil {
+		return err
+	}
+	if err := insertDefault("image_update_interval_minutes", "120"); err != nil {
 		return err
 	}
 
@@ -174,9 +192,24 @@ func GetSettings() (Settings, error) {
 		return i
 	}
 
-	s.AllocPortStart = parseInt(getValue("alloc_port_start"), 20000)
-	s.AllocPortEnd = parseInt(getValue("alloc_port_end"), 30000)
-	s.ImageUpdateIntervalMinutes = parseInt(getValue("image_update_interval_minutes"), 30)
+	parseBool := func(v string, def bool) bool {
+		t := strings.TrimSpace(strings.ToLower(v))
+		if t == "" {
+			return def
+		}
+		if t == "1" || t == "true" || t == "yes" || t == "on" {
+			return true
+		}
+		if t == "0" || t == "false" || t == "no" || t == "off" {
+			return false
+		}
+		return def
+	}
+
+	s.AllocPortStart = parseInt(getValue("alloc_port_start"), 55500)
+	s.AllocPortEnd = parseInt(getValue("alloc_port_end"), 56000)
+	s.AllowAutoAllocPort = parseBool(getValue("allow_auto_alloc_port"), false)
+	s.ImageUpdateIntervalMinutes = parseInt(getValue("image_update_interval_minutes"), 120)
 
 	return s, nil
 }
@@ -227,12 +260,13 @@ func UpdateSettings(s Settings) error {
 
 	if IsDebugEnabled() {
 		log.Printf(
-			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s allocPortStart=%d allocPortEnd=%d imageUpdateIntervalMinutes=%d",
+			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d",
 			s.LanUrl,
 			s.WanUrl,
 			RedactAppStoreURL(s.AppStoreServerUrl),
 			s.AllocPortStart,
 			s.AllocPortEnd,
+			s.AllowAutoAllocPort,
 			s.ImageUpdateIntervalMinutes,
 		)
 	}
@@ -256,6 +290,9 @@ func UpdateSettings(s Settings) error {
 		return err
 	}
 	if err := update("alloc_port_end", strconv.Itoa(s.AllocPortEnd)); err != nil {
+		return err
+	}
+	if err := update("allow_auto_alloc_port", strconv.FormatBool(s.AllowAutoAllocPort)); err != nil {
 		return err
 	}
 	if err := update("image_update_interval_minutes", strconv.Itoa(s.ImageUpdateIntervalMinutes)); err != nil {

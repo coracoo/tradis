@@ -72,7 +72,7 @@
         <span :class="appStoreConnected ? 'dot connected' : 'dot'" /> 
         <span> {{ appStoreConnected ? '商城服务连接正常' : '商城服务连接异常' }} </span>
       </div>
-      <div class="version-info">v0.3.7 (开发中)</div>
+      <div class="version-info">v0.4.0 (开发中)</div>
     </div>
   </aside>
 </template>
@@ -81,8 +81,6 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import request from '../utils/request'
-// 图标组件已经在 main.js 中全局注册，或者按需引入
-// 这里假设已经在 main.js 中全局注册了 Element Plus Icons
 
 const route = useRoute()
 const managementMode = ((window.__ENV__ && window.__ENV__.MANAGEMENT_MODE) || import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toLowerCase()
@@ -90,7 +88,6 @@ const isCS = managementMode === 'centralized' || managementMode === 'cs'
 const isDS = managementMode === 'distributed' || managementMode === 'ds'
 const defaultActive = computed(() => {
   const path = route.path
-  // 处理详情页面的高亮
   if (path.startsWith('/containers/')) return '/containers'
   if (path.startsWith('/projects/')) return '/projects'
   if (path.startsWith('/compose')) return '/compose'
@@ -123,7 +120,6 @@ onUnmounted(() => {
 
 <style scoped>
 .sidebar {
-  /* 宽度已在 layout.css 中定义 */
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -157,7 +153,7 @@ onUnmounted(() => {
   padding: 16px 24px 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #5c6b7f; /* 调整分组标题颜色 */
+  color: #5c6b7f;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -208,11 +204,11 @@ onUnmounted(() => {
 
 .footer-status {
   padding: 16px 24px;
-  background: #001529; /* 与侧边栏背景一致 */
+  background: #001529;
   border-top: 1px solid rgba(255,255,255,0.05);
   font-size: 12px;
   color: #6b7280;
-  margin-top: auto; /* 确保在底部 */
+  margin-top: auto;
 }
 
 .status-item {

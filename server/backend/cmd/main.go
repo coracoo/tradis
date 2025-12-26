@@ -137,7 +137,10 @@ func main() {
 	admin.Use(adminIPAllowlistMiddleware(allowlist))
 	admin.POST("/templates", handlers.CreateTemplate(db))
 	admin.PUT("/templates/:id", handlers.UpdateTemplate(db))
+	admin.POST("/templates/:id/enable", handlers.EnableTemplate(db))
+	admin.POST("/templates/:id/disable", handlers.DisableTemplate(db))
 	admin.DELETE("/templates/:id", handlers.DeleteTemplate(db))
+	admin.POST("/templates/sync", handlers.SyncTemplatesToGithubHandler(db))
 	admin.POST("/upload", handlers.UploadFile)
 
 	port := os.Getenv("PORT")

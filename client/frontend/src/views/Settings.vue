@@ -93,6 +93,12 @@
       </template>
       <div class="port-settings">
         <el-form :model="allocSettings" label-width="140px">
+          <el-form-item label="允许自动分配端口">
+            <div class="switch-group">
+              <el-switch v-model="allocSettings.allowAutoAllocPort" />
+              <span class="status-text">{{ allocSettings.allowAutoAllocPort ? '已开启' : '已关闭' }}</span>
+            </div>
+          </el-form-item>
           <el-form-item label="自动分配范围">
             <div class="range-row">
               <el-input-number v-model="allocSettings.start" :min="1024" :max="65535" placeholder="起始端口" />
@@ -104,6 +110,7 @@
         </el-form>
         
         <div class="help-text">
+          <p>开启后：应用部署页面将自动为端口参数填充可用端口（来自锁定范围）。</p>
           <p>自动分配范围：用于应用部署时自动填充端口。</p>
         </div>
       </div>
@@ -130,8 +137,8 @@ const settingsForm = ref({
 })
 const loading = ref(false)
 const urlLoading = ref(false)
-// const portRange = ref({ start: 0, end: 65535, protocol: 'TCP+UDP' })
-const allocSettings = ref({ start: 50000, end: 51000 })
+const portRange = ref({ start: 0, end: 65535, protocol: 'TCP+UDP' })
+const allocSettings = ref({ start: 50000, end: 51000, allowAutoAllocPort: false })
 const allocSaving = ref(false)
 
 onMounted(async () => {
@@ -147,6 +154,7 @@ onMounted(async () => {
       }
       if (res.allocPortStart) allocSettings.value.start = res.allocPortStart
       if (res.allocPortEnd) allocSettings.value.end = res.allocPortEnd
+      if (typeof res.allowAutoAllocPort === 'boolean') allocSettings.value.allowAutoAllocPort = res.allowAutoAllocPort
     }
   } catch (error) {
     console.error('Failed to load settings:', error)
@@ -173,6 +181,7 @@ const handleRefresh = async () => {
       }
       if (res.allocPortStart) allocSettings.value.start = res.allocPortStart
       if (res.allocPortEnd) allocSettings.value.end = res.allocPortEnd
+      if (typeof res.allowAutoAllocPort === 'boolean') allocSettings.value.allowAutoAllocPort = res.allowAutoAllocPort
     }
     
     const pr = await api.ports.getRange()
@@ -197,6 +206,7 @@ const saveServerSettings = async () => {
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
+      allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
       imageUpdateIntervalMinutes: settingsForm.value.imageUpdateIntervalMinutes
     })
     ElMessage.success('配置已保存')
@@ -257,8 +267,10 @@ const saveAllocSettings = async () => {
     await request.post('/settings/global', {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
+      appStoreServerUrl: settingsForm.value.appStoreServerUrl,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
+      allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
       imageUpdateIntervalMinutes: settingsForm.value.imageUpdateIntervalMinutes
     })
     ElMessage.success('端口分配范围已保存')

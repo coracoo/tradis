@@ -104,10 +104,11 @@ const imagesApi = {
     })
   },
 
-  checkUpdates: () => {
+  checkUpdates: (params) => {
     return request({
       url: '/images/updates',
-      method: 'get'
+      method: 'get',
+      params
     })
   },
 

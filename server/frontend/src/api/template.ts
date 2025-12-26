@@ -21,7 +21,15 @@ export const templateApi = {
     return api.put(`/templates/${id}`, data)
   },
 
+  setEnabled(id: string, enabled: boolean) {
+    return enabled ? api.post(`/templates/${id}/enable`) : api.post(`/templates/${id}/disable`)
+  },
+
   delete(id: string) {
     return api.delete(`/templates/${id}`)
+  },
+
+  syncToGithub() {
+    return api.post('/templates/sync')
   }
 }

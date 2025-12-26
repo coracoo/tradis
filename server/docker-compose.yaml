@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    image: coracoo/tradis:server_b_0.1.0
+    image: coracoo/tradis:server_b_0.1.2
     container_name: tradis-server-backend
     restart: unless-stopped
     ports:
@@ -13,14 +13,14 @@ services:
     environment:
       - PORT=3002
       - GIN_MODE=release
-      - ADMIN_ALLOWLIST=${ADMIN_ALLOWLIST:-127.0.0.1,::1}
+      - ADMIN_ALLOWLIST=${ADMIN_ALLOWLIST:-127.0.0.1,::1,192.168.0.0/16}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-127.0.0.1,::1,172.16.0.0/12}
 
   tradis-frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    image: coracoo/tradis:server_f_0.1.0
+    image: coracoo/tradis:server_f_0.1.1
     container_name: tradis-server-frontend
     restart: unless-stopped
     ports:

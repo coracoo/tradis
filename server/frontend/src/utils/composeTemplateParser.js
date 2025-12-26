@@ -190,12 +190,7 @@ const extractVarRefs = (text) => {
       continue
     }
 
-    const rest = s.slice(i + 1)
-    const m = rest.match(/^([A-Za-z_][A-Za-z0-9_]*)/)
-    if (m) {
-      push(m[1], false, '', `$${m[1]}`)
-      i += m[1].length
-    }
+    continue
   }
 
   return out

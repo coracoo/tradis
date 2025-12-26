@@ -51,7 +51,7 @@
     <div class="content-wrapper">
       <div v-loading="loading" class="scroll-container">
         <div v-if="filteredApps.length > 0" class="app-grid">
-          <el-card v-for="app in filteredApps" :key="app.id" class="app-card" shadow="hover">
+          <el-card v-for="app in paginatedApps" :key="app.id" class="app-card" shadow="hover">
             <div class="app-card-body">
               <div class="app-icon-wrapper">
                 <img :src="resolvePicUrl(app.logo || app.icon)" :alt="app.name" class="app-icon" @error="handleImageError">
@@ -77,13 +77,25 @@
         </div>
         <el-empty v-else description="未找到相关应用" />
       </div>
+      <div class="pagination-bar" v-if="filteredApps.length > 0">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[16, 24, 32, 40]"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="total"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
 
     <!-- 应用详情对话框 -->
     <el-dialog
       v-model="detailVisible"
       :title="currentApp?.name"
-      width="600px"
+      width="1000"
+      height="800"
       append-to-body
       class="app-detail-dialog"
     >
@@ -91,7 +103,7 @@
         <div class="app-detail-header">
           <img :src="resolvePicUrl(currentApp.logo || currentApp.icon)" :alt="currentApp.name" class="detail-icon" @error="handleImageError">
           <div class="detail-info">
-            <p class="detail-desc">{{ currentApp.description }}</p>
+            <p class="detail-desc"> <b>应用简介：</b>{{ currentApp.description }}</p>
             <div class="detail-meta">
               <span class="meta-item">
                 <el-icon><PriceTag /></el-icon>
@@ -101,26 +113,66 @@
                 <el-icon><Folder /></el-icon>
                 {{ getCategoryLabel(currentApp.category) }}
               </span>
+              <span v-if="currentApp.website" class="meta-item meta-link">
+                <el-link :href="currentApp.website" target="_blank" rel="noopener noreferrer" type="primary" :underline="false">
+                  跳转项目主页
+                </el-link>
+              </span>
             </div>
           </div>
         </div>
-        <div class="app-readme">
+        <div v-if="screenshotUrls.length" class="banner-section">
+          <h4><b>应用截图：</b></h4>
+          <div class="banner-container">
+            <img
+              :src="screenshotUrls[bannerIndex]"
+              class="banner-image"
+              :alt="`${currentApp.name} screenshot ${bannerIndex + 1}`"
+              @click="openScreenshotViewer(bannerIndex)"
+            />
+            <el-button class="banner-nav banner-nav-left" circle plain @click="prevBanner">
+              <el-icon><ArrowLeft /></el-icon>
+            </el-button>
+            <el-button class="banner-nav banner-nav-right" circle plain @click="nextBanner">
+              <el-icon><ArrowRight /></el-icon>
+            </el-button>
+          </div>
+          <div class="banner-indicators">
+            <button
+              v-for="(_, idx) in screenshotUrls"
+              :key="idx"
+              type="button"
+              :class="['banner-dot', { active: idx === bannerIndex }]"
+              @click="bannerIndex = idx"
+            />
+          </div>
+        </div>
+        <!---<div class="app-readme">
           <h4>应用简介</h4>
           <p>{{ currentApp.description }}</p>
-        </div>
+        </div>-->
       </template>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
         <el-button type="primary" @click="confirmDeploy">去部署</el-button>
       </template>
     </el-dialog>
+
+    <el-image-viewer
+      v-if="showImageViewer"
+      :url-list="previewImageList"
+      :initial-index="imageViewerIndex"
+      hide-on-click-modal
+      @close="closeImageViewer"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Download, InfoFilled, PriceTag, Folder, Refresh } from '@element-plus/icons-vue'
+import { Search, Download, InfoFilled, PriceTag, Folder, Refresh, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { ElImageViewer } from 'element-plus'
 import api from '../api'
 import request from '../utils/request'
 
@@ -133,6 +185,13 @@ const apps = ref([])
 const installedProjects = ref([])
 const loading = ref(false)
 const appStoreBase = ref('')
+const currentPage = ref(1)
+const pageSize = ref(16)
+const total = ref(0)
+const bannerIndex = ref(0)
+const showImageViewer = ref(false)
+const previewImageList = ref([])
+const imageViewerIndex = ref(0)
 
 const CACHE_KEY = 'appstore_projects'
 const CACHE_TIME_KEY = 'appstore_cache_time'
@@ -157,13 +216,40 @@ const getCategoryLabel = (category) => {
 }
 
 const filteredApps = computed(() => {
-  return apps.value.filter(app => {
+  const base = [...apps.value].sort((a, b) => {
+    const ia = typeof a?.id === 'number' ? a.id : parseInt(a?.id || '0')
+    const ib = typeof b?.id === 'number' ? b.id : parseInt(b?.id || '0')
+    return (ib || 0) - (ia || 0)
+  })
+
+  const list = base.filter(app => {
     const matchCategory = activeCategory.value === 'all' || app.category === activeCategory.value
-    const matchSearch = app.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-                       app.description.toLowerCase().includes(searchQuery.value.toLowerCase())
+    const matchSearch = app.name.toLowerCase().includes(searchQuery.value.toLowerCase()) // || app.description.toLowerCase().includes(searchQuery.value.toLowerCase())
     return matchCategory && matchSearch
   })
+
+  total.value = list.length
+  const maxPage = Math.max(1, Math.ceil(total.value / pageSize.value))
+  if (currentPage.value > maxPage) {
+    currentPage.value = 1
+  }
+  return list
 })
+
+const paginatedApps = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredApps.value.slice(start, end)
+})
+
+const handleSizeChange = (size) => {
+  pageSize.value = size
+  currentPage.value = 1
+}
+
+const handleCurrentChange = (page) => {
+  currentPage.value = page
+}
 
 const fetchApps = async (force = false) => {
   loading.value = true
@@ -208,6 +294,7 @@ const refreshApps = () => {
 
 const showDetail = (app) => {
   currentApp.value = app
+  bannerIndex.value = 0
   detailVisible.value = true
 }
 
@@ -250,6 +337,35 @@ const resolvePicUrl = (u) => {
   if (u.startsWith('http://') || u.startsWith('https://')) return u
   if (u.startsWith('/')) return appStoreBase.value + u
   return appStoreBase.value + '/' + u
+}
+
+const screenshotUrls = computed(() => {
+  const list = currentApp.value && Array.isArray(currentApp.value.screenshots) ? currentApp.value.screenshots : []
+  return list.map(resolvePicUrl).filter(Boolean)
+})
+
+const prevBanner = () => {
+  const len = screenshotUrls.value.length
+  if (!len) return
+  bannerIndex.value = (bannerIndex.value - 1 + len) % len
+}
+
+const nextBanner = () => {
+  const len = screenshotUrls.value.length
+  if (!len) return
+  bannerIndex.value = (bannerIndex.value + 1) % len
+}
+
+const openScreenshotViewer = (idx) => {
+  const list = screenshotUrls.value
+  if (!list.length) return
+  previewImageList.value = list
+  imageViewerIndex.value = Math.max(0, Math.min(idx || 0, list.length - 1))
+  showImageViewer.value = true
+}
+
+const closeImageViewer = () => {
+  showImageViewer.value = false
 }
 </script>
 
@@ -305,6 +421,14 @@ const resolvePicUrl = (u) => {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+}
+
+.pagination-bar {
+  padding: 12px 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* App Grid */
@@ -419,6 +543,10 @@ const resolvePicUrl = (u) => {
 }
 
 /* Dialog Styles */
+.app-detail-dialog :deep(.el-dialog) {
+  max-width: 1280px;
+}
+
 .app-detail-header {
   display: flex;
   gap: 20px;
@@ -459,6 +587,75 @@ const resolvePicUrl = (u) => {
   background: var(--el-fill-color-lighter);
   padding: 4px 10px;
   border-radius: 6px;
+}
+
+.meta-link {
+  padding: 0 10px;
+}
+
+.banner-section {
+  margin: 0 auto 18px;
+}
+
+.banner-container {
+  width: 100%;
+  max-width: 900px;
+  height: 400px;
+  margin: 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--el-fill-color-darker);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.banner-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  cursor: pointer;
+  background-color: rgb（224,255,255）;
+}
+
+.banner-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.banner-nav-left {
+  left: 12px;
+}
+
+.banner-nav-right {
+  right: 12px;
+}
+
+.banner-indicators {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.banner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: none;
+  background: var(--el-border-color);
+  cursor: pointer;
+  padding: 0;
+}
+
+.banner-dot.active {
+  background: var(--el-color-primary);
 }
 
 .app-readme h4 {

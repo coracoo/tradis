@@ -108,6 +108,7 @@ const displayTitle = computed(() => {
 const isDark = ref(false)
 const notifications = ref([])
 const notificationPanelVisible = ref(false)
+let notificationPollTimer = null
 
 const deletedTempIds = new Set()
 
@@ -293,12 +294,19 @@ onMounted(() => {
   window.addEventListener('dockpier-notification', handleNotification)
   document.addEventListener('click', handleDocumentClick)
   loadNotifications()
+  notificationPollTimer = setInterval(() => {
+    loadNotifications()
+  }, 15000)
 })
 
 onUnmounted(() => {
   window.removeEventListener('theme-change', initTheme)
   window.removeEventListener('dockpier-notification', handleNotification)
   document.removeEventListener('click', handleDocumentClick)
+  if (notificationPollTimer) {
+    clearInterval(notificationPollTimer)
+    notificationPollTimer = null
+  }
 })
 </script>
 

@@ -4,9 +4,14 @@
       <template #header>
         <div class="card-header">
           <span>模板列表</span>
-          <el-button type="primary" :icon="Plus" @click="handleCreate">
-            新建模板
-          </el-button>
+          <div class="card-header-actions">
+            <el-button type="primary" plain :icon="Upload" :loading="syncing" @click="handleSyncToGithub">
+              同步到Github
+            </el-button>
+            <el-button type="primary" :icon="Plus" @click="handleCreate">
+              新建模板
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -78,7 +83,7 @@
 import { ref, onMounted } from 'vue'
 import TemplateForm from '../components/TemplateForm.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Picture } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, Picture, Upload } from '@element-plus/icons-vue'
 import { templateApi } from '../api/template'
 
 const templates = ref([])
@@ -86,6 +91,7 @@ const dialogVisible = ref(false)
 const dialogTitle = ref('新建模板')
 const currentTemplate = ref(null)
 const formRef = ref(null)
+const syncing = ref(false)
 
 const getCategoryLabel = (val) => {
   const map = {
@@ -139,7 +145,7 @@ const handleEdit = (row) => {
 
 const handleStatusChange = async (row) => {
   try {
-    await templateApi.update(row.id, { enabled: row.enabled })
+    await templateApi.setEnabled(row.id, row.enabled)
     ElMessage.success(row.enabled ? '已启用' : '已关闭')
   } catch (error) {
     row.enabled = !row.enabled // 恢复状态
@@ -179,6 +185,43 @@ const handleSubmit = async (formData) => {
   }
 }
 
+const handleSyncToGithub = async () => {
+  if (syncing.value) return
+
+  try {
+    await ElMessageBox.confirm('确定要同步到 Github 吗？', '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch (error) {
+    return
+  }
+
+  syncing.value = true
+  try {
+    const response = await templateApi.syncToGithub()
+    const data = response?.data || {}
+    const updatedCount = Number(data.updated_count ?? 0)
+    const totalCount = Number(data.total_count ?? 0)
+    const note = String(data.note || '').trim()
+    const templatesNote = String(data.templates_note || '').trim()
+
+    const msgParts = []
+    if (!Number.isNaN(updatedCount)) msgParts.push(`更新 ${updatedCount} 个`)
+    if (!Number.isNaN(totalCount)) msgParts.push(`累计 ${totalCount} 个`)
+    if (note) msgParts.push(note)
+    if (templatesNote) msgParts.push(templatesNote)
+
+    ElMessage.success(msgParts.length ? msgParts.join('，') : '同步完成')
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.response?.data?.error || error?.message
+    ElMessage.error(detail ? `同步失败：${detail}` : '同步失败')
+  } finally {
+    syncing.value = false
+  }
+}
+
 onMounted(() => {
   fetchTemplates()
 })
@@ -197,6 +240,12 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .image-slot {

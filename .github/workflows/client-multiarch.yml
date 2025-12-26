@@ -1,0 +1,78 @@
+name: Build & Push Multi-Arch Image (client)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "镜像版本号（例如 v1.0.0 或 1.0.0）"
+        required: true
+        type: string
+      push_latest:
+        description: "是否同时推送 latest 标签"
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: coracoo/tradis
+  PLATFORMS: linux/amd64,linux/arm64,linux/arm/v7
+  VITE_MANAGEMENT_MODE: CS
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          set -e
+          v="${{ inputs.version }}"
+          if [[ -z "$v" ]]; then
+            v="${GITHUB_REF_NAME}"
+          fi
+          v="${v#v}"
+          if [[ -z "$v" ]]; then
+            echo "version 为空" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          tags="${{ env.IMAGE_NAME }}:${v}"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            tags="${tags}\n${{ env.IMAGE_NAME }}:latest"
+          elif [[ "${{ inputs.push_latest }}" == "true" ]]; then
+            tags="${tags}\n${{ env.IMAGE_NAME }}:latest"
+          fi
+          echo -e "tags<<EOF\n${tags}\nEOF" >> "$GITHUB_OUTPUT"
+
+      - name: Login DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./client
+          file: ./client/dockerfile_sim
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          build-args: |
+            VITE_MANAGEMENT_MODE=${{ env.VITE_MANAGEMENT_MODE }}
+          tags: ${{ steps.ver.outputs.tags }}

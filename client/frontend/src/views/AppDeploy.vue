@@ -70,25 +70,76 @@
               </template>
             </el-alert>
           </div>
-
-          <div class="dotenv-bar">
-            <el-form-item label=".env（可选）">
-              <el-input
-                v-model="dotenvText"
-                type="textarea"
-                :rows="6"
-                placeholder="可粘贴或编辑 .env 内容（用于 Compose 插值/ env_file）"
-                class="dotenv-textarea"
-              />
-              <div class="dotenv-hint">部署变量优先级：配置参数 > .env > Compose environment 默认值</div>
-            </el-form-item>
-          </div>
           <div v-if="Object.keys(groupedSchema).length === 0">
             <el-empty description="暂无配置参数" />
           </div>
 
           <!-- 按服务分组展示 -->
           <el-collapse v-model="activeServiceNames" class="service-collapse-container">
+            <el-collapse-item
+              name="__dotenv__"
+              class="service-collapse-item global-env-collapse-item"
+            >
+              <template #title>
+                <div class="service-title-header">
+                  <div class="service-header-left">
+                    <span class="service-name-text">全局变量（.env）</span>
+                    <el-button size="small" link type="primary" class="add-param-btn" @click.stop="handleAddGlobalDotenvKey">
+                      <el-icon><Plus /></el-icon> 添加参数
+                    </el-button>
+                  </div>
+                  <div class="service-header-right">
+                    <el-tag size="small" effect="plain" type="success" class="service-count-tag">{{ dotenvRows.length }} 项配置</el-tag>
+                    <el-tag v-if="dotenvRows.length === 0" size="small" effect="plain" type="info" class="service-count-tag">暂无，默认收起，可添加参数</el-tag>
+                  </div>
+                </div>
+              </template>
+
+              <div class="service-content">
+                <div v-if="dotenvRows.length === 0">
+                  <el-empty description="暂无全局变量" />
+                </div>
+                <div v-else class="config-section global-env-section">
+                  <div v-for="(row, idx) in dotenvRows" :key="row.key || idx" class="form-row-custom">
+                    <el-row :gutter="8" align="middle">
+                      <el-col :span="6">
+                        <div class="param-type-wrapper">
+                          <el-tag effect="plain" type="success">全局变量（.env）</el-tag>
+                        </div>
+                      </el-col>
+
+                      <el-col :span="6">
+                        <div class="left-input-wrapper">
+                          <el-input
+                            :model-value="getDotenvKeyDraft(row.key)"
+                            class="label-input mono-input"
+                            @update:model-value="(val) => setDotenvKeyDraft(row.key, val)"
+                            @keyup.enter="commitDotenvKeyRename(row.key)"
+                            @blur="commitDotenvKeyRename(row.key)"
+                          />
+                        </div>
+                      </el-col>
+
+                      <el-col :span="10">
+                        <el-form-item label-width="0" style="margin-bottom: 0">
+                          <el-input
+                            :model-value="row.value"
+                            :placeholder="String(row.value || '')"
+                            @update:model-value="(val) => handleSetDotenvValue(row.key, val)"
+                          />
+                        </el-form-item>
+                      </el-col>
+
+                      <el-col :span="1" style="text-align: center;">
+                        <el-button link type="danger" @click="handleRemoveDotenvKey(row.key)">
+                          <el-icon><Remove /></el-icon>
+                        </el-button>
+                      </el-col>
+                    </el-row>
+                  </div>
+                </div>
+              </div>
+            </el-collapse-item>
             <el-collapse-item 
               v-for="(group, serviceName) in groupedSchema" 
               :key="serviceName" 
@@ -120,7 +171,7 @@
                        Since we don't have stable IDs, let's use index within the group for now or try to not update key.
                   -->
                   <div v-for="(config, idx) in group.basic" :key="idx" class="form-row-custom">
-                    <el-row :gutter="10" align="middle">
+                    <el-row :gutter="8" align="middle">
                       <!-- 1. 类型 (自定义可编辑，否则只读) -->
                       <el-col :span="6">
                         <div class="param-type-wrapper" v-if="!config.isCustom">
@@ -165,29 +216,29 @@
                       
                       <!-- 3. 参数值 (可编辑 - 对应 Default 字段) -->
                       <el-col :span="10">
-                        <el-form-item :prop="config.name" label-width="0" style="margin-bottom: 0">
+                        <el-form-item :prop="config.formKey" label-width="0" style="margin-bottom: 0">
                           <el-input 
                             v-if="['text', 'string', 'path', 'port'].includes(config.type)" 
-                            v-model="config.default" 
-                            :placeholder="String(config.default || '')"
+                            v-model="formData[config.formKey]" 
+                            :placeholder="String(formData[config.formKey] ?? '')"
                           />
                           
                           <el-input-number 
                             v-else-if="config.type === 'number'" 
-                            v-model="config.default"
+                            v-model="formData[config.formKey]"
                             style="width: 100%" 
                           />
                           
                           <el-input 
                             v-else-if="config.type === 'password'" 
-                            v-model="config.default" 
+                            v-model="formData[config.formKey]" 
                             type="password"
                             show-password
                           />
                           
                           <el-select 
                             v-else-if="config.type === 'select'" 
-                            v-model="config.default"
+                            v-model="formData[config.formKey]"
                             style="width: 100%"
                           >
                             <el-option 
@@ -221,7 +272,7 @@
                   <el-collapse-transition>
                     <div v-show="activeAdvancedCollapse.includes(`advanced-${serviceName}`)">
                       <div v-for="(config, idx) in group.advanced" :key="idx" class="form-row-custom">
-                        <el-row :gutter="10" align="middle">
+                        <el-row :gutter="8" align="middle">
                           <!-- 1. 类型 -->
                           <el-col :span="6">
                             <div class="param-type-wrapper" v-if="!config.isCustom">
@@ -264,29 +315,29 @@
                           
                           <!-- 3. 参数值 -->
                           <el-col :span="10">
-                            <el-form-item :prop="config.name" label-width="0" style="margin-bottom: 0">
+                            <el-form-item :prop="config.formKey" label-width="0" style="margin-bottom: 0">
                               <el-input 
                                 v-if="['text', 'string', 'path', 'port'].includes(config.type)" 
-                                v-model="config.default" 
-                                :placeholder="config.default?.toString()"
+                                v-model="formData[config.formKey]" 
+                                :placeholder="String(formData[config.formKey] ?? '')"
                               />
                               
                               <el-input-number 
                                 v-else-if="config.type === 'number'" 
-                                v-model="config.default"
+                                v-model="formData[config.formKey]"
                                 style="width: 100%" 
                               />
                               
                               <el-input 
                                 v-else-if="config.type === 'password'" 
-                                v-model="config.default" 
+                                v-model="formData[config.formKey]" 
                                 type="password"
                                 show-password
                               />
                               
                               <el-select 
                                 v-else-if="config.type === 'select'" 
-                                v-model="config.default"
+                                v-model="formData[config.formKey]"
                                 style="width: 100%"
                               >
                                 <el-option 
@@ -318,6 +369,7 @@
           <!-- 操作按钮 -->
           <div class="form-actions">
             <el-button @click="goBack">取消</el-button>
+            <el-button v-if="lastDeployTaskId" plain @click="openDeployProgress">进度查询</el-button>
             <el-button type="primary" :loading="deploying" @click="submitDeploy">
               确认部署
             </el-button>
@@ -371,6 +423,7 @@
       </div>
       <template #footer>
         <span class="dialog-footer">
+          <el-button v-if="deploying" type="warning" @click="runDeployInBackground">后台运行</el-button>
           <el-button v-if="!deploying && deploySuccess" type="primary" @click="goToContainers">
             查看容器
           </el-button>
@@ -397,6 +450,7 @@ import { ref, computed, onMounted, reactive, nextTick, shallowRef, triggerRef } 
 import { useRoute, useRouter } from 'vue-router'
 import { QuestionFilled, ArrowRight, ArrowLeft, Plus, Remove, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElImageViewer } from 'element-plus'
+import { parseDocument, isMap } from 'yaml'
 import api from '../api'
 import request from '../utils/request'
 import { useSseLogStream } from '../utils/sseLogStream'
@@ -425,6 +479,7 @@ const appStoreBase = ref('')
 const deployAutoScroll = ref(true)
 const taskLogSetRef = shallowRef(null)
 const taskTimeoutRef = shallowRef(null)
+const lastDeployTaskId = ref(localStorage.getItem('appstore:lastDeployTaskId') || '')
 
 const {
   logs: deployLogs,
@@ -543,17 +598,172 @@ const tutorialHtml = computed(() => renderMarkdown(project.value?.tutorial || ''
 const formData = ref({})
 const rules = reactive({})
 const dotenvText = ref('')
+const dotenvKeyDraftMap = reactive({})
+const getDotenvKeyDraft = (key) => {
+  const k = String(key || '').trim()
+  if (!k) return ''
+  const v = dotenvKeyDraftMap[k]
+  if (typeof v === 'string') return v
+  dotenvKeyDraftMap[k] = k
+  return k
+}
+const setDotenvKeyDraft = (key, value) => {
+  const k = String(key || '').trim()
+  if (!k) return
+  dotenvKeyDraftMap[k] = String(value ?? '')
+}
+const commitDotenvKeyRename = (oldKey) => {
+  const from = String(oldKey || '').trim()
+  if (!from) return
+  const nextKey = String(dotenvKeyDraftMap[from] ?? '').trim()
+  if (!nextKey || nextKey === from) {
+    dotenvKeyDraftMap[from] = from
+    return
+  }
+  handleRenameDotenvKey(from, nextKey)
+  delete dotenvKeyDraftMap[from]
+  dotenvKeyDraftMap[nextKey] = nextKey
+}
+
+/**
+ * parseDotenvTextToOrderedMap 解析 .env 文本为 map，并保留 key 的首次出现顺序（后者覆盖前者）
+ */
+const parseDotenvTextToOrderedMap = (text) => {
+  const out = {}
+  const order = []
+  const seen = new Set()
+
+  const lines = String(text || '').split(/\r?\n/)
+  lines.forEach((raw) => {
+    let line = String(raw || '').trim()
+    if (!line || line.startsWith('#')) return
+    if (line.startsWith('export ')) line = line.slice(7).trim()
+
+    const idx = line.indexOf('=')
+    if (idx < 0) {
+      const key = line.trim()
+      if (!key) return
+      if (!seen.has(key)) {
+        seen.add(key)
+        order.push(key)
+      }
+      if (!(key in out)) out[key] = ''
+      return
+    }
+    const key = line.slice(0, idx).trim()
+    if (!key) return
+    let valRaw = line.slice(idx + 1).trim()
+    let val = valRaw
+    if (valRaw.length >= 2) {
+      const first = valRaw[0]
+      const last = valRaw[valRaw.length - 1]
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+        val = valRaw.slice(1, -1)
+      } else if (first === '"' || first === "'") {
+        val = valRaw
+      }
+    }
+    if (!seen.has(key)) {
+      seen.add(key)
+      order.push(key)
+    }
+    out[key] = val
+  })
+
+  return { map: out, order }
+}
+
+/**
+ * formatDotenvValue 将值格式化为 .env 行里的 value（必要时加引号）
+ */
+const formatDotenvValue = (value) => {
+  const raw = String(value ?? '')
+  const needsQuote = /[\s#"'\r\n]/.test(raw)
+  if (!needsQuote) return raw
+  const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return `"${escaped}"`
+}
+
+/**
+ * upsertDotenvKeyValue 将 key=value 写入 .env 文本（尽量只替换最后一次出现）
+ */
+const upsertDotenvKeyValue = (dotenvTextValue, key, value) => {
+  const k = String(key || '').trim()
+  if (!k) return String(dotenvTextValue || '')
+
+  const lines = String(dotenvTextValue || '').replace(/\r\n/g, '\n').split('\n')
+  const escapedKey = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const keyRegex = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}\\s*=`)
+
+  let lastIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]
+    const trimmed = String(raw || '').trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    if (keyRegex.test(raw)) lastIdx = i
+  }
+
+  const newLine = `${k}=${formatDotenvValue(value)}`
+  if (lastIdx >= 0) {
+    lines[lastIdx] = newLine
+    return lines.join('\n').replace(/\n*$/, '\n')
+  }
+  return appendDotenvLines(dotenvTextValue, [newLine])
+}
+
+/**
+ * removeDotenvKey 从 .env 文本中移除指定 key 的所有定义行
+ */
+const removeDotenvKey = (dotenvTextValue, key) => {
+  const k = String(key || '').trim()
+  if (!k) return String(dotenvTextValue || '')
+  const escapedKey = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const keyRegex = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}\\s*(?:=|$)`)
+  const lines = String(dotenvTextValue || '').replace(/\r\n/g, '\n').split('\n')
+  const out = lines.filter((raw) => {
+    const trimmed = String(raw || '').trim()
+    if (!trimmed || trimmed.startsWith('#')) return true
+    return !keyRegex.test(raw)
+  })
+  return out.join('\n').replace(/\n*$/, '\n')
+}
+
+const appendDotenvLines = (text, lines) => {
+  const base = String(text || '').replace(/\s+$/, '')
+  const appendPart = (lines || []).filter(Boolean).join('\n')
+  if (!appendPart) return base ? base + '\n' : ''
+  if (!base) return appendPart + '\n'
+  return base + '\n' + appendPart + '\n'
+}
+
+const buildUniqueDotenvKey = (baseKey) => {
+  const base = String(baseKey || '').trim() || 'NEW_VAR'
+  const { map: m } = parseDotenvTextToOrderedMap(dotenvText.value)
+  if (!(base in m)) return base
+  let i = 2
+  while (i < 9999) {
+    const next = `${base}_${i}`
+    if (!(next in m)) return next
+    i++
+  }
+  return `${base}_${Date.now()}`
+}
 
 const handleImageError = (e) => {
   e.target.src = 'https://cdn-icons-png.flaticon.com/512/873/873133.png'
 }
 
+const allowAutoAllocPort = ref(false)
+const autoAllocTriggered = ref(false)
+
 const initAppStoreBase = async () => {
   try {
     const s = await request.get('/settings/global')
     appStoreBase.value = (s && s.appStoreServerUrl) ? s.appStoreServerUrl.replace(/\/$/, '') : 'https://template.cgakki.top:33333'
+    allowAutoAllocPort.value = !!(s && s.allowAutoAllocPort)
   } catch (e) {
     appStoreBase.value = 'https://template.cgakki.top:33333'
+    allowAutoAllocPort.value = false
   }
 }
 
@@ -627,10 +837,14 @@ const toggleAdvanced = (serviceName) => {
 }
 
 const handleAddCustomParam = (serviceName) => {
+  if (serviceName === 'Global') {
+    handleAddGlobalDotenvKey()
+    return
+  }
   // 直接向 deployConfig 添加
   const newParamName = `CUSTOM_${serviceName.toUpperCase()}_${Date.now()}`
   
-  deployConfig.value.push(reactive({
+  const cfg = reactive({
     name: newParamName,
     label: '自定义参数',
     customKey: '', // 用户输入的参数名
@@ -641,57 +855,188 @@ const handleAddCustomParam = (serviceName) => {
     category: 'basic', // 默认基础配置
     serviceName: serviceName,
     isCustom: true // 标记为自定义
-  }))
+  })
+  cfg.formKey = buildConfigFormKey(cfg, deployConfig.value.length)
+  deployConfig.value.push(cfg)
+  formData.value[cfg.formKey] = cfg.default
   triggerRef(deployConfig)
+}
+
+const dotenvRows = computed(() => {
+  const { map, order } = parseDotenvTextToOrderedMap(dotenvText.value)
+  return order
+    .filter(k => k && Object.prototype.hasOwnProperty.call(map, k))
+    .map((k) => ({ key: k, value: map[k] }))
+})
+
+/**
+ * handleSetDotenvValue 在表单里修改全局变量时，同步写回 .env 文本
+ */
+const handleSetDotenvValue = (key, value) => {
+  dotenvText.value = upsertDotenvKeyValue(dotenvText.value, key, value)
+}
+
+const handleRenameDotenvKey = (oldKey, newKey) => {
+  const from = String(oldKey || '').trim()
+  const to = String(newKey || '').trim()
+  if (!from || from === to) {
+    return
+  }
+
+  const pattern = /^[A-Za-z_][A-Za-z0-9_]*$/
+  if (!pattern.test(to)) {
+    ElMessage.warning('变量名仅支持字母、数字、下划线，且不能以数字开头')
+    return
+  }
+
+  const { map } = parseDotenvTextToOrderedMap(dotenvText.value)
+  if (Object.prototype.hasOwnProperty.call(map, to)) {
+    ElMessage.warning(`变量名 ${to} 已存在`)
+    return
+  }
+
+  const val = Object.prototype.hasOwnProperty.call(map, from) ? map[from] : ''
+  let next = removeDotenvKey(dotenvText.value, from)
+  next = upsertDotenvKeyValue(next, to, val)
+  dotenvText.value = next
+}
+
+/**
+ * handleRemoveDotenvKey 删除全局变量（从 .env 中移除）
+ */
+const handleRemoveDotenvKey = (key) => {
+  dotenvText.value = removeDotenvKey(dotenvText.value, key)
+}
+
+/**
+ * handleAddGlobalDotenvKey 添加一条新的全局变量到 .env
+ */
+const handleAddGlobalDotenvKey = () => {
+  const key = buildUniqueDotenvKey('NEW_VAR')
+  dotenvText.value = appendDotenvLines(dotenvText.value, [`${key}=`])
+  ElMessage.success('已添加全局变量')
+  if (!activeServiceNames.value.includes('__dotenv__')) {
+    activeServiceNames.value = ['__dotenv__', ...activeServiceNames.value]
+  }
 }
 
 const handleRemoveParam = (config) => {
   const index = deployConfig.value.findIndex(item => item === config || item.name === config.name)
   if (index > -1) {
+    try {
+      if (config && config.formKey && Object.prototype.hasOwnProperty.call(formData.value, config.formKey)) {
+        delete formData.value[config.formKey]
+      }
+    } catch (e) {}
     deployConfig.value.splice(index, 1)
     triggerRef(deployConfig)
     ElMessage.success('已移除参数')
   }
 }
 
+const buildConfigFormKey = (cfg, idx) => {
+  const svc = String(cfg?.serviceName || 'Global').trim() || 'Global'
+  const raw = String(cfg?.name || '').trim()
+  const base = raw || 'param'
+  return `${svc}:${base}:${idx}`
+}
+
 const initForm = () => {
-  dotenvText.value = String(project.value?.dotenv || '')
+  const originalDotenv = String(project.value?.dotenv || '')
+  const { map: dotenvMap } = parseDotenvTextToOrderedMap(originalDotenv)
+  const addedDotenvLines = []
+
+  dotenvText.value = originalDotenv
   if (!project.value || !project.value.schema) return
 
-  // 深拷贝 schema 到 deployConfig，作为表单数据源
   try {
-      const raw = JSON.parse(JSON.stringify(project.value.schema))
-      // 将每个配置项转为 reactive，确保属性变化能被 UI (如 label) 响应
-      deployConfig.value = raw.map(item => {
-        // 确保 serviceName 存在，避免 groupedSchema 依赖 name 导致编辑时重渲染
-        if (!item.serviceName) {
-           item.serviceName = 'Global'
+    const raw = JSON.parse(JSON.stringify(project.value.schema))
+    const filtered = []
+
+    raw.forEach((item) => {
+      if (!item || typeof item !== 'object') return
+      if (!item.serviceName) item.serviceName = 'Global'
+
+      const key = String(item.name || '').trim()
+      const paramType = String(item.paramType || '').trim()
+      const typ = String(item.type || '').trim()
+      const isEnv = paramType === 'env' || paramType === 'environment' || (!paramType && ['string', 'password', 'number', 'boolean', 'text'].includes(typ))
+
+      if (item.serviceName === 'Global' && isEnv && key) {
+        if (!(key in dotenvMap)) {
+          dotenvMap[key] = String(item.default || '')
+          addedDotenvLines.push(`${key}=${String(item.default || '')}`)
         }
-        return reactive(item)
-      })
+        return
+      }
+
+      filtered.push(item)
+    })
+
+    if (addedDotenvLines.length > 0) {
+      dotenvText.value = appendDotenvLines(originalDotenv, addedDotenvLines)
+    }
+
+    deployConfig.value = filtered.map((item) => reactive(item))
   } catch (e) {
-      deployConfig.value = []
+    deployConfig.value = []
   }
 
   // 初始化验证规则
+  formData.value = {}
   deployConfig.value.forEach(config => {
     // 确保 label 存在，方便界面编辑
     if (!config.label) {
       config.label = config.name
     }
 
+    if (!config.formKey) {
+      const idx = deployConfig.value.indexOf(config)
+      config.formKey = buildConfigFormKey(config, idx)
+    }
+    if (!Object.prototype.hasOwnProperty.call(formData.value, config.formKey)) {
+      formData.value[config.formKey] = config.default
+    }
+
     // 生成验证规则
     if (config.description && config.description.includes('required')) {
-      rules[config.name] = [
-        { required: true, message: `请输入${config.name}`, trigger: 'blur' }
+      rules[config.formKey] = [
+        { required: true, message: `请输入${config.label || config.name}`, trigger: 'blur' }
       ]
     }
   })
   
   // 默认展开所有服务
   nextTick(() => {
-    activeServiceNames.value = Object.keys(groupedSchema.value)
+    const keys = Object.keys(groupedSchema.value)
+    const hasDotenv = dotenvRows.value.length > 0
+    activeServiceNames.value = hasDotenv ? ['__dotenv__', ...keys] : keys
+    autoAllocatePortsIfNeeded()
   })
+}
+
+const isValidPortNumber = (v) => {
+  const t = String(v ?? '').trim()
+  if (!t) return false
+  const n = Number(t)
+  return Number.isInteger(n) && n > 0 && n <= 65535
+}
+
+const getHostPortValueFromConfig = (cfg) => {
+  if (!cfg) return ''
+  if (cfg.isCustom) return cfg.customKey
+  return cfg.name
+}
+
+const setHostPortValueToConfig = (cfg, port) => {
+  const v = String(port ?? '').trim()
+  if (!cfg) return
+  if (cfg.isCustom) {
+    cfg.customKey = v
+    cfg.name = v
+    return
+  }
+  cfg.name = v
 }
 
 const fetchProject = async () => {
@@ -702,6 +1047,7 @@ const fetchProject = async () => {
     const data = res.data || res
     if (data) {
       project.value = data
+      autoAllocTriggered.value = false
       initForm()
     } else {
       ElMessage.error('未找到该应用')
@@ -726,12 +1072,40 @@ const goToContainers = () => {
   }
 }
 
-// 简单对象转 YAML 字符串
-const toYaml = (obj, indent = 0) => {
+// 简单对象转 YAML 字符串（按固定顺序输出 Compose 关键字段）
+const toYaml = (obj, indent = 0, scope = '') => {
   const spaces = ' '.repeat(indent)
   let yaml = ''
+
+  const orderKeys = (keys, first, last) => {
+    const firstSet = new Set(first)
+    const lastSet = new Set(last)
+    const out = []
+    first.forEach(k => {
+      if (keys.includes(k)) out.push(k)
+    })
+    keys.forEach(k => {
+      if (firstSet.has(k) || lastSet.has(k)) return
+      out.push(k)
+    })
+    last.forEach(k => {
+      if (keys.includes(k)) out.push(k)
+    })
+    return out
+  }
+
+  const rawKeys = Object.keys(obj || {})
+  const keys = (() => {
+    if (scope === '__root__') {
+      return orderKeys(rawKeys, ['version', 'name', 'services', 'networks', 'volumes', 'configs', 'secrets'], [])
+    }
+    if (scope === '__service__') {
+      return orderKeys(rawKeys, ['image', 'ports', 'volumes', 'env_file', 'environment'], ['healthcheck', 'command'])
+    }
+    return rawKeys
+  })()
   
-  for (const key in obj) {
+  for (const key of keys) {
     const value = obj[key]
     if (Array.isArray(value)) {
       yaml += `${spaces}${key}:\n`
@@ -740,7 +1114,13 @@ const toYaml = (obj, indent = 0) => {
       })
     } else if (typeof value === 'object' && value !== null) {
       yaml += `${spaces}${key}:\n`
-      yaml += toYaml(value, indent + 2)
+      if (scope === '__root__' && key === 'services') {
+        yaml += toYaml(value, indent + 2, '__services__')
+      } else if (scope === '__services__') {
+        yaml += toYaml(value, indent + 2, '__service__')
+      } else {
+        yaml += toYaml(value, indent + 2, key)
+      }
     } else {
       const strValue = String(value)
       // 如果是 version 字段，或者包含特殊字符，或者是纯数字字符串，加上引号
@@ -754,18 +1134,216 @@ const toYaml = (obj, indent = 0) => {
   return yaml
 }
 
-const submitDeploy = async () => {
-  // 手动验证必填项
-  for (const config of deployConfig.value) {
-    if (config.description && config.description.includes('required') && !config.default) {
-      ElMessage.warning(`请填写必填项: ${config.label || config.name}`)
-      return
-    }
+/**
+ * injectEnvFileForServices 在 compose.yaml 中为指定服务注入 env_file: [.env]
+ * 只在该服务块内不存在 env_file 时注入
+ */
+const injectEnvFileForServices = (yamlText, serviceNameSet) => {
+  const need = serviceNameSet instanceof Set ? serviceNameSet : new Set()
+  if (!need || need.size === 0) return String(yamlText || '')
+
+  const lines = String(yamlText || '').replace(/\r\n/g, '\n').split('\n')
+  const findIndent = (s) => {
+    const m = String(s || '').match(/^(\s*)/)
+    return m ? m[1].length : 0
   }
+  const isKeyLineAtIndent = (idx, indent, key) => {
+    const line = String(lines[idx] || '')
+    if (findIndent(line) !== indent) return false
+    return line.trimStart().startsWith(`${key}:`)
+  }
+  const isServiceHeaderAtIndent = (idx, indent) => {
+    const line = String(lines[idx] || '')
+    if (findIndent(line) !== indent) return null
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) return null
+    if (!trimmed.endsWith(':')) return null
+    const name = trimmed.slice(0, -1).trim()
+    if (!name) return null
+    if (name.includes(' ')) return null
+    return name
+  }
+  const findBlockEnd = (startIdx, baseIndent) => {
+    for (let i = startIdx + 1; i < lines.length; i++) {
+      const line = String(lines[i] || '')
+      if (!line.trim()) continue
+      const ind = findIndent(line)
+      if (ind <= baseIndent) return i
+    }
+    return lines.length
+  }
+
+  const servicesIdx = lines.findIndex(l => /^\s*services\s*:\s*(#.*)?$/.test(String(l || '')))
+  if (servicesIdx < 0) return String(yamlText || '')
+  const servicesIndent = findIndent(lines[servicesIdx])
+  const detectSvcHeaderIndent = () => {
+    for (let k = servicesIdx + 1; k < lines.length; k++) {
+      const line = String(lines[k] || '')
+      if (!line.trim()) continue
+      const ind = findIndent(line)
+      if (ind <= servicesIndent) return servicesIndent + 2
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      if (trimmed.endsWith(':')) return ind
+    }
+    return servicesIndent + 2
+  }
+  const svcHeaderIndent = detectSvcHeaderIndent()
+  const svcItemIndent = svcHeaderIndent + 2
+
+  let i = servicesIdx + 1
+  while (i < lines.length) {
+    const name = isServiceHeaderAtIndent(i, svcHeaderIndent)
+    if (!name) {
+      const ind = findIndent(lines[i])
+      if (lines[i] && lines[i].trim() && ind <= servicesIndent) break
+      i++
+      continue
+    }
+
+    const blockEnd = findBlockEnd(i, svcHeaderIndent)
+    if (!need.has(name)) {
+      i = blockEnd
+      continue
+    }
+
+    let hasEnvFile = false
+    for (let j = i + 1; j < blockEnd; j++) {
+      if (isKeyLineAtIndent(j, svcItemIndent, 'env_file')) {
+        hasEnvFile = true
+        break
+      }
+    }
+    if (hasEnvFile) {
+      i = blockEnd
+      continue
+    }
+
+    const insertLines = [
+      `${' '.repeat(svcItemIndent)}env_file:`,
+      `${' '.repeat(svcItemIndent)}  - .env`
+    ]
+
+    const findInsertPos = () => {
+      for (let j = i + 1; j < blockEnd; j++) {
+        if (isKeyLineAtIndent(j, svcItemIndent, 'environment')) return j
+      }
+
+      const keys = ['volumes', 'ports', 'image']
+      for (const k of keys) {
+        for (let j = i + 1; j < blockEnd; j++) {
+          if (!isKeyLineAtIndent(j, svcItemIndent, k)) continue
+          const end = findBlockEnd(j, svcItemIndent)
+          return Math.min(end, blockEnd)
+        }
+      }
+      return i + 1
+    }
+
+    const pos = findInsertPos()
+    lines.splice(pos, 0, ...insertLines)
+    i = blockEnd + insertLines.length
+  }
+
+  return lines.join('\n').replace(/\n*$/, '\n')
+}
+
+/**
+ * injectEnvFileForServicesAst 用 YAML AST 方式为指定服务注入 env_file: ['.env']
+ * 优先保留原始 YAML 的注释/缩进/锚点等结构；解析失败时回退到文本注入逻辑
+ */
+const injectEnvFileForServicesAst = (yamlText, serviceNameSet) => {
+  const need = serviceNameSet instanceof Set ? serviceNameSet : new Set()
+  if (!need || need.size === 0) return String(yamlText || '')
+
+  const input = String(yamlText || '')
+  try {
+    const doc = parseDocument(input, { keepSourceTokens: true })
+    const servicesNode = doc.get('services', true)
+    if (!servicesNode || !isMap(servicesNode)) return injectEnvFileForServices(input, need)
+
+    for (const pair of servicesNode.items || []) {
+      const svcName = String(pair?.key?.value ?? '').trim()
+      if (!svcName) continue
+      if (need.has(svcName)) continue
+      const envFileNode = doc.getIn(['services', svcName, 'env_file'], true)
+      if (envFileNode != null) doc.deleteIn(['services', svcName, 'env_file'])
+    }
+
+    for (const svcName of need) {
+      const svcNode = doc.getIn(['services', svcName], true)
+      if (!svcNode || !isMap(svcNode)) continue
+
+      const envFileNode = doc.getIn(['services', svcName, 'env_file'], true)
+      if (envFileNode != null) continue
+
+      doc.setIn(['services', svcName, 'env_file'], ['.env'])
+    }
+
+    return String(doc).replace(/\n*$/, '\n')
+  } catch (e) {
+    console.warn('compose.yaml YAML AST 解析失败，回退到文本注入逻辑', e)
+    return injectEnvFileForServices(input, need)
+  }
+}
+
+const hasInterpolationInAnyValue = (v) => {
+  if (typeof v === 'string') {
+    return /\$\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}/.test(v)
+  }
+  if (Array.isArray(v)) {
+    return v.some(hasInterpolationInAnyValue)
+  }
+  if (v && typeof v === 'object') {
+    return Object.values(v).some(hasInterpolationInAnyValue)
+  }
+  return false
+}
+
+const collectServicesNeedEnvFileFromCompose = (yamlText) => {
+  const need = new Set()
+  const input = String(yamlText || '')
+  try {
+    const doc = parseDocument(input)
+    const servicesNode = doc.get('services', true)
+    if (!servicesNode || !isMap(servicesNode)) return need
+
+    for (const pair of servicesNode.items || []) {
+      const svcName = String(pair?.key?.value ?? '').trim()
+      if (!svcName) continue
+      const svcNode = doc.getIn(['services', svcName], true)
+      if (!svcNode) continue
+      const json = typeof svcNode.toJSON === 'function' ? svcNode.toJSON() : null
+      if (hasInterpolationInAnyValue(json)) need.add(svcName)
+    }
+    return need
+  } catch (e) {
+    return need
+  }
+}
+
+const submitDeploy = async () => {
+  try {
+    if (formRef.value && typeof formRef.value.validate === 'function') {
+      await formRef.value.validate()
+    }
+  } catch (e) {
+    return
+  }
+
+  try {
+    ;(deployConfig.value || []).forEach((cfg) => {
+      if (!cfg || !cfg.formKey) return
+      if (Object.prototype.hasOwnProperty.call(formData.value, cfg.formKey)) {
+        cfg.default = formData.value[cfg.formKey]
+      }
+    })
+  } catch (e) {}
 
   try {
     // 0. 构建最终的环境变量/参数映射 (为了兼容性保留 Env Map，虽然主要靠 Config 数组)
     const finalEnv = {}
+    const servicesNeedEnvFile = new Set()
     // 处理 Config 数组中的自定义 Key
     deployConfig.value.forEach(config => {
         if (config.isCustom && config.customKey) {
@@ -779,8 +1357,17 @@ const submitDeploy = async () => {
         
         if (isEnv) {
             finalEnv[config.name] = config.default || ''
+            const svc = String(config.serviceName || '').trim()
+            if (svc && svc !== 'Global') servicesNeedEnvFile.add(svc)
         }
     })
+
+    // 0.1 将服务级环境变量也写入 .env，确保 Compose 插值（如 networks/subnet）可用
+    let mergedDotenv = String(dotenvText.value || '')
+    Object.entries(finalEnv).forEach(([k, v]) => {
+      mergedDotenv = upsertDotenvKeyValue(mergedDotenv, k, v)
+    })
+    dotenvText.value = mergedDotenv
 
     // 1. 准备 YAML 模板
     let yamlContent = ''
@@ -792,10 +1379,13 @@ const submitDeploy = async () => {
         version: '3',
         services: services
       }
-      yamlContent = toYaml(composeObj)
+      yamlContent = toYaml(composeObj, 0, '__root__')
     } else {
        console.warn('No compose or services found in project definition')
     }
+    const servicesNeedEnvFileFromYaml = collectServicesNeedEnvFileFromCompose(yamlContent)
+    for (const svc of servicesNeedEnvFileFromYaml) servicesNeedEnvFile.add(svc)
+    yamlContent = injectEnvFileForServicesAst(yamlContent, servicesNeedEnvFile)
 
     const rawName = project.value.name || ''
     let projectName = normalizeComposeProjectName(rawName)
@@ -865,7 +1455,7 @@ const submitDeploy = async () => {
       projectName,
       compose: yamlContent,
       env: finalEnv, // 兼容旧逻辑
-      dotenv: dotenvText.value,
+      dotenv: mergedDotenv,
       config: deployConfig.value // 新逻辑：传递完整配置数组
     }
 
@@ -878,6 +1468,8 @@ const submitDeploy = async () => {
       if (!taskId) {
         throw new Error('未获取到任务ID')
       }
+      lastDeployTaskId.value = String(taskId)
+      localStorage.setItem('appstore:lastDeployTaskId', String(taskId))
 
       ElMessage.success('部署任务已提交，正在执行...')
       
@@ -916,43 +1508,119 @@ const submitDeploy = async () => {
   }
 }
 
+const openDeployProgress = () => {
+  const taskId = String(lastDeployTaskId.value || '').trim()
+  if (!taskId) {
+    ElMessage.info('暂无可查询的部署任务')
+    return
+  }
+  showLogs.value = true
+  deploying.value = true
+  deploySuccess.value = false
+  stopDeployTaskStream()
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/appstore/tasks/${encodeURIComponent(taskId)}/events?token=${encodeURIComponent(token)}`
+  startDeployTaskStream(url, { reset: true })
+}
+
+const runDeployInBackground = () => {
+  showLogs.value = false
+  const msg = project.value?.name ? `部署任务已后台运行：${project.value.name}` : '部署任务已后台运行'
+  api.system.addNotification({ type: 'info', message: msg })
+    .then((saved) => {
+      window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type: 'info', message: msg, dbId: saved?.id, createdAt: saved?.created_at, read: saved?.read } }))
+    })
+    .catch(() => {
+      window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type: 'info', message: msg } }))
+    })
+}
+
 const getPortConfigs = () => {
-  const list = [];
-  (deployConfig.value || []).forEach(cfg => {
-    const isPort = (cfg.paramType === 'port') || (cfg.type === 'port')
+  const list = []
+  ;(deployConfig.value || []).forEach((cfg) => {
+    const isPort = (cfg?.paramType === 'port') || (cfg?.type === 'port')
     if (isPort) list.push(cfg)
   })
+
+  const parsePortNum = (v) => {
+    const n = Number(String(v ?? '').trim())
+    return Number.isFinite(n) ? n : Number.NaN
+  }
+
+  list.sort((a, b) => {
+    const sa = String(a?.serviceName || '').trim()
+    const sb = String(b?.serviceName || '').trim()
+    if (sa !== sb) return sa.localeCompare(sb)
+
+    const ca = parsePortNum(a?.default)
+    const cb = parsePortNum(b?.default)
+    const caOk = Number.isFinite(ca)
+    const cbOk = Number.isFinite(cb)
+    if (caOk && cbOk && ca !== cb) return ca - cb
+    if (caOk !== cbOk) return caOk ? -1 : 1
+
+    const la = String(a?.label || a?.name || '').trim()
+    const lb = String(b?.label || b?.name || '').trim()
+    return la.localeCompare(lb)
+  })
+
   return list
 }
 
-const handleAutoAllocate = async () => {
-  const ports = getPortConfigs()
-  if (!ports.length) {
-    ElMessage.info('当前无端口参数需要分配')
+const allocatePortsToConfigs = async (ports, opts = {}) => {
+  const { silent = false } = opts || {}
+  const list = Array.isArray(ports) ? ports : []
+  if (!list.length) {
+    if (!silent) ElMessage.info('当前无端口参数需要分配')
     return
   }
   allocating.value = true
   try {
-    const res = await api.ports.allocate({ count: ports.length, protocol: 'tcp', type: 'host', useAllocRange: true, dryRun: true })
+    const res = await api.ports.allocate({ count: list.length, protocol: 'tcp', type: 'host', useAllocRange: true, dryRun: true })
     if (res && res.segments && res.segments.length > 0) {
       const seg = res.segments[0]
-      if (seg.length !== ports.length) {
+      if (seg.length !== list.length) {
         ElMessage.error('分配端口数量不足')
         return
       }
-      for (let i = 0; i < ports.length; i++) {
-        ports[i].name = String(seg[i])
+      for (let i = 0; i < list.length; i++) {
+        setHostPortValueToConfig(list[i], seg[i])
       }
-      triggerRef(deployConfig) // 触发更新
-      ElMessage.success('已自动分配端口')
+      triggerRef(deployConfig)
+      if (!silent) ElMessage.success('已自动分配端口')
     } else {
-       ElMessage.error('分配失败: 未获取到端口段')
+      ElMessage.error('分配失败: 未获取到端口段')
     }
   } catch (error) {
     ElMessage.error('自动分配失败: ' + (error.response?.data?.error || error.message))
   } finally {
     allocating.value = false
   }
+}
+
+const handleAutoAllocate = async () => {
+  await allocatePortsToConfigs(getPortConfigs(), { silent: false })
+}
+
+const autoAllocatePortsIfNeeded = async () => {
+  if (!allowAutoAllocPort.value) return
+  if (autoAllocTriggered.value) return
+  if (allocating.value) return
+
+  const ports = getPortConfigs()
+  if (!ports.length) {
+    autoAllocTriggered.value = true
+    return
+  }
+  const need = ports.filter(p => !isValidPortNumber(getHostPortValueFromConfig(p)))
+  if (!need.length) {
+    autoAllocTriggered.value = true
+    return
+  }
+
+  autoAllocTriggered.value = true
+  await allocatePortsToConfigs(need, { silent: true })
+  ElMessage.success('已按设置自动分配端口')
 }
 
 
@@ -1083,15 +1751,40 @@ onMounted(() => {
   border-radius: 8px;
 }
 
-.dotenv-bar {
+.global-env-bar {
   margin-bottom: 18px;
   padding: 14px 16px;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid rgba(34, 197, 94, 0.35);
   border-radius: 8px;
-  background: var(--el-fill-color-lighter);
+  background: rgba(34, 197, 94, 0.08);
 }
 
-.dotenv-textarea :deep(.el-textarea__inner) {
+.dotenv-editor-container {
+  width: 100%;
+}
+
+.dotenv-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.dotenv-form-title {
+  font-weight: 600;
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.dotenv-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  color: var(--el-text-color-primary);
+}
+
+.dotenv-table :deep(.el-table__header-wrapper th) {
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.global-env-textarea :deep(.el-textarea__inner) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   line-height: 1.5;
 }
@@ -1123,6 +1816,24 @@ onMounted(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   overflow: hidden;
+}
+
+.global-env-collapse-item {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.global-env-collapse-item :deep(.el-collapse-item__header) {
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.global-env-section {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.mono-input :deep(.el-input__inner) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 :deep(.el-collapse-item__header) {
@@ -1163,7 +1874,7 @@ onMounted(() => {
 
 .form-row-custom {
   margin-bottom: 0;
-  padding: 12px 0;
+  padding: 12px 8px;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 

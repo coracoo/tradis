@@ -3,7 +3,6 @@
 .gitattributes
 
 .trae
-.idea
 .vscode
 **/.DS_Store
 
@@ -23,13 +22,10 @@
 !**/.env.sample
 !**/.env.template
 
-client/backend/data
-client/backend/project
-client/backend/dist
-client/backend/main
-client/backend/server
-client/backend/wget-log
+backend/data
+backend/project
+backend/dist
 
-server/backend/uploads
-server/backend/*.db
-server/server
+frontend/dist
+frontend/node_modules
+frontend/.vscode

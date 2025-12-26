@@ -13,13 +13,24 @@ const (
 	StatusRunning   TaskStatus = "running"
 	StatusSuccess   TaskStatus = "success"
 	StatusFailed    TaskStatus = "error"
-	StatusCompleted TaskStatus = "completed" // 最终状态，无论成功失败
+	StatusCompleted TaskStatus = "completed"
 )
 
 type LogEntry struct {
 	Time    time.Time `json:"time"`
 	Type    string    `json:"type"` // info, warning, error, success
 	Message string    `json:"message"`
+}
+
+type TaskSummary struct {
+	ID        string      `json:"id"`
+	Type      string      `json:"type"`
+	Status    TaskStatus  `json:"status"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	Result    interface{} `json:"result,omitempty"`
+	Error     string      `json:"error,omitempty"`
+	LogCount  int         `json:"log_count"`
 }
 
 type Task struct {
@@ -83,6 +94,39 @@ func (m *Manager) GetTask(id string) *Task {
 	return m.tasks[id]
 }
 
+func (m *Manager) ListTaskSummaries(taskTypes []string, statuses []TaskStatus) []TaskSummary {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	allowedType := map[string]struct{}{}
+	for _, t := range taskTypes {
+		allowedType[t] = struct{}{}
+	}
+	allowedStatus := map[TaskStatus]struct{}{}
+	for _, s := range statuses {
+		allowedStatus[s] = struct{}{}
+	}
+
+	out := make([]TaskSummary, 0, len(m.tasks))
+	for _, t := range m.tasks {
+		if t == nil {
+			continue
+		}
+		if len(allowedType) > 0 {
+			if _, ok := allowedType[t.Type]; !ok {
+				continue
+			}
+		}
+		if len(allowedStatus) > 0 {
+			if _, ok := allowedStatus[t.Status]; !ok {
+				continue
+			}
+		}
+		out = append(out, t.Summary())
+	}
+	return out
+}
+
 // AddLog 添加日志并推送到通道
 func (t *Task) AddLog(logType, message string) {
 	t.mu.Lock()
@@ -112,6 +156,13 @@ func (t *Task) UpdateStatus(status TaskStatus) {
 	t.UpdatedAt = time.Now()
 }
 
+func (t *Task) UpdateResult(result interface{}) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Result = result
+	t.UpdatedAt = time.Now()
+}
+
 // Finish 标记任务完成（成功或失败）并关闭通道
 func (t *Task) Finish(status TaskStatus, result interface{}, errStr string) {
 	t.mu.Lock()
@@ -124,6 +175,21 @@ func (t *Task) Finish(status TaskStatus, result interface{}, errStr string) {
 
 	close(t.closeChan)
 	close(t.logChan)
+}
+
+func (t *Task) Summary() TaskSummary {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return TaskSummary{
+		ID:        t.ID,
+		Type:      t.Type,
+		Status:    t.Status,
+		CreatedAt: t.CreatedAt,
+		UpdatedAt: t.UpdatedAt,
+		Result:    t.Result,
+		Error:     t.Error,
+		LogCount:  len(t.Logs),
+	}
 }
 
 // Subscribe 订阅任务日志流

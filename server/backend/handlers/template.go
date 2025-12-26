@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -169,14 +171,115 @@ func parseDotenvDetailed(content string) (map[string]string, []string, []string)
 	return out, warnings, errorsList
 }
 
+// normalizeTemplateDotenvBySchema 将全局环境变量（Global/env）补齐到模板的 .env 文本中，避免全局变量来源混淆
+func normalizeTemplateDotenvBySchema(t *Template) {
+	if t == nil {
+		return
+	}
+
+	existingMap, _, _ := parseDotenvDetailed(t.Dotenv)
+	exists := make(map[string]struct{}, len(existingMap))
+	for k := range existingMap {
+		kk := strings.TrimSpace(k)
+		if kk != "" {
+			exists[kk] = struct{}{}
+		}
+	}
+
+	linesToAppend := make([]string, 0)
+	for _, v := range t.Schema {
+		service := strings.TrimSpace(v.ServiceName)
+		if service == "" {
+			service = "Global"
+		}
+		if !strings.EqualFold(service, "Global") {
+			continue
+		}
+		if strings.TrimSpace(v.ParamType) != "env" {
+			continue
+		}
+
+		key := strings.TrimSpace(v.Name)
+		if key == "" {
+			continue
+		}
+		if _, ok := exists[key]; ok {
+			continue
+		}
+		exists[key] = struct{}{}
+		linesToAppend = append(linesToAppend, fmt.Sprintf("%s=%s", key, quoteDotenvValueIfNeeded(strings.TrimSpace(v.Default))))
+	}
+
+	if len(linesToAppend) == 0 {
+		return
+	}
+
+	base := strings.ReplaceAll(t.Dotenv, "\r\n", "\n")
+	base = strings.TrimRight(base, "\n")
+	if base == "" {
+		t.Dotenv = strings.Join(linesToAppend, "\n") + "\n"
+		return
+	}
+	t.Dotenv = base + "\n" + strings.Join(linesToAppend, "\n") + "\n"
+}
+
+// quoteDotenvValueIfNeeded 将包含空格/特殊符号的值用双引号包裹，尽量保证 .env 可读性
+func quoteDotenvValueIfNeeded(v string) string {
+	if v == "" {
+		return ""
+	}
+	if strings.ContainsAny(v, " \t#\"'") {
+		escaped := strings.ReplaceAll(v, "\"", "\\\"")
+		return "\"" + escaped + "\""
+	}
+	return v
+}
+
+// renderDotenvFromMap 将 dotenv 的键值对渲染为 .env 文本（按 key 排序，保证输出稳定）
+func renderDotenvFromMap(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		kk := strings.TrimSpace(k)
+		if kk == "" {
+			continue
+		}
+		keys = append(keys, kk)
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf("%s=%s", k, quoteDotenvValueIfNeeded(strings.TrimSpace(m[k]))))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 func ListTemplates(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var templates []Template
-		if err := db.Find(&templates).Error; err != nil {
+		query := db.Model(&Template{})
+		enabledQ := strings.TrimSpace(c.Query("enabled"))
+		if enabledQ != "" {
+			switch strings.ToLower(enabledQ) {
+			case "1", "true", "yes", "y", "on":
+				query = query.Where("enabled = ?", true)
+			case "0", "false", "no", "n", "off":
+				query = query.Where("enabled = ?", false)
+			}
+		}
+
+		if err := query.Find(&templates).Error; err != nil {
 			c.JSON(500, gin.H{"error": "获取模板列表失败"})
 			return
 		}
 		for i := range templates {
+			normalizeTemplateDotenvBySchema(&templates[i])
 			m, w, e := parseDotenvDetailed(templates[i].Dotenv)
 			templates[i].DotenvJSON = m
 			templates[i].DotenvWarns = w
@@ -203,6 +306,7 @@ func GetTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(404, gin.H{"error": "模板不存在"})
 			return
 		}
+		normalizeTemplateDotenvBySchema(&template)
 		m, w, e := parseDotenvDetailed(template.Dotenv)
 		template.DotenvJSON = m
 		template.DotenvWarns = w
@@ -228,6 +332,12 @@ func CreateTemplate(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
+		// 兼容：如果前端只传了 dotenv_json，则在后端合成 dotenv 文本保存
+		if strings.TrimSpace(template.Dotenv) == "" && len(template.DotenvJSON) > 0 {
+			template.Dotenv = renderDotenvFromMap(template.DotenvJSON)
+		}
+
+		normalizeTemplateDotenvBySchema(&template)
 		if err := db.Create(&template).Error; err != nil {
 			c.JSON(500, gin.H{"error": "创建模板失败"})
 			return
@@ -236,6 +346,11 @@ func CreateTemplate(db *gorm.DB) gin.HandlerFunc {
 		template.DotenvJSON = m
 		template.DotenvWarns = w
 		template.DotenvErrs = e
+		go func() {
+			if err := SyncTemplatesToGitSync(db); err != nil {
+				log.Printf("[git_sync] 同步失败: %v", err)
+			}
+		}()
 		c.JSON(201, template)
 	}
 }
@@ -248,26 +363,69 @@ func UpdateTemplate(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		var input Template
+		type UpdateTemplateInput struct {
+			Name        *string            `json:"name"`
+			Category    *string            `json:"category"`
+			Description *string            `json:"description"`
+			Version     *string            `json:"version"`
+			Website     *string            `json:"website"`
+			Logo        *string            `json:"logo"`
+			Tutorial    *string            `json:"tutorial"`
+			Dotenv      *string            `json:"dotenv"`
+			DotenvJSON  *map[string]string `json:"dotenv_json"`
+			Compose     *string            `json:"compose"`
+			Screenshots *StringArray       `json:"screenshots"`
+			Schema      *Variables         `json:"schema"`
+			Enabled     *bool              `json:"enabled"`
+		}
+
+		var input UpdateTemplateInput
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(400, gin.H{"error": "无效的请求数据"})
 			return
 		}
 
 		// 更新字段
-		existingTemplate.Name = input.Name
-		existingTemplate.Category = input.Category
-		existingTemplate.Description = input.Description
-		existingTemplate.Version = input.Version
-		existingTemplate.Website = input.Website
-		existingTemplate.Logo = input.Logo
-		existingTemplate.Tutorial = input.Tutorial
-		existingTemplate.Dotenv = input.Dotenv
-		existingTemplate.Compose = input.Compose
-		existingTemplate.Screenshots = input.Screenshots
-		existingTemplate.Schema = input.Schema
-		existingTemplate.Enabled = input.Enabled
+		if input.Name != nil {
+			existingTemplate.Name = *input.Name
+		}
+		if input.Category != nil {
+			existingTemplate.Category = *input.Category
+		}
+		if input.Description != nil {
+			existingTemplate.Description = *input.Description
+		}
+		if input.Version != nil {
+			existingTemplate.Version = *input.Version
+		}
+		if input.Website != nil {
+			existingTemplate.Website = *input.Website
+		}
+		if input.Logo != nil {
+			existingTemplate.Logo = *input.Logo
+		}
+		if input.Tutorial != nil {
+			existingTemplate.Tutorial = *input.Tutorial
+		}
+		if input.Dotenv != nil {
+			existingTemplate.Dotenv = *input.Dotenv
+		} else if input.DotenvJSON != nil && len(*input.DotenvJSON) > 0 {
+			existingTemplate.Dotenv = renderDotenvFromMap(*input.DotenvJSON)
+		}
+		if input.Compose != nil {
+			existingTemplate.Compose = *input.Compose
+		}
+		if input.Screenshots != nil {
+			existingTemplate.Screenshots = *input.Screenshots
+		}
+		if input.Schema != nil {
+			existingTemplate.Schema = *input.Schema
+		}
+		if input.Enabled != nil {
+			existingTemplate.Enabled = *input.Enabled
+		}
 
+		normalizeTemplateDotenvBySchema(&existingTemplate)
 		if err := db.Save(&existingTemplate).Error; err != nil {
 			c.JSON(500, gin.H{"error": "更新模板失败"})
 			return
@@ -276,6 +434,69 @@ func UpdateTemplate(db *gorm.DB) gin.HandlerFunc {
 		existingTemplate.DotenvJSON = m
 		existingTemplate.DotenvWarns = w
 		existingTemplate.DotenvErrs = e
+		go func() {
+			if err := SyncTemplatesToGitSync(db); err != nil {
+				log.Printf("[git_sync] 同步失败: %v", err)
+			}
+		}()
+		c.JSON(200, existingTemplate)
+	}
+}
+
+func EnableTemplate(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var existingTemplate Template
+		if err := db.First(&existingTemplate, c.Param("id")).Error; err != nil {
+			c.JSON(404, gin.H{"error": "模板不存在"})
+			return
+		}
+
+		if err := db.Model(&Template{}).Where("id = ?", existingTemplate.ID).Update("enabled", true).Error; err != nil {
+			c.JSON(500, gin.H{"error": "启用模板失败"})
+			return
+		}
+
+		existingTemplate.Enabled = true
+		m, w, e := parseDotenvDetailed(existingTemplate.Dotenv)
+		existingTemplate.DotenvJSON = m
+		existingTemplate.DotenvWarns = w
+		existingTemplate.DotenvErrs = e
+
+		go func() {
+			if err := SyncTemplatesToGitSync(db); err != nil {
+				log.Printf("[git_sync] 同步失败: %v", err)
+			}
+		}()
+
+		c.JSON(200, existingTemplate)
+	}
+}
+
+func DisableTemplate(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var existingTemplate Template
+		if err := db.First(&existingTemplate, c.Param("id")).Error; err != nil {
+			c.JSON(404, gin.H{"error": "模板不存在"})
+			return
+		}
+
+		if err := db.Model(&Template{}).Where("id = ?", existingTemplate.ID).Update("enabled", false).Error; err != nil {
+			c.JSON(500, gin.H{"error": "禁用模板失败"})
+			return
+		}
+
+		existingTemplate.Enabled = false
+		m, w, e := parseDotenvDetailed(existingTemplate.Dotenv)
+		existingTemplate.DotenvJSON = m
+		existingTemplate.DotenvWarns = w
+		existingTemplate.DotenvErrs = e
+
+		go func() {
+			if err := SyncTemplatesToGitSync(db); err != nil {
+				log.Printf("[git_sync] 同步失败: %v", err)
+			}
+		}()
+
 		c.JSON(200, existingTemplate)
 	}
 }
@@ -286,6 +507,11 @@ func DeleteTemplate(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": "删除模板失败"})
 			return
 		}
+		go func() {
+			if err := SyncTemplatesToGitSync(db); err != nil {
+				log.Printf("[git_sync] 同步失败: %v", err)
+			}
+		}()
 		c.JSON(200, gin.H{"message": "删除成功"})
 	}
 }

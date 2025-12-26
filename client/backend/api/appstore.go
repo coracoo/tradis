@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -310,11 +311,11 @@ func removeExplicitContainerNames(composeContent string) (string, error) {
 	if !changed {
 		return composeContent, nil
 	}
-	out, err := yaml.Marshal(composeMap)
+	out, err := marshalComposeYAMLOrdered(composeMap)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return out, nil
 }
 
 type envFileRef struct {
@@ -339,6 +340,68 @@ func isLikelyEnvKey(key string) bool {
 		return false
 	}
 	return true
+}
+
+func isSelfEnvPlaceholder(key, val string) bool {
+	k := strings.TrimSpace(key)
+	v := strings.TrimSpace(val)
+	if k == "" || v == "" {
+		return false
+	}
+	prefix := "${" + k
+	if !strings.HasPrefix(v, prefix) || !strings.HasSuffix(v, "}") {
+		return false
+	}
+	if len(v) == len(prefix)+1 && v[len(prefix)] == '}' {
+		return true
+	}
+	if len(v) > len(prefix)+1 {
+		next := v[len(prefix)]
+		if next == ':' || next == '-' || next == '?' || next == '+' {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeDotenvText(dotenvText string, fallbackDotenv string) string {
+	src := string(dotenvText)
+	fallbackMap := parseDotenvToMap(fallbackDotenv)
+	if len(fallbackMap) == 0 {
+		return src
+	}
+
+	lines := strings.Split(src, "\n")
+	for i := 0; i < len(lines); i++ {
+		raw := lines[i]
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		prefix := ""
+		line := trimmed
+		if strings.HasPrefix(line, "export ") {
+			prefix = "export "
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		idx := strings.Index(line, "=")
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if key == "" {
+			continue
+		}
+		if isSelfEnvPlaceholder(key, val) {
+			if fb, ok := fallbackMap[key]; ok {
+				lines[i] = prefix + key + "=" + fb
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // parseDotenvToMap 将 dotenv 文本解析为 map，用于变量优先级合并与 Compose 插值
@@ -375,6 +438,61 @@ func parseDotenvToMap(content string) map[string]string {
 		out[key] = val
 	}
 	return out
+}
+
+// extractComposeInterpolationKeys 提取 Compose 文本中出现的 ${KEY...} 插值变量名集合
+func extractComposeInterpolationKeys(composeContent string) map[string]struct{} {
+	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)`)
+	out := make(map[string]struct{})
+	for _, m := range re.FindAllStringSubmatch(composeContent, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		key := strings.TrimSpace(m[1])
+		if !isLikelyEnvKey(key) {
+			continue
+		}
+		out[key] = struct{}{}
+	}
+	return out
+}
+
+// filterDotenvByAllowedKeys 仅保留允许集合中的 KEY=VALUE 行，其它变量行会被剔除（注释/空行保留）
+func filterDotenvByAllowedKeys(dotenvText string, allowed map[string]struct{}) string {
+	if len(allowed) == 0 {
+		return dotenvText
+	}
+
+	lines := strings.Split(dotenvText, "\n")
+	out := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			out = append(out, raw)
+			continue
+		}
+
+		line := trimmed
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		idx := strings.Index(line, "=")
+		key := ""
+		if idx < 0 {
+			key = strings.TrimSpace(line)
+		} else {
+			key = strings.TrimSpace(line[:idx])
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+		out = append(out, raw)
+	}
+	return strings.Join(out, "\n")
 }
 
 // renderDotenvFromMap 将 map 渲染为 dotenv 文本（兼容旧版仅传 env map 的行为）
@@ -537,10 +655,8 @@ func ensureEnvFiles(composeDir string, dotenvText string, envFiles []envFileRef,
 	}
 
 	dotenvClean := filepath.Clean(".env")
-	if strings.TrimSpace(dotenvText) != "" {
-		if err := writeFile(dotenvClean, dotenvText); err != nil {
-			return err
-		}
+	if err := writeFile(dotenvClean, dotenvText); err != nil {
+		return err
 	}
 
 	for _, ref := range envFiles {
@@ -620,6 +736,32 @@ func deployApp(c *gin.Context) {
 	go func(taskId string, appId string, deployReq DeployRequest) {
 		t := tm.GetTask(taskId)
 		t.UpdateStatus(task.StatusRunning)
+		notifyName := strings.TrimSpace(appId)
+		defer func() {
+			summary := t.Summary()
+			st := summary.Status
+			if st != task.StatusSuccess && st != task.StatusFailed && st != task.StatusCompleted {
+				return
+			}
+			msg := fmt.Sprintf("应用部署任务结束：%s", notifyName)
+			typ := "info"
+			if st == task.StatusSuccess || st == task.StatusCompleted {
+				typ = "success"
+				msg = fmt.Sprintf("应用部署成功：%s", notifyName)
+			} else {
+				typ = "error"
+				errText := strings.TrimSpace(summary.Error)
+				if errText == "" {
+					errText = "未知错误"
+				}
+				msg = fmt.Sprintf("应用部署失败：%s（%s）", notifyName, errText)
+			}
+			_ = database.SaveNotification(&database.Notification{
+				Type:    typ,
+				Message: msg,
+				Read:    false,
+			})
+		}()
 
 		// 打印调试信息，确认接收到的参数
 		if settings.IsDebugEnabled() {
@@ -633,6 +775,9 @@ func deployApp(c *gin.Context) {
 			t.AddLog("error", fmt.Sprintf("获取应用详情失败: %v", err))
 			t.Finish(task.StatusFailed, nil, err.Error())
 			return
+		}
+		if strings.TrimSpace(app.Name) != "" {
+			notifyName = strings.TrimSpace(app.Name)
 		}
 
 		projectName := app.Name
@@ -754,6 +899,22 @@ func deployApp(c *gin.Context) {
 				dotenvText = app.Dotenv
 			}
 		}
+		if strings.TrimSpace(dotenvText) != "" && strings.TrimSpace(app.Dotenv) != "" {
+			dotenvText = sanitizeDotenvText(dotenvText, app.Dotenv)
+		}
+
+		allowedKeys := extractComposeInterpolationKeys(composeContent)
+		dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
+
+		if len(deployReq.Config) > 0 {
+			app.Dotenv = dotenvText
+			if appData, err := json.MarshalIndent(app, "", "  "); err == nil {
+				appPath := filepath.Join(getAppCacheDir(), fmt.Sprintf("%s.json", app.Name))
+				if err := os.WriteFile(appPath, appData, 0644); err != nil {
+					t.AddLog("warning", fmt.Sprintf("无法更新应用缓存 .env: %v", err))
+				}
+			}
+		}
 
 		envFileRefs, efErr := extractEnvFileRefs(composeContent)
 		if efErr != nil {
@@ -775,6 +936,9 @@ func deployApp(c *gin.Context) {
 			interpolationEnv[k] = v
 		}
 		for k, v := range deployReq.Env {
+			if isSelfEnvPlaceholder(k, v) {
+				continue
+			}
 			interpolationEnv[k] = v
 		}
 		for _, item := range deployReq.Config {
@@ -785,13 +949,16 @@ func deployApp(c *gin.Context) {
 			if strings.TrimSpace(item.Default) == "" {
 				continue
 			}
+			if isSelfEnvPlaceholder(key, item.Default) {
+				continue
+			}
 			interpolationEnv[key] = item.Default
 		}
 
 		// 使用 docker compose 命令行部署，以确保原生行为（包括相对路径处理）
 		t.AddLog("info", "开始执行 Docker Compose 部署...")
 
-		cmd := exec.Command("docker", "compose", "up", "-d")
+		cmd := exec.Command("docker", "compose", "--env-file", envFile, "up", "-d")
 		cmd.Dir = composeDir // 设置工作目录为项目目录
 		// 优化输出为纯文本，便于流式展示进度
 		cmd.Env = append(os.Environ(), "COMPOSE_PROGRESS=plain", "COMPOSE_NO_COLOR=1")
@@ -1018,23 +1185,34 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 		// Reset lists to rebuild them from config
 		var newPorts []string
 		var newVolumes []string
+		envTouched := false
 		newEnv := make(map[string]string)
+		hasExistingEnv := false
 
-		// First, try to preserve existing env if it's a map (for merging)
 		if existingEnv, ok := svcMap["environment"].(map[string]interface{}); ok {
+			hasExistingEnv = true
 			for k, v := range existingEnv {
-				newEnv[k] = fmt.Sprintf("%v", v)
+				newEnv[fmt.Sprintf("%v", k)] = fmt.Sprintf("%v", v)
 			}
 		} else if existingEnvList, ok := svcMap["environment"].([]interface{}); ok {
-			// Convert list "KEY=VAL" to map
+			hasExistingEnv = true
 			for _, item := range existingEnvList {
-				str := fmt.Sprintf("%v", item)
-				// simple parse
-				// Note: this is a bit rough, but sufficient for merging
-				// We prioritize the new config anyway
-				// Actually, we might just want to append/overwrite.
-				// Let's stick to the user's request: "combine into name=value"
-				_ = str
+				s := strings.TrimSpace(fmt.Sprintf("%v", item))
+				if s == "" {
+					continue
+				}
+				parts := strings.SplitN(s, "=", 2)
+				key := strings.TrimSpace(parts[0])
+				if key == "" {
+					continue
+				}
+				val := ""
+				if len(parts) == 2 {
+					val = strings.TrimSpace(parts[1])
+				}
+				if _, exists := newEnv[key]; !exists {
+					newEnv[key] = val
+				}
 			}
 		}
 
@@ -1062,7 +1240,14 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 			case "env", "environment":
 				// Format: "key=value" -> "name=default"
 				if left != "" {
+					if strings.TrimSpace(right) == "" {
+						continue
+					}
+					if isSelfEnvPlaceholder(left, right) {
+						continue
+					}
 					newEnv[left] = right
+					envTouched = true
 				}
 			}
 		}
@@ -1074,16 +1259,16 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 		if len(newVolumes) > 0 {
 			svcMap["volumes"] = newVolumes
 		}
-		if len(newEnv) > 0 {
+		if envTouched || (!hasExistingEnv && len(newEnv) > 0) {
 			svcMap["environment"] = newEnv
 		}
 	}
 
-	out, err := yaml.Marshal(data)
+	out, err := marshalComposeYAMLOrdered(data)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return out, nil
 }
 
 // SSE 任务日志流
@@ -1265,9 +1450,9 @@ func injectEnvToYaml(content string, env map[string]string) (string, error) {
 		}
 	}
 
-	out, err := yaml.Marshal(data)
+	out, err := marshalComposeYAMLOrdered(data)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return out, nil
 }

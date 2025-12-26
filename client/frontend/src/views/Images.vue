@@ -21,6 +21,10 @@
             <template #icon><el-icon><Refresh /></el-icon></template>
             刷新
           </el-button>
+          <el-button @click="manualCheckUpdates" :loading="checkingUpdates" plain size="medium">
+            <template #icon><el-icon><Refresh /></el-icon></template>
+            检测更新
+          </el-button>
           <el-button type="primary" @click="pullImage" size="medium">
             <template #icon><el-icon><Download /></el-icon></template>
             拉取镜像
@@ -389,6 +393,7 @@ const settingsVisible = ref(false)
 const updateStatusMap = ref({})
 const updatingMap = ref({})
 const bulkUpdating = ref(false)
+const checkingUpdates = ref(false)
 let updateTimer = null
 
 const normalizeUpdateStatusMap = (raw) => {
@@ -1052,6 +1057,28 @@ const checkImageUpdates = async () => {
     updateStatusMap.value = normalizeUpdateStatusMap(raw)
   } catch (error) {
     console.error('加载镜像更新状态失败:', error)
+  }
+}
+
+const manualCheckUpdates = async () => {
+  if (checkingUpdates.value) {
+    return
+  }
+  try {
+    checkingUpdates.value = true
+    const res = await api.images.checkUpdates({ force: true })
+    const data = res?.data || res || {}
+    const remoteErrors = data.remoteErrors || 0
+    const skippedBackoff = data.skippedBackoff || 0
+    const skippedUnavailable = data.skippedUnavailable || 0
+    const msg = `检测完成：远端错误 ${remoteErrors}，跳过退避 ${skippedBackoff}，跳过不可用 ${skippedUnavailable}`
+    ElMessage.success(msg)
+    await checkImageUpdates()
+  } catch (e) {
+    console.error('手动检测镜像更新失败:', e)
+    ElMessage.error('手动检测镜像更新失败: ' + (e.message || '未知错误'))
+  } finally {
+    checkingUpdates.value = false
   }
 }
 

@@ -28,6 +28,9 @@
             <template #icon><el-icon><Refresh /></el-icon></template>
             刷新
           </el-button>
+          <el-button plain size="medium" @click="handleOpenDeployProgress">
+            进度查询
+          </el-button>
           <el-button type="primary" @click="goCreateProject" size="medium">
             <template #icon><el-icon><Plus /></el-icon></template>
             新建项目
@@ -376,6 +379,21 @@
                 <div ref="editorContainer" class="monaco-editor-wrapper"></div>
               </div>
             </el-form-item>
+            <el-form-item label=".env">
+              <div class="env-toolbar">
+                <el-button size="small" link type="primary" @click="handleAddDotenvVariable">添加变量</el-button>
+                <el-button size="small" link type="primary" @click="handleExtractDotenvFromCompose">从 Compose 提取</el-button>
+              </div>
+              <el-input
+                v-model="projectForm.dotenv"
+                type="textarea"
+                :rows="8"
+                class="env-textarea"
+                placeholder="例如：&#10;MYSQL_ROOT_PASSWORD=123456&#10;TZ=Asia/Shanghai"
+                :spellcheck="false"
+              />
+              <div class="dotenv-hint">这里的内容会落盘到项目目录的 `.env`，供 Compose 插值使用</div>
+            </el-form-item>
             <el-form-item>
               <el-checkbox v-model="projectForm.autoStart">创建完成后立即运行</el-checkbox>
             </el-form-item>
@@ -404,6 +422,7 @@
       </div>
       <template #footer>
         <span class="dialog-footer">
+          <el-button v-if="deploying" type="warning" @click="handleDeployInBackground">后台运行</el-button>
           <el-button @click="dialogVisible = false">取消</el-button>
           <el-button type="primary" @click="handleSaveProject">立即部署</el-button>
         </span>
@@ -425,6 +444,7 @@ import { formatTimeTwoLines, normalizeComposeProjectName } from '../utils/format
 import ContainerTerminal from '../components/ContainerTerminal.vue'
 import ContainerLogs from '../components/ContainerLogs.vue'
 import request from '../utils/request'
+import { useSseLogStream } from '../utils/sseLogStream'
 let monaco = null
 const copyTextToClipboard = async (text) => {
   const writeText = navigator?.clipboard?.writeText
@@ -451,6 +471,112 @@ const readTextFromClipboard = async () => {
     return await readText.call(navigator.clipboard)
   }
   return ''
+}
+
+// handleAddDotenvVariable 添加/更新一条 .env 变量
+const handleAddDotenvVariable = async () => {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入变量（支持 KEY 或 KEY=VALUE）', '添加 .env 变量', {
+      confirmButtonText: '添加',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如：MYSQL_ROOT_PASSWORD=123456',
+      inputValue: '',
+      closeOnClickModal: false
+    })
+    const raw = String(value || '').trim()
+    if (!raw) return
+
+    const eq = raw.indexOf('=')
+    const key = (eq === -1 ? raw : raw.slice(0, eq)).trim()
+    const v = eq === -1 ? '' : raw.slice(eq + 1)
+    if (!key) return
+
+    projectForm.value.dotenv = upsertDotenvKeyValue(String(projectForm.value.dotenv || ''), key, v)
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('添加失败')
+  }
+}
+
+// handleExtractDotenvFromCompose 从 Compose 文本提取 ${VAR} 并补齐到 .env
+const handleExtractDotenvFromCompose = async () => {
+  const composeText = String(projectForm.value.compose || '')
+  const keys = extractInterpolationKeysFromCompose(composeText)
+  if (keys.length === 0) {
+    ElMessage.info('未在 Compose 中发现 ${VAR} 变量')
+    return
+  }
+
+  const existing = new Set(parseDotenvKeys(String(projectForm.value.dotenv || '')))
+  const toAdd = keys.filter((k) => !existing.has(k))
+  if (toAdd.length === 0) {
+    ElMessage.success('变量已存在，无需补齐')
+    return
+  }
+
+  projectForm.value.dotenv = appendDotenvLines(String(projectForm.value.dotenv || ''), toAdd.map((k) => `${k}=`))
+  ElMessage.success(`已补齐 ${toAdd.length} 个变量`)
+}
+
+// parseDotenvKeys 解析 .env 文本中已定义的 key（忽略注释/空行）
+const parseDotenvKeys = (dotenvTextValue) => {
+  const lines = String(dotenvTextValue || '').replace(/\r\n/g, '\n').split('\n')
+  const out = []
+  for (const raw of lines) {
+    const trimmed = String(raw || '').trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    const left = (eq === -1 ? trimmed : trimmed.slice(0, eq)).trim()
+    const key = left.replace(/^export\s+/, '').trim()
+    if (key) out.push(key)
+  }
+  return out
+}
+
+// appendDotenvLines 将多行内容追加到 .env（自动补齐换行）
+const appendDotenvLines = (dotenvTextValue, lines) => {
+  const base = String(dotenvTextValue || '').replace(/\r\n/g, '\n')
+  const add = (Array.isArray(lines) ? lines : []).map((l) => String(l || '')).filter(Boolean)
+  if (add.length === 0) return base
+  const prefix = base.endsWith('\n') || base === '' ? base : `${base}\n`
+  return `${prefix}${add.join('\n')}\n`
+}
+
+// upsertDotenvKeyValue 将 key=value 写入 .env 文本（尽量只替换最后一次出现）
+const upsertDotenvKeyValue = (dotenvTextValue, key, value) => {
+  const k = String(key || '').trim()
+  if (!k) return String(dotenvTextValue || '')
+
+  const lines = String(dotenvTextValue || '').replace(/\r\n/g, '\n').split('\n')
+  const escapedKey = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const keyRegex = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}\\s*=`)
+
+  let lastIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]
+    const trimmed = String(raw || '').trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    if (keyRegex.test(raw)) lastIdx = i
+  }
+
+  const newLine = `${k}=${String(value ?? '')}`
+  if (lastIdx >= 0) {
+    lines[lastIdx] = newLine
+    return lines.join('\n').replace(/\n*$/, '\n')
+  }
+  return appendDotenvLines(dotenvTextValue, [newLine])
+}
+
+// extractInterpolationKeysFromCompose 提取 Compose 文本中出现的 ${VAR} key 列表
+const extractInterpolationKeysFromCompose = (composeText) => {
+  const out = new Set()
+  const text = String(composeText || '')
+  const re = /\$\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}/g
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const k = String(m[1] || '').trim()
+    if (k) out.add(k)
+  }
+  return Array.from(out).sort()
 }
 
 const loadMonaco = async () => {
@@ -516,13 +642,35 @@ const currentContainer = ref(null)
 
 const dialogVisible = ref(false)
 const dialogTitle = ref('新建项目')
+const deployAutoScroll = ref(true)
 const logsContent = ref(null)
-const deployLogs = ref([])
+const deploying = ref(false)
+const lastDeployTaskId = ref(localStorage.getItem('compose:lastDeployTaskId') || '')
+const {
+  logs: deployLogs,
+  isOpen: deployStreamOpen,
+  start: startDeployTaskStream,
+  stop: stopDeployTaskStream,
+  clear: clearDeployTaskLogs
+} = useSseLogStream({
+  autoScroll: deployAutoScroll,
+  scrollElRef: logsContent,
+  onOpenLine: null,
+  onErrorLine: null,
+  makeEntry: (payload) => {
+    const obj = payload && typeof payload === 'object' ? payload : null
+    const t = String(obj?.type || payload?.type || '').trim()
+    const m = String(obj?.message || payload?.message || payload || '').trim()
+    const tp = t || (m.toLowerCase().startsWith('error') ? 'error' : 'info')
+    return { type: tp, message: m || String(payload || '') }
+  }
+})
 const projectRoot = ref('')
 const projectForm = ref({
   name: '',
   path: '',
   compose: '',
+  dotenv: '',
   autoStart: true
 })
 
@@ -678,6 +826,7 @@ onBeforeUnmount(() => {
   if (editorInstance.value) {
     editorInstance.value.dispose()
   }
+  stopDeployTaskStream()
 })
 
 const refreshAll = async () => {
@@ -882,6 +1031,7 @@ const goCreateProject = () => {
     name: '',
     path: '',
     compose: '',
+    dotenv: '',
     autoStart: true
   }
   dialogVisible.value = true
@@ -1236,7 +1386,8 @@ const handleSaveProject = async () => {
     return
   }
 
-  deployLogs.value = []
+  clearDeployTaskLogs()
+  deploying.value = true
 
   try {
     if (!projectForm.value.compose.includes('services:')) {
@@ -1259,74 +1410,74 @@ const handleSaveProject = async () => {
   }
 
   try {
-    const encodedCompose = encodeURIComponent(projectForm.value.compose)
-    const token = localStorage.getItem('token') || ''
-    const eventSource = new EventSource(
-      `/api/compose/deploy/events?name=${projectForm.value.name}&compose=${encodedCompose}&token=${token}`
-    )
-
-    const logSet = new Set()
-    const timeout = setTimeout(() => {
-      deployLogs.value.push({
-        type: 'warning',
-        message: '日志连接超时，请稍后在项目列表查看状态'
-      })
-      eventSource.close()
-    }, 600000)
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        const key = `${data.type}:${data.message}`
-        if (!logSet.has(key)) {
-          logSet.add(key)
-          deployLogs.value.push({
-            type: data.type,
-            message: data.message
-          })
-        }
-        nextTick(() => {
-          if (logsContent.value) {
-            logsContent.value.scrollTop = logsContent.value.scrollHeight
-          }
-        })
-        if (data.type === 'success' && data.message.includes('所有服务已成功启动')) {
-          clearTimeout(timeout)
-          ElMessage.success(data.message)
-          setTimeout(() => {
-            eventSource.close()
-            dialogVisible.value = false
-            refreshAll()
-          }, 500)
-        } else if (data.type === 'error') {
-          ElMessage.error(data.message)
-        }
-      } catch (e) {
-        deployLogs.value.push({
-          type: 'error',
-          message: `解析服务器消息失败: ${e.message}`
-        })
-      }
-    }
-
-    eventSource.onerror = () => {
-      clearTimeout(timeout)
-      const hasSuccess = deployLogs.value.some(l => l.type === 'success')
-      if (!hasSuccess) {
-        deployLogs.value.push({
-          type: 'error',
-          message: '与服务器连接中断，部署可能已失败'
-        })
-      }
-      eventSource.close()
-    }
-  } catch (error) {
-    deployLogs.value.push({
-      type: 'error',
-      message: `部署失败: ${error.message || '未知错误'}`
+    const res = await api.compose.deployTask({
+      name: projectForm.value.name,
+      compose: projectForm.value.compose,
+      dotenv: String(projectForm.value.dotenv || ''),
+      env: '',
+      autoStart: !!projectForm.value.autoStart
     })
-    ElMessage.error(`部署失败: ${error.message || '未知错误'}`)
+    const data = res?.data || res
+    const taskId = String(data?.taskId || '').trim()
+    if (!taskId) {
+      deploying.value = false
+      ElMessage.error('未获取到任务ID')
+      return
+    }
+    lastDeployTaskId.value = taskId
+    localStorage.setItem('compose:lastDeployTaskId', taskId)
+
+    api.system.addNotification({ type: 'info', message: `已提交部署任务（${projectForm.value.name}），可后台运行并在进度查询查看` })
+      .then((saved) => {
+        window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type: 'info', message: `已提交部署任务（${projectForm.value.name}）`, dbId: saved?.id, createdAt: saved?.created_at, read: saved?.read } }))
+      })
+      .catch(() => {
+        window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type: 'info', message: `已提交部署任务（${projectForm.value.name}）` } }))
+      })
+
+    const token = localStorage.getItem('token') || ''
+    const url = `/api/compose/tasks/${encodeURIComponent(taskId)}/events?token=${encodeURIComponent(token)}`
+    startDeployTaskStream(url, {
+      reset: false
+    })
+
+    const stopWatcher = watch(deployStreamOpen, (open) => {
+      if (open) return
+      deploying.value = false
+      stopWatcher()
+      setTimeout(() => {
+        refreshAll()
+      }, 500)
+    })
+  } catch (error) {
+    deploying.value = false
+    ElMessage.error(`部署失败: ${error.response?.data?.error || error.message || '未知错误'}`)
   }
+}
+
+const handleOpenDeployProgress = () => {
+  const taskId = String(lastDeployTaskId.value || '').trim()
+  if (!taskId) {
+    ElMessage.info('暂无可查询的部署任务')
+    return
+  }
+  dialogVisible.value = true
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/compose/tasks/${encodeURIComponent(taskId)}/events?token=${encodeURIComponent(token)}`
+  startDeployTaskStream(url, { reset: true })
+}
+
+const handleDeployInBackground = () => {
+  dialogVisible.value = false
+  const name = String(projectForm.value.name || '').trim()
+  const msg = name ? `部署任务已后台运行：${name}` : '部署任务已后台运行'
+  api.system.addNotification({ type: 'info', message: msg })
+    .then((saved) => {
+      window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type: 'info', message: msg, dbId: saved?.id, createdAt: saved?.created_at, read: saved?.read } }))
+    })
+    .catch(() => {
+      window.dispatchEvent(new CustomEvent('dockpier-notification', { detail: { type: 'info', message: msg } }))
+    })
 }
 
 onMounted(() => {
@@ -1459,6 +1610,23 @@ watch(
 .monaco-editor-wrapper {
   height: 400px;
   width: 100%;
+}
+
+.env-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.dotenv-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+:deep(.env-textarea textarea) {
+  font-family: monospace;
 }
 
 .deploy-logs {

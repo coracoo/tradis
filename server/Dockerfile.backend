@@ -19,7 +19,7 @@ FROM alpine:latest
 WORKDIR /app
 
 # 安装必要的系统工具
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata git openssh-client bash
 
 # 复制后端二进制
 COPY --from=builder /app/server .
