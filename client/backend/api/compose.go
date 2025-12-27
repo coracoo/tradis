@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,111 @@ import (
 // getProjectsBaseDir 获取项目根目录
 func getProjectsBaseDir() string {
 	return settings.GetProjectRoot()
+}
+
+func removeDotenvEnvFileRefsFromCompose(composeContent string) (string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(composeContent), &doc); err != nil {
+		return "", err
+	}
+	if len(doc.Content) == 0 {
+		return composeContent, nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	findMapValue := func(m *yaml.Node, key string) *yaml.Node {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return nil
+		}
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				return v
+			}
+		}
+		return nil
+	}
+
+	deleteMapKey := func(m *yaml.Node, key string) {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return
+		}
+		next := make([]*yaml.Node, 0, len(m.Content))
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				continue
+			}
+			next = append(next, k, v)
+		}
+		m.Content = next
+	}
+
+	services := findMapValue(root, "services")
+	if services == nil || services.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	for i := 0; i+1 < len(services.Content); i += 2 {
+		svcVal := services.Content[i+1]
+		if svcVal == nil || svcVal.Kind != yaml.MappingNode {
+			continue
+		}
+		envFile := findMapValue(svcVal, "env_file")
+		if envFile == nil {
+			continue
+		}
+
+		switch envFile.Kind {
+		case yaml.ScalarNode:
+			if strings.TrimSpace(envFile.Value) == ".env" {
+				deleteMapKey(svcVal, "env_file")
+			}
+		case yaml.SequenceNode:
+			nextItems := make([]*yaml.Node, 0, len(envFile.Content))
+			for _, it := range envFile.Content {
+				if it == nil {
+					continue
+				}
+				if it.Kind == yaml.ScalarNode {
+					if strings.TrimSpace(it.Value) == ".env" {
+						continue
+					}
+					nextItems = append(nextItems, it)
+					continue
+				}
+				if it.Kind == yaml.MappingNode {
+					pathNode := findMapValue(it, "path")
+					if pathNode != nil && pathNode.Kind == yaml.ScalarNode && strings.TrimSpace(pathNode.Value) == ".env" {
+						continue
+					}
+					nextItems = append(nextItems, it)
+					continue
+				}
+				nextItems = append(nextItems, it)
+			}
+			if len(nextItems) == 0 {
+				deleteMapKey(svcVal, "env_file")
+			} else {
+				envFile.Content = nextItems
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	_ = enc.Close()
+	return buf.String(), nil
 }
 
 func dockerComposeCmd(projectDir string, args ...string) *exec.Cmd {
@@ -1728,11 +1834,6 @@ func deployEvents(c *gin.Context) {
 			}
 		}
 
-		if err := os.WriteFile(composePath, []byte(composeToWrite), 0644); err != nil {
-			sendMessage("error", "保存配置文件失败: "+err.Error())
-			return
-		}
-
 		envMap := make(map[string]string)
 		if strings.TrimSpace(envRaw) != "" {
 			if err := json.Unmarshal([]byte(envRaw), &envMap); err != nil {
@@ -1742,9 +1843,7 @@ func deployEvents(c *gin.Context) {
 		}
 
 		dotenvText := strings.ReplaceAll(dotenvRaw, "\r\n", "\n")
-		if strings.TrimSpace(dotenvText) == "" && len(envMap) > 0 {
-			dotenvText = renderDotenvFromMap(envMap)
-		} else if len(envMap) > 0 {
+		if strings.TrimSpace(dotenvText) != "" && len(envMap) > 0 {
 			for k, v := range envMap {
 				dotenvText = upsertDotenvKeyValue(dotenvText, k, v)
 			}
@@ -1753,9 +1852,22 @@ func deployEvents(c *gin.Context) {
 		allowedKeys := extractComposeInterpolationKeys(composeToWrite)
 		dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
 
-		if err := os.WriteFile(envPath, []byte(dotenvText), 0644); err != nil {
-			sendMessage("error", "保存 .env 文件失败: "+err.Error())
+		if strings.TrimSpace(dotenvText) == "" {
+			if modified, err := removeDotenvEnvFileRefsFromCompose(composeToWrite); err == nil {
+				composeToWrite = modified
+			}
+		}
+
+		if err := os.WriteFile(composePath, []byte(composeToWrite), 0644); err != nil {
+			sendMessage("error", "保存配置文件失败: "+err.Error())
 			return
+		}
+
+		if strings.TrimSpace(dotenvText) != "" {
+			if err := os.WriteFile(envPath, []byte(dotenvText), 0644); err != nil {
+				sendMessage("error", "保存 .env 文件失败: "+err.Error())
+				return
+			}
 		}
 
 		sendMessage("info", "开始拉取镜像...")

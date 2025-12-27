@@ -164,12 +164,6 @@
                 <!-- 基础配置 -->
                 <div v-if="group.basic.length > 0" class="config-section">
                   <div class="section-label" v-if="group.advanced.length > 0">基础配置</div>
-                  <!-- Use index as key if config.name is not stable or unique enough during edits, 
-                       but ideally config.name should be unique. 
-                       However, if config.name is editable, using it as :key will cause re-render on input.
-                       Use config itself or a stable ID if available. 
-                       Since we don't have stable IDs, let's use index within the group for now or try to not update key.
-                  -->
                   <div v-for="(config, idx) in group.basic" :key="idx" class="form-row-custom">
                     <el-row :gutter="8" align="middle">
                       <!-- 1. 类型 (自定义可编辑，否则只读) -->
@@ -369,7 +363,6 @@
           <!-- 操作按钮 -->
           <div class="form-actions">
             <el-button @click="goBack">取消</el-button>
-            <el-button v-if="lastDeployTaskId" plain @click="openDeployProgress">进度查询</el-button>
             <el-button type="primary" :loading="deploying" @click="submitDeploy">
               确认部署
             </el-button>
@@ -543,16 +536,7 @@ const {
       time: data?.time || new Date().toISOString()
     })
   },
-  onError: ({ pushLine, stop }) => {
-    if (!deploying.value) return
-    if (taskTimeoutRef.value) {
-      clearTimeout(taskTimeoutRef.value)
-      taskTimeoutRef.value = null
-    }
-    pushLine({ type: 'error', message: '日志连接中断', time: new Date().toISOString() })
-    stop()
-    deploying.value = false
-  }
+  onError: () => {}
 })
 
 // 图片预览相关
@@ -943,6 +927,7 @@ const buildConfigFormKey = (cfg, idx) => {
 
 const initForm = () => {
   const originalDotenv = String(project.value?.dotenv || '')
+  const hasOriginalDotenv = originalDotenv.trim().length > 0
   const { map: dotenvMap } = parseDotenvTextToOrderedMap(originalDotenv)
   const addedDotenvLines = []
 
@@ -963,17 +948,21 @@ const initForm = () => {
       const isEnv = paramType === 'env' || paramType === 'environment' || (!paramType && ['string', 'password', 'number', 'boolean', 'text'].includes(typ))
 
       if (item.serviceName === 'Global' && isEnv && key) {
-        if (!(key in dotenvMap)) {
-          dotenvMap[key] = String(item.default || '')
-          addedDotenvLines.push(`${key}=${String(item.default || '')}`)
+        if (hasOriginalDotenv) {
+          if (!(key in dotenvMap)) {
+            dotenvMap[key] = String(item.default || '')
+            addedDotenvLines.push(`${key}=${String(item.default || '')}`)
+          }
+          return
         }
+        filtered.push(item)
         return
       }
 
       filtered.push(item)
     })
 
-    if (addedDotenvLines.length > 0) {
+    if (hasOriginalDotenv && addedDotenvLines.length > 0) {
       dotenvText.value = appendDotenvLines(originalDotenv, addedDotenvLines)
     }
 
@@ -1262,14 +1251,6 @@ const injectEnvFileForServicesAst = (yamlText, serviceNameSet) => {
     const servicesNode = doc.get('services', true)
     if (!servicesNode || !isMap(servicesNode)) return injectEnvFileForServices(input, need)
 
-    for (const pair of servicesNode.items || []) {
-      const svcName = String(pair?.key?.value ?? '').trim()
-      if (!svcName) continue
-      if (need.has(svcName)) continue
-      const envFileNode = doc.getIn(['services', svcName, 'env_file'], true)
-      if (envFileNode != null) doc.deleteIn(['services', svcName, 'env_file'])
-    }
-
     for (const svcName of need) {
       const svcNode = doc.getIn(['services', svcName], true)
       if (!svcNode || !isMap(svcNode)) continue
@@ -1284,6 +1265,51 @@ const injectEnvFileForServicesAst = (yamlText, serviceNameSet) => {
   } catch (e) {
     console.warn('compose.yaml YAML AST 解析失败，回退到文本注入逻辑', e)
     return injectEnvFileForServices(input, need)
+  }
+}
+
+const removeDotenvEnvFileRefsAst = (yamlText) => {
+  const input = String(yamlText || '')
+  try {
+    const doc = parseDocument(input, { keepSourceTokens: true })
+    const servicesNode = doc.get('services', true)
+    if (!servicesNode || !isMap(servicesNode)) return input
+
+    for (const pair of servicesNode.items || []) {
+      const svcName = String(pair?.key?.value ?? '').trim()
+      if (!svcName) continue
+      const envFileNode = doc.getIn(['services', svcName, 'env_file'], true)
+      if (envFileNode == null) continue
+
+      if (typeof envFileNode?.value === 'string') {
+        if (String(envFileNode.value).trim() === '.env') doc.deleteIn(['services', svcName, 'env_file'])
+        continue
+      }
+
+      if (Array.isArray(envFileNode?.items)) {
+        const keep = []
+        for (const it of envFileNode.items) {
+          const v = it?.value
+          if (typeof v === 'string') {
+            if (String(v).trim() === '.env') continue
+            keep.push(v)
+            continue
+          }
+          const obj = typeof it?.toJSON === 'function' ? it.toJSON() : null
+          if (obj && typeof obj === 'object' && String(obj.path || '').trim() === '.env') continue
+          keep.push(obj || v)
+        }
+        if (keep.length === 0) {
+          doc.deleteIn(['services', svcName, 'env_file'])
+        } else {
+          doc.setIn(['services', svcName, 'env_file'], keep)
+        }
+      }
+    }
+
+    return String(doc).replace(/\n*$/, '\n')
+  } catch (e) {
+    return input
   }
 }
 
@@ -1343,13 +1369,39 @@ const submitDeploy = async () => {
   try {
     // 0. 构建最终的环境变量/参数映射 (为了兼容性保留 Env Map，虽然主要靠 Config 数组)
     const finalEnv = {}
-    const servicesNeedEnvFile = new Set()
+    const dotenvKeySet = new Set()
+    try {
+      const { map } = parseDotenvTextToOrderedMap(String(dotenvText.value || ''))
+      Object.keys(map || {}).forEach(k => {
+        const kk = String(k || '').trim()
+        if (kk) dotenvKeySet.add(kk)
+      })
+    } catch (e) {}
+
+    const shouldDropEnvConfigByDotenv = (cfg) => {
+      const key = String(cfg?.name || '').trim()
+      if (!key) return false
+      const val = String(cfg?.default ?? '').trim()
+      if (!val) return false
+      const isEnv = (cfg?.paramType === 'env' || cfg?.paramType === 'environment') || (!cfg?.paramType && cfg?.type !== 'port' && cfg?.type !== 'path' && cfg?.type !== 'volume')
+      if (!isEnv) return false
+      const isPlaceholder = val === `[${key}]` || val === `\${${key}}` || val.startsWith(`\${${key}:`) || val.startsWith(`\${${key}-`) || val.startsWith(`\${${key}?`) || val.startsWith(`\${${key}+`)
+      if (!isPlaceholder) return false
+      return !dotenvKeySet.has(key)
+    }
+
     // 处理 Config 数组中的自定义 Key
+    const effectiveConfig = []
     deployConfig.value.forEach(config => {
         if (config.isCustom && config.customKey) {
             config.name = config.customKey // 提交前更新 name
         }
-        
+
+        if (shouldDropEnvConfigByDotenv(config)) {
+          return
+        }
+        effectiveConfig.push(config)
+
         // 只将环境变量类型的配置加入 finalEnv，避免将端口映射或卷映射路径写入 .env 文件导致报错
         // 检查 paramType (新标准) 或 type (兼容旧数据)
         const isEnv = (config.paramType === 'env' || config.paramType === 'environment') || 
@@ -1357,17 +1409,8 @@ const submitDeploy = async () => {
         
         if (isEnv) {
             finalEnv[config.name] = config.default || ''
-            const svc = String(config.serviceName || '').trim()
-            if (svc && svc !== 'Global') servicesNeedEnvFile.add(svc)
         }
     })
-
-    // 0.1 将服务级环境变量也写入 .env，确保 Compose 插值（如 networks/subnet）可用
-    let mergedDotenv = String(dotenvText.value || '')
-    Object.entries(finalEnv).forEach(([k, v]) => {
-      mergedDotenv = upsertDotenvKeyValue(mergedDotenv, k, v)
-    })
-    dotenvText.value = mergedDotenv
 
     // 1. 准备 YAML 模板
     let yamlContent = ''
@@ -1383,9 +1426,13 @@ const submitDeploy = async () => {
     } else {
        console.warn('No compose or services found in project definition')
     }
-    const servicesNeedEnvFileFromYaml = collectServicesNeedEnvFileFromCompose(yamlContent)
-    for (const svc of servicesNeedEnvFileFromYaml) servicesNeedEnvFile.add(svc)
-    yamlContent = injectEnvFileForServicesAst(yamlContent, servicesNeedEnvFile)
+    const hasDotenv = String(dotenvText.value || '').trim().length > 0
+    if (hasDotenv) {
+      const servicesNeedEnvFileFromYaml = collectServicesNeedEnvFileFromCompose(yamlContent)
+      yamlContent = injectEnvFileForServicesAst(yamlContent, servicesNeedEnvFileFromYaml)
+    } else {
+      yamlContent = removeDotenvEnvFileRefsAst(yamlContent)
+    }
 
     const rawName = project.value.name || ''
     let projectName = normalizeComposeProjectName(rawName)
@@ -1455,8 +1502,8 @@ const submitDeploy = async () => {
       projectName,
       compose: yamlContent,
       env: finalEnv, // 兼容旧逻辑
-      dotenv: mergedDotenv,
-      config: deployConfig.value // 新逻辑：传递完整配置数组
+      dotenv: hasDotenv ? String(dotenvText.value || '') : '',
+      config: effectiveConfig // 新逻辑：传递完整配置数组
     }
 
     try {
@@ -1506,21 +1553,6 @@ const submitDeploy = async () => {
       taskTimeoutRef.value = null
     }
   }
-}
-
-const openDeployProgress = () => {
-  const taskId = String(lastDeployTaskId.value || '').trim()
-  if (!taskId) {
-    ElMessage.info('暂无可查询的部署任务')
-    return
-  }
-  showLogs.value = true
-  deploying.value = true
-  deploySuccess.value = false
-  stopDeployTaskStream()
-  const token = localStorage.getItem('token') || ''
-  const url = `/api/appstore/tasks/${encodeURIComponent(taskId)}/events?token=${encodeURIComponent(token)}`
-  startDeployTaskStream(url, { reset: true })
 }
 
 const runDeployInBackground = () => {

@@ -93,12 +93,12 @@
       </template>
       <div class="port-settings">
         <el-form :model="allocSettings" label-width="140px">
-          <el-form-item label="允许自动分配端口">
+          <!--<el-form-item label="允许自动分配端口">
             <div class="switch-group">
               <el-switch v-model="allocSettings.allowAutoAllocPort" />
               <span class="status-text">{{ allocSettings.allowAutoAllocPort ? '已开启' : '已关闭' }}</span>
             </div>
-          </el-form-item>
+          </el-form-item>-->
           <el-form-item label="自动分配范围">
             <div class="range-row">
               <el-input-number v-model="allocSettings.start" :min="1024" :max="65535" placeholder="起始端口" />
@@ -111,7 +111,7 @@
         
         <div class="help-text">
           <p>开启后：应用部署页面将自动为端口参数填充可用端口（来自锁定范围）。</p>
-          <p>自动分配范围：用于应用部署时自动填充端口。</p>
+          <!--<p>自动分配范围：用于应用部署时自动填充端口。</p>-->
         </div>
       </div>
     </el-card>

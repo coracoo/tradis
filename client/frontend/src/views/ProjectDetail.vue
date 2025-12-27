@@ -15,9 +15,6 @@
         <el-button @click="handleRefresh" plain size="medium" class="square-btn">
           <template #icon><el-icon><Refresh /></el-icon></template>
         </el-button>
-        <el-button plain size="medium" class="square-btn" @click="openTaskCenter">
-          进度查询
-        </el-button>
         <el-button-group>
           <el-button type="primary" :loading="isBuilding" :disabled="isSelfProject" @click="handleBuild" size="medium">
             重新构建
@@ -86,45 +83,6 @@
         <span class="dialog-footer">
           <el-button v-if="isActionRunning" type="warning" @click="backgroundActionDialog">后台运行</el-button>
           <el-button @click="closeActionDialog">关闭</el-button>
-        </span>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="taskCenterVisible"
-      title="部署任务进度"
-      width="900px"
-      :close-on-click-modal="false"
-    >
-      <div class="task-center-toolbar">
-        <el-button plain :loading="taskCenterLoading" @click="loadComposeDeployTasks">刷新</el-button>
-      </div>
-      <el-table :data="taskCenterTasks" style="width: 100%" class="custom-table" v-loading="taskCenterLoading">
-        <el-table-column prop="id" label="任务ID" min-width="220" />
-        <el-table-column prop="status" label="状态" width="120" />
-        <el-table-column prop="updatedAt" label="更新时间" min-width="180" />
-        <el-table-column prop="error" label="错误" min-width="220" />
-        <el-table-column label="操作" width="120" fixed="right" header-align="center">
-          <template #default="scope">
-            <el-button size="small" type="primary" @click="openTaskLogs(scope.row)">查看</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-dialog>
-
-    <el-dialog
-      v-model="taskLogsVisible"
-      title="任务日志"
-      width="900px"
-      :close-on-click-modal="false"
-    >
-      <div class="build-logs" ref="taskLogsRef">
-        <pre v-for="(log, index) in taskLogs" :key="index" :class="log.level">{{ log.content }}</pre>
-      </div>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button v-if="taskLogsRunning" type="warning" @click="backgroundTaskLogs">后台运行</el-button>
-          <el-button @click="closeTaskLogs">关闭</el-button>
         </span>
       </template>
     </el-dialog>
@@ -328,100 +286,11 @@ const notifyHeader = async (type, message) => {
   }
 }
 
-const taskCenterVisible = ref(false)
-const taskCenterLoading = ref(false)
-const taskCenterTasks = ref([])
-
-const taskLogsVisible = ref(false)
-const taskLogsRef = ref(null)
-const taskLogsAutoScroll = ref(true)
-const currentTaskId = ref('')
-const {
-  logs: taskLogs,
-  isOpen: taskLogsStreamOpen,
-  start: startTaskLogsStream,
-  stop: stopTaskLogsStream,
-  clear: clearTaskLogs
-} = useSseLogStream({
-  autoScroll: taskLogsAutoScroll,
-  scrollElRef: taskLogsRef,
-  onOpenLine: null,
-  onErrorLine: 'error: 日志连接错误',
-  makeEntry: (payload) => {
-    if (payload && typeof payload === 'object') {
-      const type = String(payload.type || '').trim()
-      const message = String(payload.message || '').trim()
-      const time = String(payload.time || '').trim()
-      const level = type || inferLogLevel(message)
-      const content = message || JSON.stringify(payload)
-      return { level, content, time }
-    }
-    const content = String(payload || '')
-    return { level: inferLogLevel(content), content }
-  },
-  getSearchText: (l) => `${String(l?.time || '')} ${String(l?.content || '')}`
-})
-const taskLogsRunning = computed(() => !!taskLogsStreamOpen.value)
-
 // 返回按钮：根据管理模式跳转到对应页面（distributed: /projects，centralized: /compose）
 const goBack = () => {
   const mode = ((window.__ENV__ && window.__ENV__.MANAGEMENT_MODE) || import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toLowerCase()
   const isCS = mode === 'centralized' || mode === 'cs'
   router.push(isCS ? '/compose' : '/projects')
-}
-
-const openTaskCenter = () => {
-  taskCenterVisible.value = true
-  loadComposeDeployTasks()
-}
-
-const loadComposeDeployTasks = async () => {
-  taskCenterLoading.value = true
-  try {
-    const res = await api.compose.listTasks({ types: 'compose_deploy', limit: 50 })
-    const list = res?.data || res
-    if (Array.isArray(list)) {
-      taskCenterTasks.value = list.map((t) => ({
-        id: String(t.id || ''),
-        status: String(t.status || ''),
-        updatedAt: String(t.updated_at || t.updatedAt || ''),
-        error: String(t.error || '')
-      }))
-    } else {
-      taskCenterTasks.value = []
-    }
-  } catch (e) {
-    taskCenterTasks.value = []
-    ElMessage.error('加载任务列表失败')
-  } finally {
-    taskCenterLoading.value = false
-  }
-}
-
-const openTaskLogs = (row) => {
-  const id = String(row?.id || '').trim()
-  if (!id) {
-    ElMessage.error('任务ID为空')
-    return
-  }
-  currentTaskId.value = id
-  taskLogsVisible.value = true
-  const token = localStorage.getItem('token') || ''
-  const url = `/api/compose/tasks/${encodeURIComponent(id)}/events?token=${encodeURIComponent(token)}`
-  startTaskLogsStream(url, { reset: true })
-}
-
-const closeTaskLogs = () => {
-  taskLogsVisible.value = false
-  stopTaskLogsStream()
-  clearTaskLogs()
-  currentTaskId.value = ''
-}
-
-const backgroundTaskLogs = () => {
-  taskLogsVisible.value = false
-  stopTaskLogsStream()
-  notifyHeader('info', currentTaskId.value ? `任务日志已后台运行：${currentTaskId.value}` : '任务日志已后台运行')
 }
 
 const handleRefresh = async () => {

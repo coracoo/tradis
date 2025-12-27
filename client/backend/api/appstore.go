@@ -348,6 +348,14 @@ func isSelfEnvPlaceholder(key, val string) bool {
 	if k == "" || v == "" {
 		return false
 	}
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = strings.TrimSpace(v[1 : len(v)-1])
+		}
+	}
+	if v == "["+k+"]" {
+		return true
+	}
 	prefix := "${" + k
 	if !strings.HasPrefix(v, prefix) || !strings.HasSuffix(v, "}") {
 		return false
@@ -460,7 +468,7 @@ func extractComposeInterpolationKeys(composeContent string) map[string]struct{} 
 // filterDotenvByAllowedKeys 仅保留允许集合中的 KEY=VALUE 行，其它变量行会被剔除（注释/空行保留）
 func filterDotenvByAllowedKeys(dotenvText string, allowed map[string]struct{}) string {
 	if len(allowed) == 0 {
-		return dotenvText
+		return ""
 	}
 
 	lines := strings.Split(dotenvText, "\n")
@@ -640,8 +648,273 @@ func extractEnvFileRefs(composeContent string) ([]envFileRef, error) {
 	return out, nil
 }
 
+func removeDotenvEnvFileRefs(composeContent string) (string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(composeContent), &doc); err != nil {
+		return "", err
+	}
+	if len(doc.Content) == 0 {
+		return composeContent, nil
+	}
+
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	findMapValue := func(m *yaml.Node, key string) *yaml.Node {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return nil
+		}
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				return v
+			}
+		}
+		return nil
+	}
+
+	deleteMapKey := func(m *yaml.Node, key string) {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return
+		}
+		next := make([]*yaml.Node, 0, len(m.Content))
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				continue
+			}
+			next = append(next, k, v)
+		}
+		m.Content = next
+	}
+
+	services := findMapValue(root, "services")
+	if services == nil || services.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	for i := 0; i+1 < len(services.Content); i += 2 {
+		svcVal := services.Content[i+1]
+		if svcVal == nil || svcVal.Kind != yaml.MappingNode {
+			continue
+		}
+
+		envFile := findMapValue(svcVal, "env_file")
+		if envFile == nil {
+			continue
+		}
+
+		switch envFile.Kind {
+		case yaml.ScalarNode:
+			if strings.TrimSpace(envFile.Value) == ".env" {
+				deleteMapKey(svcVal, "env_file")
+			}
+		case yaml.SequenceNode:
+			nextItems := make([]*yaml.Node, 0, len(envFile.Content))
+			for _, it := range envFile.Content {
+				if it == nil {
+					continue
+				}
+				if it.Kind == yaml.ScalarNode {
+					if strings.TrimSpace(it.Value) == ".env" {
+						continue
+					}
+					nextItems = append(nextItems, it)
+					continue
+				}
+				if it.Kind == yaml.MappingNode {
+					pathNode := findMapValue(it, "path")
+					if pathNode != nil && pathNode.Kind == yaml.ScalarNode && strings.TrimSpace(pathNode.Value) == ".env" {
+						continue
+					}
+					nextItems = append(nextItems, it)
+					continue
+				}
+				nextItems = append(nextItems, it)
+			}
+			if len(nextItems) == 0 {
+				deleteMapKey(svcVal, "env_file")
+			} else {
+				envFile.Content = nextItems
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	_ = enc.Close()
+	return buf.String(), nil
+}
+
+func removePlaceholderEnvVars(composeContent string, knownDotenvKeys map[string]struct{}, keepDotenvKeys map[string]struct{}) (string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(composeContent), &doc); err != nil {
+		return "", err
+	}
+	if len(doc.Content) == 0 {
+		return composeContent, nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	findMapValue := func(m *yaml.Node, key string) *yaml.Node {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return nil
+		}
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				return v
+			}
+		}
+		return nil
+	}
+	deleteMapKey := func(m *yaml.Node, key string) {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return
+		}
+		next := make([]*yaml.Node, 0, len(m.Content))
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				continue
+			}
+			next = append(next, k, v)
+		}
+		m.Content = next
+	}
+
+	extractPlaceholders := func(val string) []string {
+		val = strings.TrimSpace(val)
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = strings.TrimSpace(val[1 : len(val)-1])
+			}
+		}
+		out := make([]string, 0, 2)
+		reBracket := regexp.MustCompile(`\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]`)
+		for _, m := range reBracket.FindAllStringSubmatch(val, -1) {
+			if len(m) >= 2 {
+				out = append(out, strings.TrimSpace(m[1]))
+			}
+		}
+		reInterp := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)`)
+		for _, m := range reInterp.FindAllStringSubmatch(val, -1) {
+			if len(m) >= 2 {
+				out = append(out, strings.TrimSpace(m[1]))
+			}
+		}
+		return out
+	}
+	shouldRemove := func(val string) bool {
+		for _, ph := range extractPlaceholders(val) {
+			if ph == "" {
+				continue
+			}
+			if _, known := knownDotenvKeys[ph]; !known {
+				continue
+			}
+			if _, keep := keepDotenvKeys[ph]; keep {
+				continue
+			}
+			return true
+		}
+		return false
+	}
+
+	services := findMapValue(root, "services")
+	if services == nil || services.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	for i := 0; i+1 < len(services.Content); i += 2 {
+		svcVal := services.Content[i+1]
+		if svcVal == nil || svcVal.Kind != yaml.MappingNode {
+			continue
+		}
+
+		envNode := findMapValue(svcVal, "environment")
+		if envNode == nil {
+			continue
+		}
+
+		switch envNode.Kind {
+		case yaml.MappingNode:
+			next := make([]*yaml.Node, 0, len(envNode.Content))
+			for j := 0; j+1 < len(envNode.Content); j += 2 {
+				kNode := envNode.Content[j]
+				vNode := envNode.Content[j+1]
+				if kNode == nil || vNode == nil || kNode.Kind != yaml.ScalarNode {
+					next = append(next, kNode, vNode)
+					continue
+				}
+				if vNode.Kind == yaml.ScalarNode && shouldRemove(vNode.Value) {
+					continue
+				}
+				next = append(next, kNode, vNode)
+			}
+			if len(next) == 0 {
+				deleteMapKey(svcVal, "environment")
+			} else {
+				envNode.Content = next
+			}
+		case yaml.SequenceNode:
+			nextItems := make([]*yaml.Node, 0, len(envNode.Content))
+			for _, it := range envNode.Content {
+				if it == nil || it.Kind != yaml.ScalarNode {
+					nextItems = append(nextItems, it)
+					continue
+				}
+				s := strings.TrimSpace(it.Value)
+				if s == "" || strings.HasPrefix(s, "#") {
+					nextItems = append(nextItems, it)
+					continue
+				}
+				parts := strings.SplitN(s, "=", 2)
+				if len(parts) != 2 {
+					nextItems = append(nextItems, it)
+					continue
+				}
+				val := strings.TrimSpace(parts[1])
+				if shouldRemove(val) {
+					continue
+				}
+				nextItems = append(nextItems, it)
+			}
+			if len(nextItems) == 0 {
+				deleteMapKey(svcVal, "environment")
+			} else {
+				envNode.Content = nextItems
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	_ = enc.Close()
+	return buf.String(), nil
+}
+
 // ensureEnvFiles 在部署目录中落盘保存 .env 及 Compose 引用的 env_file 文件
-func ensureEnvFiles(composeDir string, dotenvText string, envFiles []envFileRef, t *task.Task) error {
+func ensureEnvFiles(composeDir string, composeContent string, dotenvText string, envFiles []envFileRef, t *task.Task) error {
 	writeFile := func(relPath string, content string) error {
 		clean := filepath.Clean(relPath)
 		if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
@@ -654,9 +927,39 @@ func ensureEnvFiles(composeDir string, dotenvText string, envFiles []envFileRef,
 		return os.WriteFile(full, []byte(content), 0644)
 	}
 
-	dotenvClean := filepath.Clean(".env")
-	if err := writeFile(dotenvClean, dotenvText); err != nil {
-		return err
+	allowedKeys := extractComposeInterpolationKeys(composeContent)
+	dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
+
+	dotenvVars := parseDotenvToMap(dotenvText)
+	hasDotenvVars := len(dotenvVars) > 0
+
+	requiredDotenvRef := false
+	for _, ref := range envFiles {
+		p := strings.TrimSpace(ref.Path)
+		if p == "" {
+			continue
+		}
+		clean := filepath.Clean(p)
+		if clean == ".env" || strings.HasSuffix(clean, string(filepath.Separator)+".env") {
+			if ref.Required {
+				requiredDotenvRef = true
+				break
+			}
+		}
+	}
+
+	if hasDotenvVars || requiredDotenvRef {
+		dotenvClean := filepath.Clean(".env")
+		content := dotenvText
+		if !hasDotenvVars {
+			content = ""
+			if requiredDotenvRef && t != nil {
+				t.AddLog("warning", "Compose 引用了 required 的 .env，但过滤后无可写入变量，已创建空文件")
+			}
+		}
+		if err := writeFile(dotenvClean, content); err != nil {
+			return err
+		}
 	}
 
 	for _, ref := range envFiles {
@@ -673,7 +976,7 @@ func ensureEnvFiles(composeDir string, dotenvText string, envFiles []envFileRef,
 		}
 
 		if clean == ".env" || strings.HasSuffix(clean, string(filepath.Separator)+".env") {
-			if strings.TrimSpace(dotenvText) != "" {
+			if hasDotenvVars {
 				if err := writeFile(clean, dotenvText); err != nil {
 					return err
 				}
@@ -885,17 +1188,9 @@ func deployApp(c *gin.Context) {
 			}
 		}
 
-		if writeErr := os.WriteFile(composeFile, []byte(composeContent), 0644); writeErr != nil {
-			t.AddLog("error", fmt.Sprintf("保存Compose文件失败: %v", writeErr))
-			t.Finish(task.StatusFailed, nil, writeErr.Error())
-			return
-		}
-
 		dotenvText := deployReq.Dotenv
 		if strings.TrimSpace(dotenvText) == "" {
-			if len(deployReq.Env) > 0 {
-				dotenvText = renderDotenvFromMap(deployReq.Env)
-			} else if len(deployReq.Config) == 0 && strings.TrimSpace(app.Dotenv) != "" {
+			if len(deployReq.Config) == 0 && strings.TrimSpace(app.Dotenv) != "" {
 				dotenvText = app.Dotenv
 			}
 		}
@@ -905,6 +1200,39 @@ func deployApp(c *gin.Context) {
 
 		allowedKeys := extractComposeInterpolationKeys(composeContent)
 		dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
+
+		knownDotenvKeys := make(map[string]struct{})
+		for k := range parseDotenvToMap(app.Dotenv) {
+			knownDotenvKeys[k] = struct{}{}
+		}
+		for k := range parseDotenvToMap(deployReq.Dotenv) {
+			knownDotenvKeys[k] = struct{}{}
+		}
+		keepDotenvKeys := make(map[string]struct{})
+		for k := range parseDotenvToMap(dotenvText) {
+			keepDotenvKeys[k] = struct{}{}
+		}
+		if len(knownDotenvKeys) > 0 {
+			if modified, err := removePlaceholderEnvVars(composeContent, knownDotenvKeys, keepDotenvKeys); err == nil {
+				composeContent = modified
+			} else {
+				t.AddLog("warning", fmt.Sprintf("清理未启用的环境变量占位符失败，将保持原样: %v", err))
+			}
+		}
+
+		if strings.TrimSpace(dotenvText) == "" {
+			if modified, err := removeDotenvEnvFileRefs(composeContent); err == nil {
+				composeContent = modified
+			} else {
+				t.AddLog("warning", fmt.Sprintf("移除 env_file .env 引用失败，将保持原样: %v", err))
+			}
+		}
+
+		if writeErr := os.WriteFile(composeFile, []byte(composeContent), 0644); writeErr != nil {
+			t.AddLog("error", fmt.Sprintf("保存Compose文件失败: %v", writeErr))
+			t.Finish(task.StatusFailed, nil, writeErr.Error())
+			return
+		}
 
 		if len(deployReq.Config) > 0 {
 			app.Dotenv = dotenvText
@@ -920,7 +1248,7 @@ func deployApp(c *gin.Context) {
 		if efErr != nil {
 			t.AddLog("warning", fmt.Sprintf("解析 env_file 失败，将仅保存 .env: %v", efErr))
 		}
-		if err := ensureEnvFiles(composeDir, dotenvText, envFileRefs, t); err != nil {
+		if err := ensureEnvFiles(composeDir, composeContent, dotenvText, envFileRefs, t); err != nil {
 			t.AddLog("error", fmt.Sprintf("保存 .env/env_file 文件失败: %v", err))
 			t.Finish(task.StatusFailed, nil, err.Error())
 			os.RemoveAll(composeDir)
@@ -958,7 +1286,12 @@ func deployApp(c *gin.Context) {
 		// 使用 docker compose 命令行部署，以确保原生行为（包括相对路径处理）
 		t.AddLog("info", "开始执行 Docker Compose 部署...")
 
-		cmd := exec.Command("docker", "compose", "--env-file", envFile, "up", "-d")
+		args := []string{"compose"}
+		if _, err := os.Stat(envFile); err == nil {
+			args = append(args, "--env-file", envFile)
+		}
+		args = append(args, "up", "-d")
+		cmd := exec.Command("docker", args...)
 		cmd.Dir = composeDir // 设置工作目录为项目目录
 		// 优化输出为纯文本，便于流式展示进度
 		cmd.Env = append(os.Environ(), "COMPOSE_PROGRESS=plain", "COMPOSE_NO_COLOR=1")
@@ -1240,10 +1573,18 @@ func applyConfigToYaml(content string, config []Variable) (string, error) {
 			case "env", "environment":
 				// Format: "key=value" -> "name=default"
 				if left != "" {
-					if strings.TrimSpace(right) == "" {
+					if isSelfEnvPlaceholder(left, right) {
+						if _, exists := newEnv[left]; exists {
+							delete(newEnv, left)
+							envTouched = true
+						}
 						continue
 					}
-					if isSelfEnvPlaceholder(left, right) {
+					if strings.TrimSpace(right) == "" {
+						if _, exists := newEnv[left]; exists {
+							delete(newEnv, left)
+							envTouched = true
+						}
 						continue
 					}
 					newEnv[left] = right

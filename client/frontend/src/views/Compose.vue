@@ -428,6 +428,44 @@
         </span>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="progressDialogVisible"
+      title="部署进度"
+      width="560px"
+      :close-on-click-modal="false"
+      :show-close="true"
+      append-to-body
+      @close="handleCloseProgressDialog"
+    >
+      <div class="compose-progress-body">
+        <div class="compose-progress-meta">
+          <div class="meta-row">
+            <span class="meta-label">项目</span>
+            <span class="meta-value">{{ progressProjectName || '-' }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">任务ID</span>
+            <span class="meta-value font-mono">{{ progressTaskId || '-' }}</span>
+          </div>
+        </div>
+
+        <div class="compose-progress-bar">
+          <el-progress
+            :percentage="progressPercent"
+            :status="progressStatus"
+            :stroke-width="12"
+            :text-inside="true"
+          />
+          <div v-if="progressText" class="progress-text">{{ progressText }}</div>
+        </div>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="progressDialogVisible = false">关闭</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -645,6 +683,8 @@ const dialogTitle = ref('新建项目')
 const deployAutoScroll = ref(true)
 const logsContent = ref(null)
 const deploying = ref(false)
+const deployTaskTimeoutRef = ref(null)
+const deployStreamWatcherStopRef = ref(null)
 const lastDeployTaskId = ref(localStorage.getItem('compose:lastDeployTaskId') || '')
 const {
   logs: deployLogs,
@@ -665,6 +705,74 @@ const {
     return { type: tp, message: m || String(payload || '') }
   }
 })
+
+const progressDialogVisible = ref(false)
+const progressTaskId = ref('')
+const progressProjectName = ref('')
+const progressAutoScroll = ref(false)
+const {
+  start: startProgressTaskStream,
+  stop: stopProgressTaskStream,
+  progressPercent,
+  progressText,
+  progressStatus,
+  setProgress: setProgressState
+} = useSseLogStream({
+  autoScroll: progressAutoScroll,
+  scrollElRef: null,
+  enableProgress: true,
+  autoTimeProgress: true,
+  onOpenLine: '',
+  onErrorLine: '',
+  makeEntry: (payload) => {
+    const obj = payload && typeof payload === 'object' ? payload : null
+    const t = String(obj?.type || payload?.type || '').trim()
+    const m = String(obj?.message || payload?.message || payload || '').trim()
+    const tp = t || (m.toLowerCase().startsWith('error') ? 'error' : 'info')
+    return { type: tp, message: m || String(payload || '') }
+  },
+  onMessage: (event, { payload, setProgress, stop }) => {
+    const data = payload && typeof payload === 'object' ? payload : null
+    if (!data) return
+    if (String(data.type || '').toLowerCase() === 'result') {
+      const st = String(data.status || '').toLowerCase()
+      if (st === 'success' || st === 'completed') setProgress({ percent: 100, status: 'success', text: '部署完成' })
+      else if (st === 'error' || st === 'failed') setProgress({ percent: 100, status: 'exception', text: String(data.error || '部署失败') })
+      else setProgress({ percent: 100, status: '', text: '任务结束' })
+      stop()
+      return
+    }
+    const msg = String(data.message || '').trim()
+    if (msg) setProgress({ text: msg })
+  }
+})
+
+const getComposeTaskNameFromLocal = (taskId) => {
+  const id = String(taskId || '').trim()
+  if (!id) return ''
+  try {
+    return String(localStorage.getItem(`compose:taskName:${id}`) || '')
+  } catch {
+    return ''
+  }
+}
+
+const openProgressDialogByTaskId = (taskId) => {
+  const id = String(taskId || '').trim()
+  if (!id) return
+  progressTaskId.value = id
+  progressProjectName.value = getComposeTaskNameFromLocal(id)
+  progressDialogVisible.value = true
+  setProgressState({ percent: 0, text: '正在连接日志…', status: '' })
+  stopProgressTaskStream()
+  const token = localStorage.getItem('token') || ''
+  const url = `/api/compose/tasks/${encodeURIComponent(id)}/events?token=${encodeURIComponent(token)}`
+  startProgressTaskStream(url, { reset: true })
+}
+
+const handleCloseProgressDialog = () => {
+  stopProgressTaskStream()
+}
 const projectRoot = ref('')
 const projectForm = ref({
   name: '',
@@ -1388,6 +1496,14 @@ const handleSaveProject = async () => {
 
   clearDeployTaskLogs()
   deploying.value = true
+  if (deployTaskTimeoutRef.value) {
+    clearTimeout(deployTaskTimeoutRef.value)
+    deployTaskTimeoutRef.value = null
+  }
+  if (typeof deployStreamWatcherStopRef.value === 'function') {
+    deployStreamWatcherStopRef.value()
+    deployStreamWatcherStopRef.value = null
+  }
 
   try {
     if (!projectForm.value.compose.includes('services:')) {
@@ -1426,6 +1542,9 @@ const handleSaveProject = async () => {
     }
     lastDeployTaskId.value = taskId
     localStorage.setItem('compose:lastDeployTaskId', taskId)
+    try {
+      localStorage.setItem(`compose:taskName:${taskId}`, String(projectForm.value.name || ''))
+    } catch (e) {}
 
     api.system.addNotification({ type: 'info', message: `已提交部署任务（${projectForm.value.name}），可后台运行并在进度查询查看` })
       .then((saved) => {
@@ -1441,16 +1560,41 @@ const handleSaveProject = async () => {
       reset: false
     })
 
+    deployTaskTimeoutRef.value = setTimeout(() => {
+      deployLogs.value.push({ type: 'warning', message: '日志连接超时，可稍后在进度查询中查看任务状态' })
+      stopDeployTaskStream()
+      deploying.value = false
+      deployTaskTimeoutRef.value = null
+      if (typeof deployStreamWatcherStopRef.value === 'function') {
+        deployStreamWatcherStopRef.value()
+        deployStreamWatcherStopRef.value = null
+      }
+    }, 600000)
+
     const stopWatcher = watch(deployStreamOpen, (open) => {
       if (open) return
+      const last = Array.isArray(deployLogs.value) && deployLogs.value.length ? deployLogs.value[deployLogs.value.length - 1] : null
+      if (String(last?.type || '').toLowerCase() !== 'result') return
+      if (deployTaskTimeoutRef.value) {
+        clearTimeout(deployTaskTimeoutRef.value)
+        deployTaskTimeoutRef.value = null
+      }
       deploying.value = false
       stopWatcher()
-      setTimeout(() => {
-        refreshAll()
-      }, 500)
+      deployStreamWatcherStopRef.value = null
+      setTimeout(() => refreshAll(), 500)
     })
+    deployStreamWatcherStopRef.value = stopWatcher
   } catch (error) {
     deploying.value = false
+    if (deployTaskTimeoutRef.value) {
+      clearTimeout(deployTaskTimeoutRef.value)
+      deployTaskTimeoutRef.value = null
+    }
+    if (typeof deployStreamWatcherStopRef.value === 'function') {
+      deployStreamWatcherStopRef.value()
+      deployStreamWatcherStopRef.value = null
+    }
     ElMessage.error(`部署失败: ${error.response?.data?.error || error.message || '未知错误'}`)
   }
 }
@@ -1458,13 +1602,20 @@ const handleSaveProject = async () => {
 const handleOpenDeployProgress = () => {
   const taskId = String(lastDeployTaskId.value || '').trim()
   if (!taskId) {
-    ElMessage.info('暂无可查询的部署任务')
+    ElMessageBox.prompt('请输入部署任务ID', '进度查询', {
+      confirmButtonText: '查看',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如：1766790000000000000',
+      inputValue: '',
+      closeOnClickModal: false
+    }).then(({ value }) => {
+      const id = String(value || '').trim()
+      if (!id) return
+      openProgressDialogByTaskId(id)
+    }).catch(() => {})
     return
   }
-  dialogVisible.value = true
-  const token = localStorage.getItem('token') || ''
-  const url = `/api/compose/tasks/${encodeURIComponent(taskId)}/events?token=${encodeURIComponent(token)}`
-  startDeployTaskStream(url, { reset: true })
+  openProgressDialogByTaskId(taskId)
 }
 
 const handleDeployInBackground = () => {
@@ -1662,6 +1813,56 @@ watch(
 
 .log-empty {
   color: var(--el-text-color-secondary);
+}
+
+.compose-progress-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.compose-progress-meta {
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--el-fill-color-light);
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.meta-label {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.meta-value {
+  color: var(--el-text-color-primary);
+  font-size: 13px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
+
+.compose-progress-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progress-text {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Custom Table Styles */
