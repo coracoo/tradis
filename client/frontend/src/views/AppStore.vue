@@ -1,14 +1,14 @@
 <template>
   <div class="app-store-view">
     <el-alert
-      class="disclaimer-alert"
+      class="disclaimer-alert clay-surface"
       type="warning"
       :closable="false"
       show-icon
       title="免责声明"
       description="本商城所有项目均来源互联网。本项目不对项目合规性、使用效果与风险承担责任。从商城部署即视为同意本条款；使用相关问题请联系具体项目作者。"
     />
-    <div class="filter-bar">
+    <div class="filter-bar clay-surface">
       <div class="filter-left">
         <el-input
           v-model="searchQuery"
@@ -41,6 +41,10 @@
       </div>
 
       <div class="filter-right">
+         <el-button @click="openApplyDialog" plain size="medium">
+           <template #icon><el-icon><Plus /></el-icon></template>
+           申请应用
+         </el-button>
          <el-button @click="refreshApps" :loading="loading" plain size="medium">
            <template #icon><el-icon><Refresh /></el-icon></template>
            刷新
@@ -48,11 +52,16 @@
       </div>
     </div>
 
-    <div class="content-wrapper">
+    <div class="content-wrapper clay-surface">
       <div v-loading="loading" class="scroll-container">
         <div v-if="filteredApps.length > 0" class="app-grid">
           <el-card v-for="app in paginatedApps" :key="app.id" class="app-card" shadow="hover">
             <div class="app-card-body">
+              <div class="install-badge" :title="`安装次数：${Number(app?.deployment_count || 0)}`">
+                <span class="install-badge-label">下载</span>
+                <span class="install-badge-value">{{ formatInstallCount(app?.deployment_count) }}</span>
+                <span class="install-badge-label">次</span>
+              </div>
               <div class="app-icon-wrapper">
                 <img :src="resolvePicUrl(app.logo || app.icon)" :alt="app.name" class="app-icon" @error="handleImageError">
               </div>
@@ -165,14 +174,35 @@
       hide-on-click-modal
       @close="closeImageViewer"
     />
+
+    <el-dialog
+      v-model="applyVisible"
+      title="申请应用"
+      width="560px"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <el-form ref="applyFormRef" :model="applyForm" :rules="applyRules" label-width="96px">
+        <el-form-item label="应用名称" prop="name">
+          <el-input v-model="applyForm.name" placeholder="例如：Portainer / Jellyfin" clearable />
+        </el-form-item>
+        <el-form-item label="应用官网" prop="website">
+          <el-input v-model="applyForm.website" placeholder="https://..." clearable />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="applyVisible = false">取消</el-button>
+        <el-button type="primary" :loading="applySubmitting" @click="submitApply">提交申请</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Download, InfoFilled, PriceTag, Folder, Refresh, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
-import { ElImageViewer } from 'element-plus'
+import { Search, Download, InfoFilled, PriceTag, Folder, Refresh, ArrowLeft, ArrowRight, Plus } from '@element-plus/icons-vue'
+import { ElImageViewer, ElMessage } from 'element-plus'
 import api from '../api'
 import request from '../utils/request'
 
@@ -192,6 +222,31 @@ const bannerIndex = ref(0)
 const showImageViewer = ref(false)
 const previewImageList = ref([])
 const imageViewerIndex = ref(0)
+
+const applyVisible = ref(false)
+const applySubmitting = ref(false)
+const applyFormRef = ref(null)
+const applyForm = reactive({
+  name: '',
+  website: ''
+})
+const applyRules = {
+  name: [
+    { required: true, message: '请输入应用名称', trigger: 'blur' },
+    { min: 2, max: 64, message: '应用名称长度建议为 2-64 字符', trigger: 'blur' }
+  ],
+  website: [
+    {
+      trigger: 'blur',
+      validator: (_rule, value, callback) => {
+        const v = String(value || '').trim()
+        if (!v) return callback()
+        if (v.startsWith('http://') || v.startsWith('https://')) return callback()
+        callback(new Error('请填写以 http:// 或 https:// 开头的地址'))
+      }
+    }
+  ]
+}
 
 const CACHE_KEY = 'appstore_projects'
 const CACHE_TIME_KEY = 'appstore_cache_time'
@@ -213,6 +268,14 @@ const getCategoryLabel = (category) => {
     storage: '存储'
   }
   return map[category] || category
+}
+
+const formatInstallCount = (n) => {
+  const v = Number(n || 0)
+  if (!Number.isFinite(v) || v <= 0) return '0'
+  if (v < 1000) return String(Math.floor(v)).padStart(1, '0')
+  if (v < 10000) return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return `${Math.round(v / 1000)}k`
 }
 
 const filteredApps = computed(() => {
@@ -367,6 +430,52 @@ const openScreenshotViewer = (idx) => {
 const closeImageViewer = () => {
   showImageViewer.value = false
 }
+
+const openApplyDialog = async () => {
+  if (!appStoreBase.value) {
+    await initAppStoreBase()
+  }
+  applyForm.name = ''
+  applyForm.website = ''
+  applyVisible.value = true
+}
+
+const submitApply = async () => {
+  if (applySubmitting.value) return
+  if (!appStoreBase.value) {
+    await initAppStoreBase()
+  }
+  try {
+    await applyFormRef.value?.validate()
+  } catch {
+    return
+  }
+
+  const payload = {
+    name: String(applyForm.name || '').trim(),
+    website: String(applyForm.website || '').trim()
+  }
+
+  applySubmitting.value = true
+  try {
+    const base = String(appStoreBase.value || '').replace(/\/$/, '')
+    const res = await fetch(`${base}/api/applications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || `提交失败(${res.status})`)
+    }
+    ElMessage.success('申请已提交，感谢你的反馈')
+    applyVisible.value = false
+  } catch (e) {
+    ElMessage.error(`提交失败：${e?.message || '未知错误'}`)
+  } finally {
+    applySubmitting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -376,12 +485,13 @@ const closeImageViewer = () => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .disclaimer-alert {
-  margin-bottom: 12px;
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 /* Filter Bar - Same as Compose.vue */
@@ -389,11 +499,11 @@ const closeImageViewer = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  padding: 14px 16px;
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .filter-left, .filter-right {
@@ -410,23 +520,25 @@ const closeImageViewer = () => {
 .content-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .scroll-container {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 18px;
 }
 
 .pagination-bar {
-  padding: 12px 20px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
+  padding: 14px 16px;
+  border-top: 1px solid var(--clay-border);
+  background: transparent;
   display: flex;
   justify-content: flex-end;
 }
@@ -461,15 +573,56 @@ const closeImageViewer = () => {
   transition: all 0.3s;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--el-border-color-lighter); /* Lighter border */
-  border-radius: 8px;
-  background: var(--el-bg-color-overlay);
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  position: relative;
+}
+
+.app-card :deep(.el-card__body) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-card-body {
+  flex: 1;
 }
 
 .app-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 10px 20px rgba(0,0,0,0.08);
-  border-color: var(--el-color-primary-light-5);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
+  border-color: var(--clay-border);
+}
+
+.install-badge {
+  position: absolute;
+  top: 119px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.install-badge-label {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--clay-text-secondary);
+}
+
+.install-badge-value {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--el-text-color-primary);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .app-card-body {
@@ -482,13 +635,14 @@ const closeImageViewer = () => {
   width: 60px;
   height: 60px;
   flex-shrink: 0;
-  border-radius: 12px;
+  border-radius: 18px;
   overflow: hidden;
-  background: var(--el-fill-color-light);
+  background: var(--el-fill-color-lighter);
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner);
 }
 
 .app-icon {
@@ -512,7 +666,7 @@ const closeImageViewer = () => {
 .app-name {
   margin: 0;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 900;
   color: var(--el-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -537,9 +691,21 @@ const closeImageViewer = () => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--clay-border);
   padding-top: 15px;
   margin-top: auto;
+}
+
+.app-store-view :deep(.app-actions .el-button--primary.is-plain:not(.is-text):not(.is-link)) {
+  background: linear-gradient(135deg, var(--clay-pink), var(--clay-pink-2)) !important;
+  border-color: transparent !important;
+  color: #ffffff !important;
+}
+
+.app-store-view :deep(.app-actions .el-button--warning.is-plain:not(.is-text):not(.is-link)) {
+  background: linear-gradient(135deg, #fde68a, #fbbf24) !important;
+  border-color: transparent !important;
+  color: #2f3a4a !important;
 }
 
 /* Dialog Styles */
@@ -602,7 +768,7 @@ const closeImageViewer = () => {
   max-width: 900px;
   height: 400px;
   margin: 0 auto;
-  border-radius: 12px;
+  border-radius: var(--radius-5xl)  ;
   overflow: hidden;
   background: var(--el-fill-color-darker);
   display: flex;
@@ -617,7 +783,7 @@ const closeImageViewer = () => {
   object-fit: contain;
   display: block;
   cursor: pointer;
-  background-color: rgb（224,255,255）;
+  background-color: rgb(224, 255, 255);
 }
 
 .banner-nav {

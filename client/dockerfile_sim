@@ -19,6 +19,10 @@ RUN npm run build
 FROM alpine:3.19
 ENV BACKEND_PORT=8080
 ENV PROJECT_ROOT=
+ARG CLIENT_VERSION= "v0.4.1"
+ENV CLIENT_VERSION=${CLIENT_VERSION}
+ARG VITE_MANAGEMENT_MODE=CS
+ENV VITE_MANAGEMENT_MODE=$VITE_MANAGEMENT_MODE
 RUN apk add --no-cache tini sqlite-libs docker-cli docker-cli-compose nginx netcat-openbsd
 WORKDIR /app
 COPY --from=backend-builder /app/bin/backend /app/backend/backend

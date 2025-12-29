@@ -1,6 +1,6 @@
 <template>
   <div class="nav-view">
-    <div class="filter-bar">
+    <div class="filter-bar clay-surface">
       <div class="filter-left">
         <el-button type="primary" @click="handleAdd" size="medium">
           <template #icon><el-icon><Plus /></el-icon></template>
@@ -27,7 +27,7 @@
       </div>
     </div>
 
-    <div class="content-wrapper">
+    <div class="content-wrapper clay-surface">
       <div class="scroll-content">
         <div v-for="(group, groupName) in groupedApps" :key="groupName" class="category-section">
           <div class="category-header">
@@ -235,6 +235,12 @@ const getServerBase = () => {
 
 const resolveIconUrl = (u) => {
   if (!u) return ''
+  if (u.startsWith('clay:')) {
+    const name = u.slice(5).trim()
+    if (!name) return ''
+    return `/icons/clay/${name}.png`
+  }
+  if (u.startsWith('/icons/clay/')) return u
   if (u.startsWith('http://') || u.startsWith('https://')) return u
   const serverBase = getServerBase()
   if (u.startsWith('/')) return serverBase + u
@@ -572,18 +578,16 @@ const handleRebuild = async () => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  padding: 14px 16px;
 }
 
 .filter-left, .filter-right {
@@ -595,11 +599,9 @@ const handleRebuild = async () => {
 .content-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .scroll-content {
@@ -617,11 +619,11 @@ const handleRebuild = async () => {
   align-items: center;
   gap: 8px;
   font-size: 16px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 900;
+  color: var(--clay-ink);
   margin-bottom: 15px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
 }
 
 .app-grid {
@@ -633,15 +635,17 @@ const handleRebuild = async () => {
 .app-card {
   position: relative;
   transition: all 0.3s;
-  border: none;
-  background-color: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  overflow: visible;
 }
 
 .app-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-  border-color: var(--el-color-primary-light-5);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
+  border-color: rgba(55, 65, 81, 0.14);
 }
 
 .app-content {
@@ -654,19 +658,23 @@ const handleRebuild = async () => {
 .app-icon-wrapper {
   width: 48px;
   height: 48px;
-  border-radius: 10px;
-  background: var(--el-fill-color-light);
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.28) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(147, 197, 253, 0.36), rgba(255, 133, 179, 0.26));
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  box-shadow: var(--shadow-clay-inner);
+  border: 1px solid rgba(55, 65, 81, 0.08);
 }
 
 .app-icon-img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 10px;
+  border-radius: 18px;
 }
 
 .mdi-icon {
@@ -682,7 +690,7 @@ const handleRebuild = async () => {
 .app-title {
   margin: 0 0 5px 0;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 900;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

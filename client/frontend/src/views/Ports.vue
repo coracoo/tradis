@@ -1,6 +1,6 @@
 <template>
   <div class="ports-view">
-    <div class="filter-bar">
+    <div class="filter-bar clay-surface">
       <div class="filter-left">
         <el-input
           v-model="filters.search"
@@ -62,9 +62,9 @@
       </div>
     </div>
 
-    <div class="content-wrapper">
+    <div class="content-wrapper clay-surface">
       <div class="tables-container">
-        <div class="table-column">
+        <div class="table-column clay-surface">
           <div class="column-header-box">
             <span class="protocol-title">TCP 协议</span>
           </div>
@@ -111,7 +111,7 @@
           </div>
         </div>
         
-        <div class="table-column">
+        <div class="table-column clay-surface">
           <div class="column-header-box">
             <span class="protocol-title">UDP 协议</span>
           </div>
@@ -304,18 +304,17 @@ onUnmounted(() => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  padding: 14px 16px;
+  border-radius: var(--radius-5xl)  ;
 }
 
 .filter-left, .filter-right {
@@ -325,7 +324,7 @@ onUnmounted(() => {
 }
 
 .search-input {
-  width: 240px;
+  width: 260px;
 }
 
 .stats-group {
@@ -337,18 +336,17 @@ onUnmounted(() => {
 .content-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
-  padding: 20px;
+  border-radius: var(--radius-5xl)  ;
+  padding: 18px;
+  min-height: 0;
 }
 
 .tables-container {
   flex: 1;
   display: flex;
-  gap: 24px;
+  gap: 18px;
   overflow: hidden;
   height: 100%;
 }
@@ -356,30 +354,29 @@ onUnmounted(() => {
 .table-column {
   flex: 1;
   display: flex;
+  border-radius: var(--radius-5xl)  ;
   flex-direction: column;
   min-width: 0;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
   overflow: hidden;
 }
 
 .column-header-box {
-  background-color: var(--el-fill-color-light);
-  padding: 12px 15px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  background-color: rgba(255, 255, 255, 0.35);
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(55, 65, 81, 0.1);
   text-align: center;
 }
 
 .protocol-title {
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 900;
+  color: var(--clay-ink);
   font-size: 14px;
 }
 
 .table-inner {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
+  background: transparent;
 }
 
 /* Range Settings Popover */
@@ -410,28 +407,34 @@ onUnmounted(() => {
 
 /* Status Indicator */
 .status-indicator {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 13px;
-  font-weight: 500;
-  color: var(--el-text-color-regular);
+  font-weight: 800;
+  color: var(--el-text-color-primary);
 }
 
 .status-point {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
 }
 
 .status-active {
-  background-color: var(--el-color-danger);
-  box-shadow: 0 0 0 3px var(--el-color-danger-light-8);
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
+    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
+    linear-gradient(135deg, #fda4af, var(--clay-coral));
+  box-shadow: 0 0 0 6px rgba(251, 113, 133, 0.16), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.6);
 }
 
 .status-inactive {
-  background-color: var(--el-color-success);
-  box-shadow: 0 0 0 3px var(--el-color-success-light-8);
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
+    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
+    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
+  box-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
 }
 
 .port-number {

@@ -9,11 +9,11 @@
       <div v-else class="title">{{ displayTitle }}</div>
     </div>
     <div class="actions">
-      <el-tooltip content="刷新" placement="bottom">
+      <!---<el-tooltip content="刷新" placement="bottom">
         <el-button circle text @click="$emit('refresh')">
           <el-icon><Refresh /></el-icon>
         </el-button>
-      </el-tooltip>
+      </el-tooltip>-->
 
       <div class="notification-area">
         <el-tooltip content="消息通知" placement="bottom">
@@ -26,27 +26,64 @@
         </el-tooltip>
         <div v-if="notificationPanelVisible" class="notification-panel">
           <div class="notification-header">
-            <span class="header-title">消息中心</span>
+            <div class="header-left">
+              <span class="header-title">消息中心</span>
+              <span v-if="unreadCount" class="header-badge">{{ unreadCount }} 未读</span>
+            </div>
+            <div class="header-right">
+              <div class="poll-status" :class="pollState">
+                <span class="poll-dot"></span>
+                <span class="poll-text">{{ pollText }}</span>
+              </div>
+              <el-dropdown trigger="click" @command="handleClearCommand">
+                <el-button size="small" plain class="header-clear-btn">清理</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="clearRead">仅清空已读</el-dropdown-item>
+                    <el-dropdown-item command="clearAll" divided>清空全部</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </div>
+          <div class="notification-controls">
+            <el-select v-model="filterType" size="small" class="filter-select" placeholder="类型">
+              <el-option label="全部" value="all" />
+              <el-option label="提示" value="info" />
+              <el-option label="成功" value="success" />
+              <el-option label="警告" value="warning" />
+              <el-option label="错误" value="error" />
+            </el-select>
+            <el-button size="small" plain :type="unreadOnly ? 'primary' : 'default'" @click="unreadOnly = !unreadOnly">
+              仅未读
+            </el-button>
           </div>
           <div v-if="!notifications.length" class="notification-empty">
             暂无消息
           </div>
+          <div v-else-if="!filteredNotifications.length" class="notification-empty">
+            暂无匹配消息
+          </div>
           <div v-else class="notification-list">
             <div
-              v-for="(item, index) in notifications.slice(0, 10)"
+              v-for="(item, index) in filteredNotifications.slice(0, 10)"
               :key="item.id || index"
               class="notification-item"
+              :class="{ unread: !item.read }"
             >
-              <div class="item-time">{{ item.time }}</div>
-              <div class="item-message">{{ item.message }}</div>
-              <el-button
-                text
-                type="danger"
-                size="small"
-                @click.stop="handleDeleteNotification(item)"
-              >
-                删除
-              </el-button>
+              <div class="item-icon" :class="item.type"></div>
+              <div class="item-body">
+                <div class="item-message" :title="item.message">{{ item.message }}</div>
+                <div class="item-meta">
+                  <span class="item-time">{{ item.time }}</span>
+                  <span class="item-type">{{ typeLabel(item.type) }}</span>
+                </div>
+              </div>
+              <el-tooltip content="删除" placement="left">
+                <el-button circle text class="item-delete" @click.stop="handleDeleteNotification(item)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
             </div>
           </div>
         </div>
@@ -78,7 +115,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { Refresh, Bell, Moon, Sunny } from '@element-plus/icons-vue'
+import { Refresh, Bell, Moon, Sunny, Delete } from '@element-plus/icons-vue'
 import api from '../api'
 const props = defineProps({
   title: { type: String, default: 'Dockpier' }
@@ -109,11 +146,43 @@ const isDark = ref(false)
 const notifications = ref([])
 const notificationPanelVisible = ref(false)
 let notificationPollTimer = null
+let pollStateResetTimer = null
+
+const filterType = ref('all')
+const unreadOnly = ref(false)
+const pollState = ref('idle')
+const lastPollAt = ref(null)
 
 const deletedTempIds = new Set()
 
 const hasNotifications = computed(() => notifications.value.length > 0)
 const hasUnreadNotifications = computed(() => notifications.value.some((n) => !n.read))
+const unreadCount = computed(() => notifications.value.reduce((acc, n) => acc + (n && !n.read ? 1 : 0), 0))
+
+const filteredNotifications = computed(() => {
+  let list = notifications.value
+  if (filterType.value !== 'all') {
+    list = list.filter((n) => (n?.type || 'info') === filterType.value)
+  }
+  if (unreadOnly.value) {
+    list = list.filter((n) => !n?.read)
+  }
+  return list
+})
+
+const pollText = computed(() => {
+  if (pollState.value === 'syncing') return '同步中'
+  if (pollState.value === 'error') return '同步失败'
+  if (!lastPollAt.value) return '未同步'
+  return '已同步'
+})
+
+const typeLabel = (type) => {
+  if (type === 'success') return '成功'
+  if (type === 'error') return '错误'
+  if (type === 'warning') return '警告'
+  return '提示'
+}
 
 const markAllNotificationsRead = async () => {
   if (!notifications.value.length) {
@@ -124,6 +193,37 @@ const markAllNotificationsRead = async () => {
     await api.system.markNotificationsRead()
   } catch (e) {
     console.error('标记通知已读失败:', e)
+  }
+}
+
+const clearNotificationsByFilter = async (predicate) => {
+  const current = notifications.value.slice()
+  const toClear = current.filter(predicate)
+  if (!toClear.length) {
+    ElMessage.info('没有可清理的消息')
+    return
+  }
+  notifications.value = current.filter((n) => !predicate(n))
+  for (const item of toClear) {
+    if (!item.dbId && item.tempId) {
+      deletedTempIds.add(item.tempId)
+      continue
+    }
+    const id = item.dbId || item.id
+    if (!id) continue
+    try {
+      await api.system.deleteNotification(id)
+    } catch (e) {
+      console.error('删除通知失败:', e)
+    }
+  }
+}
+
+const handleClearCommand = async (cmd) => {
+  if (cmd === 'clearAll') {
+    await clearNotificationsByFilter(() => true)
+  } else if (cmd === 'clearRead') {
+    await clearNotificationsByFilter((n) => !!n?.read)
   }
 }
 
@@ -242,6 +342,7 @@ const handleNotification = (event) => {
 }
 
 const loadNotifications = async () => {
+  pollState.value = 'syncing'
   try {
     const list = await api.system.getNotifications({ limit: 50 })
     if (Array.isArray(list)) {
@@ -255,8 +356,19 @@ const loadNotifications = async () => {
         read: !!item.read
       }))
     }
+    pollState.value = 'ok'
+    lastPollAt.value = Date.now()
   } catch (e) {
+    pollState.value = 'error'
     console.error('加载通知失败:', e)
+  } finally {
+    if (pollStateResetTimer) {
+      clearTimeout(pollStateResetTimer)
+      pollStateResetTimer = null
+    }
+    pollStateResetTimer = setTimeout(() => {
+      pollState.value = 'idle'
+    }, 1200)
   }
 }
 
@@ -307,19 +419,23 @@ onUnmounted(() => {
     clearInterval(notificationPollTimer)
     notificationPollTimer = null
   }
+  if (pollStateResetTimer) {
+    clearTimeout(pollStateResetTimer)
+    pollStateResetTimer = null
+  }
 })
 </script>
 
 <style scoped>
 .topbar {
-  height: 60px;
-  padding: 0 24px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color-light);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
   transition: all 0.3s ease;
 }
 
@@ -350,15 +466,15 @@ onUnmounted(() => {
 
 .title-group .title {
   font-size: 20px;
-  font-weight: 700;
-  color: #1e293b;
+  font-weight: 900;
+  color: var(--el-text-color-primary);
   letter-spacing: -0.5px;
 }
 
 .title-group .subtitle {
   font-size: 13px;
-  color: #64748b;
-  font-weight: 500;
+  color: var(--clay-text-secondary);
+  font-weight: 700;
 }
 
 .actions {
@@ -383,20 +499,24 @@ onUnmounted(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: var(--el-color-danger);
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(135deg, #fda4af, var(--clay-coral));
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.1), inset 1px 1px 2px rgba(255, 255, 255, 0.6);
+  animation: clay-pulse 1.6s ease-in-out infinite;
 }
 
 .notification-panel {
   position: absolute;
   right: 0;
   top: 40px;
-  width: 320px;
+  width: 372px;
   max-height: 360px;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
-  padding: 12px 16px;
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
+  padding: 12px 14px 14px;
   z-index: 2000;
   display: flex;
   flex-direction: column;
@@ -406,47 +526,220 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  padding: 6px 6px 10px;
+  margin-bottom: 6px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .header-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 950;
   color: var(--el-text-color-primary);
 }
 
+.header-badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--clay-text);
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-tip {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--clay-text-secondary);
+}
+
+.poll-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner);
+  color: var(--clay-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.poll-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 62%),
+    linear-gradient(135deg, #cbd5e1, #94a3b8);
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.55);
+}
+
+.poll-status.syncing .poll-dot {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 62%),
+    linear-gradient(135deg, var(--clay-sky), #60a5fa);
+  animation: clay-pulse 1.1s ease-in-out infinite;
+}
+
+.poll-status.ok .poll-dot {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 62%),
+    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
+}
+
+.poll-status.error .poll-dot {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 62%),
+    linear-gradient(135deg, #fb7185, #ef4444);
+  animation: clay-pulse 1.1s ease-in-out infinite;
+}
+
+.poll-text {
+  white-space: nowrap;
+}
+
+.header-clear-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
+.notification-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 10px;
+}
+
+.filter-select {
+  width: 120px;
+}
+
 .notification-empty {
-  padding: 12px 0;
+  padding: 18px 0 14px;
   font-size: 13px;
   color: var(--el-text-color-secondary);
   text-align: center;
 }
 
 .notification-list {
-  margin-top: 4px;
-  max-height: 280px;
+  padding: 2px 4px 0;
+  max-height: 286px;
   overflow-y: auto;
 }
 
 .notification-item {
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--el-border-color-lighter);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 18px;
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner);
+  margin-bottom: 10px;
+  transition: transform 0.15s ease, filter 0.15s ease;
 }
 
 .notification-item:last-child {
-  border-bottom: none;
+  margin-bottom: 0;
 }
 
-.item-time {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 2px;
+.notification-item:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.04);
+}
+
+.notification-item.unread {
+  background:
+    radial-gradient(120% 160% at 20% 0%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.55) 58%, rgba(255, 255, 255, 0.45) 100%),
+    linear-gradient(135deg, rgba(251, 113, 133, 0.12), rgba(244, 114, 182, 0.10));
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner), var(--shadow-clay-card);
+}
+
+.item-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(135deg, #93c5fd, #60a5fa);
+}
+
+.item-icon.success {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
+}
+
+.item-icon.warning {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(135deg, #fbbf24, #fb7185);
+}
+
+.item-icon.error {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(135deg, #fb7185, #ef4444);
+}
+
+.item-body {
+  flex: 1;
+  min-width: 0;
 }
 
 .item-message {
   font-size: 13px;
-  color: var(--el-text-color-primary);
+  font-weight: 750;
+  color: var(--clay-text);
   line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.item-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--clay-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.item-type {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+}
+
+.item-delete {
+  margin-top: -2px;
+  flex-shrink: 0;
+  color: rgba(239, 68, 68, 0.92);
 }
 
 .user-avatar {
@@ -466,30 +759,42 @@ onUnmounted(() => {
   color: white;
   font-weight: 600;
   font-size: 14px;
-  border: 2px solid var(--el-bg-color);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  box-shadow: var(--shadow-clay-btn), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 :deep(.el-button.is-circle) {
   width: 36px;
   height: 36px;
   font-size: 18px;
-  border: none;
-  background-color: transparent;
-  color: var(--el-text-color-regular);
-  transition: all 0.2s;
+  border: 1px solid var(--clay-border);
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-btn);
+  color: var(--el-text-color-primary);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
 :deep(.el-button.is-circle:hover) {
-  background-color: var(--el-fill-color);
-  color: var(--el-color-primary);
-  transform: translateY(-1px);
+  background: var(--clay-card-solid);
+  transform: translateY(-2px);
+  filter: saturate(1.04);
+}
+
+:deep(.el-button.is-circle:active) {
+  transform: scale(0.98);
+  box-shadow: var(--shadow-clay-inner);
+}
+
+@keyframes clay-pulse {
+  0% { transform: scale(1); filter: saturate(1); opacity: 0.9; }
+  50% { transform: scale(1.12); filter: saturate(1.08); opacity: 1; }
+  100% { transform: scale(1); filter: saturate(1); opacity: 0.9; }
 }
 
 /* Dark mode specific overrides handled by CSS variables, 
    but we can add some specific tweaks if needed */
 html.dark .topbar {
-  background-color: var(--el-bg-color-overlay);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
 }
 </style>

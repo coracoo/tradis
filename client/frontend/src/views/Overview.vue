@@ -18,10 +18,10 @@
       <div class="resources-section">
         <h3 class="section-title">系统资源</h3>
         <div class="resources-grid">
-          <div v-for="(res, key) in resources" :key="key" class="resource-card">
+            <div v-for="(res, key) in resources" :key="key" class="resource-card">
             <div class="resource-header">
               <div class="resource-info">
-                <el-icon class="resource-icon"><component :is="res.icon" /></el-icon>
+                <img class="resource-icon-img" :src="res.icon" :alt="res.name" />
                 <span class="resource-name">{{ res.name }}</span>
               </div>
               <span class="resource-percent" :class="getUsageColorText(res.percent)">{{ res.percent }}%</span>
@@ -90,8 +90,6 @@ import {
   Platform,
   Odometer,
   Histogram,
-  Aim,
-  DataLine,
   Box
 } from '@element-plus/icons-vue'
 import api from '../api'
@@ -112,9 +110,9 @@ const router = useRouter()
 
 // 资源使用数据
 const resources = ref({
-  cpu: { name: 'CPU', icon: 'Aim', percent: 0, used: '—', total: '—' },
-  memory: { name: '内存', icon: 'DataLine', percent: 0, used: '—', total: '—' },
-  disk: { name: '磁盘', icon: 'Box', percent: 0, used: '—', total: '—' }
+  cpu: { name: 'CPU', icon: '/icons/clay/cpu.jpg', percent: 0, used: '—', total: '—' },
+  memory: { name: '内存', icon: '/icons/clay/memory.jpg', percent: 0, used: '—', total: '—' },
+  disk: { name: '磁盘', icon: '/icons/clay/storage.jpg', percent: 0, used: '—', total: '—' }
 })
 
 // 系统事件日志（预览）
@@ -129,6 +127,17 @@ const maxEvents = 100 // 最多显示100条（5页）
 const currentPage = ref(1)
 let versionWarned = false
 let minApiFixNotified = false
+const DOCKER_API_REMINDER_KEY = 'docker-api-reminder'
+
+try {
+  const reminded = localStorage.getItem(DOCKER_API_REMINDER_KEY)
+  if (reminded) {
+    versionWarned = true
+    minApiFixNotified = true
+  }
+} catch (e) {
+  console.warn('读取 Docker API 提示缓存失败', e)
+}
 
 // 事件类型映射
 const getEventIcon = (type) => {
@@ -224,6 +233,11 @@ const fetchStatistics = async () => {
       } else {
         ElMessage.warning(`检测到 Docker API 版本偏高，但无法写入 daemon.json（${data.MinAPIVersionFixError || '未知原因'}），建议手动加入 min-api-version=${data.MinAPIVersionFixTarget || '1.43'} 并重启 Docker`)
       }
+      try {
+        localStorage.setItem(DOCKER_API_REMINDER_KEY, '1')
+      } catch (e) {
+        console.warn('写入 Docker API 提示缓存失败', e)
+      }
     }
 
     if (!versionWarned && data.DockerAPIVersion) {
@@ -231,6 +245,11 @@ const fetchStatistics = async () => {
       if (!Number.isNaN(apiVersionNum) && apiVersionNum >= 1.52 && !data.DaemonMinAPIVersion) {
         versionWarned = true
         ElMessage.warning(`检测到 Docker API 版本为 ${data.DockerAPIVersion}，可能导致部分功能异常；建议设置 daemon.json 的 min-api-version 并重启 Docker`)
+        try {
+          localStorage.setItem(DOCKER_API_REMINDER_KEY, '1')
+        } catch (e) {
+          console.warn('写入 Docker API 提示缓存失败', e)
+        }
       }
     }
 
@@ -310,18 +329,23 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: var(--el-bg-color-page);
+  background-color: var(--clay-bg);
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 12px 16px;
+  gap: 12px;
 }
 
 /* 顶部操作栏 - 统一风格 */
 .filter-bar {
-  height: 60px;
-  padding: 0 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color-light);
+  background: var(--clay-card);
+  padding: 14px 16px;
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
   flex-shrink: 0;
 }
 
@@ -346,16 +370,58 @@ onUnmounted(() => {
 /* 滚动容器 */
 .scroll-container {
   flex: 1;
-  overflow: hidden;
-  padding: 20px;
+  overflow-y: auto;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
+  min-height: 0;
+}
+
+.overview-hero {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+  padding: 22px 24px;
+  border-radius: var(--radius-5xl);
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+}
+
+.hero-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hero-title {
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.4px;
+  color: var(--el-text-color-primary);
+}
+
+.hero-subtitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--clay-text-secondary);
+  line-height: 1.5;
+}
+
+.hero-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
 }
 
 .section-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 900;
   color: var(--el-text-color-primary);
   margin: 0 0 16px 0;
   display: flex;
@@ -373,7 +439,7 @@ onUnmounted(() => {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  gap: 24px;
   flex-shrink: 0;
 }
 
@@ -381,19 +447,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
-  padding: 24px;
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  padding: 22px 24px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
 }
 
 .stat-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-  border-color: var(--el-border-color-darker);
+  box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
 }
 
 .stat-content {
@@ -404,24 +469,27 @@ onUnmounted(() => {
 
 .stat-value {
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 900;
   color: var(--el-text-color-primary);
   line-height: 1.2;
 }
 
 .stat-title {
   font-size: 14px;
-  color: var(--el-text-color-secondary);
+  color: var(--clay-text-secondary);
+  font-weight: 700;
 }
 
 .stat-icon-wrapper {
   width: 56px;
   height: 56px;
-  border-radius: 16px;
+  border-radius: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.3s ease;
+  box-shadow: var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .stat-icon {
@@ -430,10 +498,10 @@ onUnmounted(() => {
 }
 
 /* 统计卡片颜色 */
-.stat-primary .stat-icon-wrapper { background: linear-gradient(135deg, #409EFF, #337ecc); box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3); }
-.stat-success .stat-icon-wrapper { background: linear-gradient(135deg, #67C23A, #529b2e); box-shadow: 0 4px 12px rgba(103, 194, 58, 0.3); }
-.stat-warning .stat-icon-wrapper { background: linear-gradient(135deg, #E6A23C, #b88230); box-shadow: 0 4px 12px rgba(230, 162, 60, 0.3); }
-.stat-danger .stat-icon-wrapper { background: linear-gradient(135deg, #F56C6C, #c45656); box-shadow: 0 4px 12px rgba(245, 108, 108, 0.3); }
+.stat-primary .stat-icon-wrapper { background: linear-gradient(135deg, rgba(147, 197, 253, 0.45), rgba(96, 165, 250, 0.65)); }
+.stat-success .stat-icon-wrapper { background: linear-gradient(135deg, rgba(110, 231, 183, 0.45), rgba(52, 211, 153, 0.75)); }
+.stat-warning .stat-icon-wrapper { background: linear-gradient(135deg, rgba(253, 230, 138, 0.55), rgba(251, 191, 36, 0.7)); }
+.stat-danger .stat-icon-wrapper { background: linear-gradient(135deg, rgba(253, 164, 175, 0.55), rgba(251, 113, 133, 0.72)); }
 
 /* 资源使用区域 */
 .resources-section {
@@ -443,20 +511,21 @@ onUnmounted(() => {
 .resources-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  gap: 24px;
 }
 
 .resource-card {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  padding: 22px 24px;
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
   transition: all 0.3s;
 }
 
 .resource-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
 }
 
 .resource-header {
@@ -472,13 +541,16 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.resource-icon {
-  font-size: 20px;
-  color: var(--el-text-color-regular);
+.resource-icon-img {
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.12);
 }
 
 .resource-name {
-  font-weight: 600;
+  font-weight: 900;
   font-size: 15px;
   color: var(--el-text-color-primary);
 }
@@ -492,15 +564,17 @@ onUnmounted(() => {
 .progress-bar-bg {
   width: 100%;
   height: 10px;
-  background-color: var(--el-fill-color);
-  border-radius: 5px;
+  background-color: var(--clay-card);
+  border-radius: 999px;
   overflow: hidden;
   margin-bottom: 16px;
+  box-shadow: var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .progress-bar-fill {
   height: 100%;
-  border-radius: 5px;
+  border-radius: 999px;
   transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -528,15 +602,15 @@ onUnmounted(() => {
 }
 
 .logs-card {
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
+  background: var(--clay-card);
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   flex: 1;
   min-height: 0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
 }
 
 .logs-list {
@@ -547,17 +621,17 @@ onUnmounted(() => {
 
 .logs-pagination {
   padding: 12px 24px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--clay-border);
   display: flex;
   justify-content: flex-end;
-  background-color: var(--el-bg-color-page);
+  background-color: transparent;
 }
 
 .log-item {
   display: flex;
   gap: 16px;
   padding: 16px 24px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--clay-border);
   align-items: flex-start;
   transition: background-color 0.2s;
 }
@@ -567,7 +641,7 @@ onUnmounted(() => {
 }
 
 .log-item:hover {
-  background-color: var(--el-fill-color-light);
+  background-color: var(--clay-card);
 }
 
 .log-status {
@@ -591,9 +665,11 @@ onUnmounted(() => {
 
 .log-type-tag {
   font-size: 12px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-weight: 900;
+  padding: 6px 10px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .log-time {
@@ -615,15 +691,16 @@ onUnmounted(() => {
 .event-error { color: var(--el-color-danger); }
 .event-info { color: var(--el-color-info); }
 
-.log-type-tag.event-success { background-color: var(--el-color-success-light-9); }
-.log-type-tag.event-warning { background-color: var(--el-color-warning-light-9); }
-.log-type-tag.event-error { background-color: var(--el-color-danger-light-9); }
-.log-type-tag.event-info { background-color: var(--el-color-info-light-9); }
+.log-type-tag.event-success { background: rgba(110, 231, 183, 0.22); }
+.log-type-tag.event-warning { background: rgba(253, 230, 138, 0.28); }
+.log-type-tag.event-error { background: rgba(251, 113, 133, 0.22); }
+.log-type-tag.event-info { background: rgba(147, 197, 253, 0.22); }
 
 /* 响应式调整 */
 @media (max-width: 768px) {
   .scroll-container {
     overflow-y: auto;
+    padding: 14px;
   }
 
   .stats-grid {
@@ -642,6 +719,12 @@ onUnmounted(() => {
 
   .filter-bar {
     padding: 0 16px;
+  }
+
+  .overview-hero {
+    grid-template-columns: 1fr;
+    padding: 18px 16px;
+    gap: 16px;
   }
 }
 </style>

@@ -302,9 +302,13 @@ const testAllocate = async () => {
 
 <style scoped>
 .container {
-  padding: 20px;
-  max-width: 800px;
-  margin: 0 auto;
+  height: 100%;
+  width: 100%;
+  padding: 12px 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--clay-bg);
+  scrollbar-gutter: stable;
 }
 
 .settings-card {
@@ -323,11 +327,18 @@ const testAllocate = async () => {
 
 .section-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 900;
   margin-bottom: 20px;
-  color: var(--el-text-color-primary);
-  border-left: 4px solid var(--el-color-primary);
-  padding-left: 10px;
+  color: var(--clay-ink);
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.28) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(255, 133, 179, 0.22), rgba(147, 197, 253, 0.18));
+  border: 1px solid rgba(55, 65, 81, 0.1);
+  box-shadow: var(--shadow-clay-inner);
 }
 
 .password-group-vertical {

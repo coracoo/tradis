@@ -1,12 +1,15 @@
 <template>
   <div class="detail-view">
-    <div class="header-bar">
+    <div class="header-bar clay-surface">
       <div class="header-left">
         <el-button link @click="goBack">
           <el-icon><Back /></el-icon>
         </el-button>
         <div class="title">{{ containerName }}</div>
-        <el-tag :type="containerStatus === '运行中' ? 'success' : 'info'" class="status-tag">
+        <el-tag
+          :type="containerStatus === '运行中' ? 'success' : 'info'"
+          :class="['status-tag', 'clay-tag-dot', containerStatus === '运行中' ? 'is-success' : 'is-danger']"
+        >
           {{ containerStatus }}
         </el-tag>
         <el-tag v-if="isSelfContainer" size="small" type="warning" effect="plain" style="margin-left: 8px">自身</el-tag>
@@ -54,7 +57,7 @@
       class="self-resource-alert"
     />
 
-    <div class="content-wrapper">
+    <div class="content-wrapper clay-surface">
       <div class="scroll-content">
         <div class="content-inner">
           <el-tabs v-model="activeTab" class="detail-tabs">
@@ -570,19 +573,21 @@ onUnmounted(() => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .header-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  padding: 14px 16px;
   flex-shrink: 0;
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .self-resource-alert {
@@ -598,8 +603,8 @@ onUnmounted(() => {
 
 .title {
   font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 900;
+  color: var(--clay-ink);
 }
 
 .header-right {
@@ -609,11 +614,8 @@ onUnmounted(() => {
 }
 
 .status-tag {
-  border-radius: 6px;
-  padding: 0 12px;
-  height: 28px;
-  line-height: 26px;
-  font-weight: 500;
+  border-radius: 999px;
+  font-weight: 900;
 }
 
 .square-btn {
@@ -629,17 +631,15 @@ onUnmounted(() => {
 .content-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .scroll-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 18px;
 }
 
 .content-inner {
@@ -674,11 +674,12 @@ onUnmounted(() => {
 }
 
 .metric-card {
-  background: var(--el-fill-color-light);
-  padding: 16px;
-  border-radius: 8px;
+  background: var(--clay-card);
+  padding: 18px;
+  border-radius: var(--radius-5xl);
   margin-bottom: 20px;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
 }
 
 .metric-title {
@@ -697,16 +698,18 @@ onUnmounted(() => {
 
 .detail-info {
   margin-top: 24px;
-  background: var(--el-bg-color);
+  background: transparent;
 }
 
 .logs-container {
   height: 600px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
   overflow: hidden;
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
 }
 
 .logs-header {
@@ -714,8 +717,8 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: transparent;
+  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
 }
 
 .logs-options {

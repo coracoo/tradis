@@ -109,6 +109,8 @@ func main() {
 	// 启动 Docker 事件日志记录器
 	system.StartEventLogger()
 	api.StartImageUpdateScheduler()
+	api.InitClientVersionFromEnv()
+	api.StartVersionMonitor()
 
 	noisyPaths := map[string]struct{}{
 		"/api/settings/global": {},

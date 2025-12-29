@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Variable struct {
@@ -83,25 +85,164 @@ func (s *StringArray) Scan(value interface{}) error {
 }
 
 type Template struct {
-	ID          uint              `gorm:"primarykey" json:"id"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt    `gorm:"index" json:"deleted_at"`
-	Name        string            `json:"name"`
-	Category    string            `json:"category"`
-	Description string            `json:"description"`
-	Version     string            `json:"version"`
-	Website     string            `json:"website"`
-	Logo        string            `json:"logo"`
-	Tutorial    string            `json:"tutorial"`
-	Dotenv      string            `json:"dotenv" gorm:"type:text"`
-	DotenvJSON  map[string]string `json:"dotenv_json,omitempty" gorm:"-"`
-	DotenvWarns []string          `json:"dotenv_warnings,omitempty" gorm:"-"`
-	DotenvErrs  []string          `json:"dotenv_errors,omitempty" gorm:"-"`
-	Compose     string            `json:"compose"`
-	Screenshots StringArray       `json:"screenshots" gorm:"type:text"`
-	Schema      Variables         `json:"schema" gorm:"type:text"`
-	Enabled     bool              `json:"enabled" gorm:"default:true"`
+	ID              uint              `gorm:"primarykey" json:"id"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt    `gorm:"index" json:"deleted_at"`
+	Name            string            `json:"name"`
+	Category        string            `json:"category"`
+	Description     string            `json:"description"`
+	Version         string            `json:"version"`
+	Website         string            `json:"website"`
+	Logo            string            `json:"logo"`
+	Tutorial        string            `json:"tutorial"`
+	Dotenv          string            `json:"dotenv" gorm:"type:text"`
+	DotenvJSON      map[string]string `json:"dotenv_json,omitempty" gorm:"-"`
+	DotenvWarns     []string          `json:"dotenv_warnings,omitempty" gorm:"-"`
+	DotenvErrs      []string          `json:"dotenv_errors,omitempty" gorm:"-"`
+	Compose         string            `json:"compose"`
+	Screenshots     StringArray       `json:"screenshots" gorm:"type:text"`
+	Schema          Variables         `json:"schema" gorm:"type:text"`
+	Enabled         bool              `json:"enabled" gorm:"default:true"`
+	DeploymentCount uint              `json:"deployment_count" gorm:"default:0"`
+}
+
+type ServerKV struct {
+	Key       string    `gorm:"primaryKey;size:64" json:"key"`
+	Value     string    `gorm:"type:text" json:"value"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ApplicationRequest struct {
+	ID        uint      `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	Name      string    `json:"name" gorm:"size:128"`
+	Website   string    `json:"website" gorm:"size:512"`
+	ClientIP  string    `json:"client_ip" gorm:"size:64"`
+	UserAgent string    `json:"user_agent" gorm:"size:512"`
+}
+
+const serverVersionKey = "server_version"
+
+func GetServerVersion(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var kv ServerKV
+		err := db.First(&kv, "key = ?", serverVersionKey).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				v := strings.TrimSpace(os.Getenv("SERVER_VERSION"))
+				if v == "" {
+					v = "0.0.0"
+				}
+				kv = ServerKV{Key: serverVersionKey, Value: v}
+				if cerr := db.Create(&kv).Error; cerr != nil {
+					c.JSON(500, gin.H{"error": "初始化服务器版本失败"})
+					return
+				}
+				c.JSON(200, gin.H{
+					"server_version": kv.Value,
+					"updated_at":     kv.UpdatedAt,
+				})
+				return
+			}
+			c.JSON(500, gin.H{"error": "读取服务器版本失败"})
+			return
+		}
+		c.JSON(200, gin.H{
+			"server_version": kv.Value,
+			"updated_at":     kv.UpdatedAt,
+		})
+	}
+}
+
+// CreateApplicationRequest 创建“申请应用”记录（免认证），用于收集用户提交的应用信息
+func CreateApplicationRequest(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 应用申请：允许免认证提交，但会记录来源 IP / UA，便于后续整理与溯源
+		var req struct {
+			Name    string `json:"name"`
+			Website string `json:"website"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "参数错误"})
+			return
+		}
+
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			c.JSON(400, gin.H{"error": "name 不能为空"})
+			return
+		}
+		if len(name) > 128 {
+			c.JSON(400, gin.H{"error": "name 过长"})
+			return
+		}
+
+		website := strings.TrimSpace(req.Website)
+		if len(website) > 512 {
+			c.JSON(400, gin.H{"error": "website 过长"})
+			return
+		}
+		if website != "" && !(strings.HasPrefix(website, "http://") || strings.HasPrefix(website, "https://")) {
+			c.JSON(400, gin.H{"error": "website 必须以 http:// 或 https:// 开头"})
+			return
+		}
+
+		ip := strings.TrimSpace(c.ClientIP())
+		ua := strings.TrimSpace(c.Request.UserAgent())
+		if len(ua) > 512 {
+			ua = ua[:512]
+		}
+
+		item := ApplicationRequest{
+			Name:      name,
+			Website:   website,
+			ClientIP:  ip,
+			UserAgent: ua,
+			CreatedAt: time.Now(),
+		}
+		if err := db.Create(&item).Error; err != nil {
+			c.JSON(500, gin.H{"error": "保存失败"})
+			return
+		}
+
+		c.JSON(200, gin.H{"id": item.ID})
+	}
+}
+
+func UpdateServerVersion(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			ServerVersion string `json:"server_version"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "参数错误"})
+			return
+		}
+		v := strings.TrimSpace(req.ServerVersion)
+		if v == "" {
+			c.JSON(400, gin.H{"error": "server_version 不能为空"})
+			return
+		}
+		if len(v) > 64 {
+			c.JSON(400, gin.H{"error": "server_version 过长"})
+			return
+		}
+
+		now := time.Now()
+		kv := ServerKV{Key: serverVersionKey, Value: v, UpdatedAt: now, CreatedAt: now}
+		if err := db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"value": v, "updated_at": now}),
+		}).Create(&kv).Error; err != nil {
+			c.JSON(500, gin.H{"error": "更新服务器版本失败"})
+			return
+		}
+		c.JSON(200, gin.H{
+			"server_version": kv.Value,
+		})
+	}
 }
 
 // parseDotenvDetailed 解析 dotenv 文本为 map，并输出可展示的告警/错误信息（用于前端提示）
@@ -169,6 +310,39 @@ func parseDotenvDetailed(content string) (map[string]string, []string, []string)
 
 	_ = errorsList
 	return out, warnings, errorsList
+}
+
+func IncrementTemplateDeploymentCount(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := strings.TrimSpace(c.Param("id"))
+		if id == "" || !isNumeric(id) {
+			c.JSON(400, gin.H{"error": "无效的模板ID"})
+			return
+		}
+
+		res := db.Model(&Template{}).
+			Where("id = ?", id).
+			UpdateColumn("deployment_count", gorm.Expr("deployment_count + ?", 1))
+		if res.Error != nil {
+			c.JSON(500, gin.H{"error": "更新部署次数失败"})
+			return
+		}
+		if res.RowsAffected == 0 {
+			c.JSON(404, gin.H{"error": "模板不存在"})
+			return
+		}
+
+		var tpl Template
+		if err := db.First(&tpl, id).Error; err != nil {
+			c.JSON(500, gin.H{"error": "读取部署次数失败"})
+			return
+		}
+
+		c.JSON(200, gin.H{
+			"id":               tpl.ID,
+			"deployment_count": tpl.DeploymentCount,
+		})
+	}
 }
 
 // normalizeTemplateDotenvBySchema 将全局环境变量（Global/env）补齐到模板的 .env 文本中，避免全局变量来源混淆

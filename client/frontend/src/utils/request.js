@@ -81,12 +81,14 @@ service.interceptors.response.use(
     
     // 处理不同类型的错误
     let errorMessage = '请求失败'
+    const requestUrl = error?.config?.url || ''
     
     if (error.code === 'ECONNABORTED') {
       errorMessage = '请求超时，请检查网络连接'
     } else if (error.response) {
       const status = error.response.status
       const data = error.response.data
+      const serverError = (typeof data === 'string' ? data : (data && data.error)) || ''
     
       switch (status) {
         case 401:
@@ -106,14 +108,14 @@ service.interceptors.response.use(
           errorMessage = '请求的资源不存在'
           break
         case 500:
-          errorMessage = data.error || '服务器内部错误'
+          errorMessage = serverError || '服务器内部错误'
           break
         default:
-          errorMessage = data.error || error.message || '未知错误'
+          errorMessage = serverError || error.message || '未知错误'
       }
     
       // 特殊处理镜像拉取错误
-      if (error.config.url?.includes('/images/pull')) {
+      if (requestUrl && requestUrl.includes('/images/pull')) {
         if (data.error?.includes('no proxy configured')) {
           errorMessage = '未配置代理，请在设置中配置代理后重试'
         } else if (data.error?.includes('no mirror configured')) {

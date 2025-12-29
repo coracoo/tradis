@@ -1,6 +1,6 @@
 <template>
   <div class="compose-view">
-    <div class="filter-bar">
+    <div class="filter-bar clay-surface">
       <div class="filter-left">
         <el-input
           v-model="searchQuery"
@@ -28,9 +28,9 @@
             <template #icon><el-icon><Refresh /></el-icon></template>
             刷新
           </el-button>
-          <el-button plain size="medium" @click="handleOpenDeployProgress">
+          <!--<el-button plain size="medium" @click="handleOpenDeployProgress">
             进度查询
-          </el-button>
+          </el-button>-->
           <el-button type="primary" @click="goCreateProject" size="medium">
             <template #icon><el-icon><Plus /></el-icon></template>
             新建项目
@@ -50,17 +50,7 @@
       </div>
     </div>
 
-    <el-alert
-      v-if="hasSelfResource"
-      type="info"
-      effect="light"
-      title="只读模式"
-      description="容器化部署模式下，自身项目/容器不支持操作"
-      :closable="false"
-      class="self-resource-alert"
-    />
-
-    <div class="table-wrapper">
+    <div class="table-wrapper clay-surface">
       <el-table
         ref="tableRef"
         :data="paginatedItems"
@@ -70,7 +60,7 @@
         :default-expand-all="false"
         class="main-table"
         :row-class-name="rowClassName"
-        :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600, fontSize: '14px', height: '50px' }"
+        :header-cell-style="{ background: 'var(--el-fill-color-light)', color: 'var(--el-text-color-primary)', fontWeight: 600, fontSize: '14px', height: '50px' }"
         :row-style="{ height: '60px' }"
         @sort-change="handleSortChange"
       >
@@ -162,7 +152,7 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="260" fixed="left" align="center">
+        <el-table-column label="操作" width="260" fixed="left" align="center" class-name="col-ops">
                   <template #default="scope">
                     <div class="op-buttons">
                       <template v-if="!scope.row.isSelf">
@@ -197,7 +187,7 @@
                           </el-button>
                         </el-tooltip>
                       </template>
-                      <el-tag v-else size="small" type="warning" effect="plain">自身</el-tag>
+                      <el-tag v-else size="small" type="warning" effect="plain">项目本身不支持修改</el-tag>
                     </div>
                   </template>
                 </el-table-column>
@@ -218,7 +208,7 @@
               </div>
               <div class="name-info">
                 <span class="name-text">{{ scope.row.name }}</span>
-                <el-tag v-if="scope.row.isSelf" size="small" type="warning" effect="plain">自身</el-tag>
+                <el-tag v-if="scope.row.isSelf" size="small" type="warning" effect="plain">达咩</el-tag>
                 <span class="type-tag" v-if="scope.row.type === 'compose'">Compose</span>
                 <span class="type-tag" v-else-if="scope.row.type === 'container'">独立容器</span>
               </div>
@@ -267,7 +257,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="240" fixed="left" align="center">
+        <el-table-column label="操作" width="240" fixed="left" align="center" class-name="col-ops">
           <template #default="scope">
             <div class="row-ops" v-if="scope.row.type === 'compose'">
               <template v-if="!scope.row.isSelf">
@@ -298,7 +288,7 @@
                   </template>
                 </el-dropdown>
               </template>
-              <el-tag v-else size="small" type="warning" effect="plain">自身</el-tag>
+              <el-tag v-else size="small" type="warning" effect="plain">项目本身不允许操作</el-tag>
             </div>
             <div class="row-ops" v-else>
                <!-- Single Container Ops - Same as inner table for consistency, or simplified -->
@@ -1669,18 +1659,16 @@ watch(
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  padding: 14px 16px;
 }
 
 .filter-left, .filter-right {
@@ -1696,11 +1684,10 @@ watch(
 .table-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-5xl);
 }
 
 .main-table {
@@ -1877,27 +1864,36 @@ watch(
 .icon-wrapper {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 24px;
   flex-shrink: 0;
   transition: transform 0.2s;
+  box-sizing: border-box;
+  padding: 4px;
+  margin: 2px;
+  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
+  border: 1px solid rgba(55, 65, 81, 0.08);
 }
 
 .project-name-cell:hover .icon-wrapper {
-  transform: scale(1.05);
+  transform: scale(1.03);
 }
 
 .icon-wrapper.compose {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  color: var(--clay-ink);
 }
 
 .icon-wrapper.container {
-  background: var(--el-fill-color);
-  color: var(--el-text-color-secondary);
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(110, 231, 183, 0.14), rgba(147, 197, 253, 0.16));
+  color: var(--clay-ink);
 }
 
 .name-info {
@@ -2034,10 +2030,11 @@ watch(
 
 /* Pagination */
 .pagination-bar {
-  padding: 16px 24px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  padding: 14px 16px;
+  border-top: 1px solid rgba(55, 65, 81, 0.12);
   display: flex;
   justify-content: flex-end;
+  background: transparent;
 }
 
 /* Override Element Styles for cleaner look */
@@ -2062,7 +2059,7 @@ watch(
 
 .self-resource-alert {
   margin: 0 0 12px;
-  border-radius: 12px;
+  border-radius: 18px;
 }
 
  /* New Styles from Docker.vue */
@@ -2071,13 +2068,13 @@ watch(
  .image-tag { width: fit-content; }
  .image-inline { font-size: 13px; color: var(--el-text-color-regular); }
  .ports-list { display: flex; flex-wrap: wrap; gap: 4px; }
- .port-tag { border: none; background: var(--el-fill-color); color: var(--el-text-color-secondary); }
- .more-ports { background: var(--el-fill-color); color: var(--el-text-color-secondary); }
+ .port-tag { background: rgba(255, 255, 255, 0.55); color: var(--el-text-color-secondary); border: 1px solid rgba(55, 65, 81, 0.08); box-shadow: var(--shadow-clay-inner); }
+ .more-ports { background: rgba(255, 255, 255, 0.55); color: var(--el-text-color-secondary); border: 1px solid rgba(55, 65, 81, 0.08); box-shadow: var(--shadow-clay-inner); }
  .ports-tooltip-content { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
  .port-item { font-size: 12px; }
  .text-gray { color: var(--el-text-color-secondary); }
  .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
  .whitespace-pre-line { white-space: pre-line; }
  .networks-list { display: flex; flex-wrap: wrap; gap: 4px; }
- .network-tag { border: none; background: var(--el-fill-color); color: var(--el-text-color-secondary); }
+ .network-tag { background: rgba(255, 255, 255, 0.55); color: var(--el-text-color-secondary); border: 1px solid rgba(55, 65, 81, 0.08); box-shadow: var(--shadow-clay-inner); }
  </style>

@@ -7,6 +7,11 @@ on:
         description: "镜像版本号（例如 v1.0.0 或 1.0.0）"
         required: true
         type: string
+      management_mode:
+        description: "管理模式（CS/DS）"
+        required: false
+        default: "CS"
+        type: string
       push_latest:
         description: "是否同时推送 latest 标签"
         required: false
@@ -42,6 +47,9 @@ jobs:
         shell: bash
         run: |
           set -e
+          echo "event=${{ github.event_name }}"
+          echo "GITHUB_REF=${GITHUB_REF}"
+          echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
           v="${{ inputs.version }}"
           if [[ -z "$v" ]]; then
             v="${GITHUB_REF_NAME}"
@@ -74,5 +82,6 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           push: true
           build-args: |
-            VITE_MANAGEMENT_MODE=${{ env.VITE_MANAGEMENT_MODE }}
+            VITE_MANAGEMENT_MODE=${{ inputs.management_mode || env.VITE_MANAGEMENT_MODE }}
+            CLIENT_VERSION=${{ steps.ver.outputs.version }}
           tags: ${{ steps.ver.outputs.tags }}

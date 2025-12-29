@@ -3,7 +3,8 @@
     <el-card class="login-card">
       <template #header>
         <div class="card-header">
-          <h2>Docker Manager</h2>
+          <h2>TRADIS</h2>
+          <h4>最适合新手的 Docker 面板</h4>
         </div>
       </template>
       <el-form :model="loginForm" :rules="rules" ref="loginFormRef" label-width="0px" @keyup.enter="handleLogin">
@@ -101,14 +102,18 @@ const handleLogin = async () => {
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background-color: var(--el-bg-color-page);
+  background-color: var(--clay-bg);
+  padding: 18px;
+  box-sizing: border-box;
 }
 
 .login-card {
   width: 400px;
-  border-radius: 12px;
-  border: none;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  max-width: 100%;
+  border-radius: var(--radius-5xl);
+  border: 1px solid var(--clay-border);
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
 }
 
 .card-header {
@@ -118,9 +123,10 @@ const handleLogin = async () => {
 
 .card-header h2 {
   margin: 0;
-  color: var(--el-text-color-primary);
-  font-weight: 600;
+  color: var(--clay-ink);
+  font-weight: 900;
   font-size: 24px;
+  letter-spacing: -0.3px;
 }
 
 .login-button {
@@ -130,6 +136,6 @@ const handleLogin = async () => {
 }
 
 :deep(.el-input__wrapper) {
-  border-radius: 8px;
+  border-radius: 18px;
 }
 </style>

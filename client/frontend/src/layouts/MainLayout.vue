@@ -21,7 +21,3 @@ import { computed } from 'vue'
 const route = useRoute()
 const pageTitle = computed(() => route.path.replace('/', '') || 'overview')
 </script>
-
-<style scoped>
-@import '../assets/css/layout.css';
-</style>

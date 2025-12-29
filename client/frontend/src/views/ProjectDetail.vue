@@ -1,6 +1,6 @@
 <template>
   <div class="detail-view">
-    <div class="header-bar">
+    <div class="header-bar clay-surface">
       <div class="header-left">
         <el-button link @click="goBack">
           <el-icon><Back /></el-icon>
@@ -87,7 +87,7 @@
       </template>
     </el-dialog>
 
-    <div class="content-wrapper">
+    <div class="content-wrapper clay-surface">
       <div class="scroll-content">
         <div class="content-inner">
           <el-tabs v-model="activeTab" class="detail-tabs" v-loading="isLoading">
@@ -794,24 +794,22 @@ onUnmounted(() => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .header-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  padding: 12px 16px;
   flex-shrink: 0;
 }
 
 .self-resource-alert {
   margin: 0 0 12px;
-  border-radius: 12px;
+  border-radius: 18px;
 }
 
 .header-left {
@@ -828,8 +826,8 @@ onUnmounted(() => {
 
 .title {
   font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 900;
+  color: var(--clay-ink);
 }
 
 .path {
@@ -848,20 +846,19 @@ onUnmounted(() => {
   width: 36px;
   height: 36px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: var(--shadow-clay-btn);
 }
 
 .content-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .scroll-content {
@@ -903,8 +900,10 @@ onUnmounted(() => {
 
 .yaml-editor {
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: 18px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: var(--shadow-clay-inner);
 }
 
 .editor-header {
@@ -937,8 +936,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: 18px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: var(--shadow-clay-inner);
 }
 
 .logs-header {
@@ -1006,14 +1007,15 @@ onUnmounted(() => {
 .build-logs {
   height: 400px;
   overflow-y: auto;
-  background: var(--el-bg-color-overlay);
+  background: rgba(255, 255, 255, 0.55);
   color: var(--el-text-color-primary);
   padding: 16px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: 18px;
   font-size: 13px;
   line-height: 1.5;
+  box-shadow: var(--shadow-clay-inner);
 }
 
 .build-logs pre {

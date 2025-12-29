@@ -55,6 +55,7 @@ type App struct {
 	Compose     string     `json:"compose"` // Compose 从 map 改为 string
 	Screenshots []string   `json:"screenshots"`
 	Schema      []Variable `json:"schema"`
+	DeploymentCount int    `json:"deployment_count"`
 }
 
 type Variable struct {
@@ -122,11 +123,55 @@ func RegisterAppStoreProtectedRoutes(r *gin.RouterGroup) {
 	group := r.Group("/appstore")
 	{
 		group.POST("/deploy/:id", deployApp)
+		group.POST("/deploy_count/:id", submitDeployCount)
 		group.GET("/status/:id", getAppStatus)
 		// SSE 路由通常通过 URL Token 认证，或者放行
 		// 如果在 protected 组中，前端 EventSource 需要带 Token (通常只能通过 URL Query)
 		group.GET("/tasks/:id/events", taskEvents)
 	}
+}
+
+func submitDeployCount(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的应用ID"})
+		return
+	}
+
+	if err := submitAppStoreDeploymentCount(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交部署次数失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func submitAppStoreDeploymentCount(appID string) error {
+	base := strings.TrimRight(getAppStoreServerURL(), "/")
+	url := fmt.Sprintf("%s/api/templates/%s/deploy", base, appID)
+	if settings.IsDebugEnabled() {
+		log.Printf("[Debug] submitAppStoreDeploymentCount: %s", settings.RedactAppStoreURL(url))
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("appstore server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+
+	return nil
 }
 
 // 获取应用列表

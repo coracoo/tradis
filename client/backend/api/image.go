@@ -853,9 +853,11 @@ func runImageUpdateCheck(ctx context.Context, force bool) (imageUpdateCheckResul
 		return result, err
 	}
 	existingSet := make(map[string]bool, len(existingUpdates))
+	existingByTag := make(map[string]database.ImageUpdate, len(existingUpdates))
 	for _, u := range existingUpdates {
 		if u.RepoTag != "" {
 			existingSet[u.RepoTag] = true
+			existingByTag[u.RepoTag] = u
 		}
 	}
 
@@ -879,9 +881,28 @@ func runImageUpdateCheck(ctx context.Context, force bool) (imageUpdateCheckResul
 			if localDigest == "" {
 				continue
 			}
-			// 跳过已有记录的镜像标签，直到该记录被删除后再重新轮询
+			// 已存在的可更新记录：如果本地镜像已被更新（digest 变化），则自动清理旧记录
 			if existingSet[tag] {
-				continue
+				if old, ok := existingByTag[tag]; ok {
+					// 本地 digest 已追平远端 digest，说明已完成更新
+					if old.RemoteDigest != "" && localDigest == old.RemoteDigest {
+						_ = database.DeleteImageUpdateByRepoTag(tag)
+						delete(existingSet, tag)
+						delete(existingByTag, tag)
+						continue
+					}
+					// 本地 digest 与记录中的 localDigest 不一致，说明镜像已发生变化，删除旧记录并重新检测
+					if old.LocalDigest != "" && localDigest != old.LocalDigest {
+						_ = database.DeleteImageUpdateByRepoTag(tag)
+						delete(existingSet, tag)
+						delete(existingByTag, tag)
+					} else {
+						// 仍是旧版本且记录存在，跳过重复检测
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 
 			if force {

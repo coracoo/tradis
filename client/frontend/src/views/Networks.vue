@@ -130,7 +130,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="150" fixed="left" header-align="center">
+        <el-table-column label="操作" width="150" fixed="left" header-align="center" class-name="col-ops">
           <template #default="scope">
             <div class="row-ops">
               <el-tooltip content="编辑网络" placement="top">
@@ -628,18 +628,21 @@ const isDefaultNetwork = (name) => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  margin-bottom: 0;
+  background: var(--clay-card);
+  padding: 14px 16px;
+  border-radius: var(--radius-5xl)  ;
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .filter-left, .filter-right {
@@ -655,11 +658,13 @@ const isDefaultNetwork = (name) => {
 .table-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .main-table {
@@ -671,22 +676,36 @@ const isDefaultNetwork = (name) => {
   display: flex;
   align-items: center;
   gap: 16px;
+  cursor: pointer;
+  padding: 8px 0;
 }
 
 .icon-wrapper {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 24px;
   flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  margin: 2px;
+  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
+  border: 1px solid rgba(55, 65, 81, 0.08);
+  transition: transform 0.2s;
 }
 
 .icon-wrapper.network {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(134, 191, 255, 0.24), rgba(255, 115, 180, 0.16));
+  color: var(--clay-ink);
+}
+
+.network-name-cell:hover .icon-wrapper {
+  transform: scale(1.03);
 }
 
 .name-info {
@@ -774,10 +793,11 @@ const isDefaultNetwork = (name) => {
 
 /* Pagination */
 .pagination-bar {
-  padding: 16px 24px;
-  border-top: 1px solid var(--el-border-color-light);
+  padding: 14px 16px;
+  border-top: 1px solid rgba(55, 65, 81, 0.12);
   display: flex;
   justify-content: flex-end;
+  background: transparent;
 }
 
 .text-gray {

@@ -1,6 +1,6 @@
 <template>
   <div class="images-view">
-    <div class="filter-bar">
+    <div class="filter-bar clay-surface">
       <div class="filter-left">
         <el-input
           v-model="searchQuery"
@@ -25,13 +25,13 @@
             <template #icon><el-icon><Refresh /></el-icon></template>
             检测更新
           </el-button>
-          <el-button type="primary" @click="pullImage" size="medium">
-            <template #icon><el-icon><Download /></el-icon></template>
-            拉取镜像
-          </el-button>
           <el-button @click="importImage" plain size="medium">
             <template #icon><el-icon><Upload /></el-icon></template>
             导入
+          </el-button>
+          <el-button type="primary" @click="pullImage" size="medium">
+            <template #icon><el-icon><Download /></el-icon></template>
+            拉取镜像
           </el-button>
         </el-button-group>
 
@@ -52,7 +52,7 @@
       </div>
     </div>
 
-    <div class="table-wrapper">
+    <div class="table-wrapper clay-surface">
       <el-table 
         :data="paginatedImages" 
         style="width: 100%; height: 100%" 
@@ -132,7 +132,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="220" fixed="left" align="center">
+        <el-table-column label="操作" width="220" fixed="left" align="center" class-name="col-ops">
           <template #default="scope">
             <div class="row-ops">
               <el-tooltip content="修改标签" placement="top">
@@ -1076,7 +1076,8 @@ const manualCheckUpdates = async () => {
     await checkImageUpdates()
   } catch (e) {
     console.error('手动检测镜像更新失败:', e)
-    ElMessage.error('手动检测镜像更新失败: ' + (e.message || '未知错误'))
+    const serverMsg = (e && e.response && e.response.data && (typeof e.response.data === 'string' ? e.response.data : e.response.data.error)) || ''
+    ElMessage.error('手动检测镜像更新失败: ' + (serverMsg || e.message || '未知错误'))
   } finally {
     checkingUpdates.value = false
   }
@@ -1107,7 +1108,8 @@ const handleBulkUpdate = async () => {
     await fetchImages()
   } catch (e) {
     console.error('一键更新镜像失败:', e)
-    ElMessage.error('一键更新镜像失败: ' + (e.message || '未知错误'))
+    const serverMsg = (e && e.response && e.response.data && (typeof e.response.data === 'string' ? e.response.data : e.response.data.error)) || ''
+    ElMessage.error('一键更新镜像失败: ' + (serverMsg || e.message || '未知错误'))
   } finally {
     bulkUpdating.value = false
   }
@@ -1158,7 +1160,8 @@ const updateImage = async (image) => {
     await fetchImages()
   } catch (error) {
     console.error('更新镜像失败:', error)
-    ElMessage.error('更新镜像失败: ' + (error.message || '未知错误'))
+    const serverMsg = (error && error.response && error.response.data && (typeof error.response.data === 'string' ? error.response.data : error.response.data.error)) || ''
+    ElMessage.error('更新镜像失败: ' + (serverMsg || error.message || '未知错误'))
     pushNotification('error', `${tag} 镜像更新失败`)
   } finally {
     const map = { ...updatingMap.value }
@@ -1194,19 +1197,16 @@ onUnmounted(() => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-  
+  padding: 14px 16px;
 }
 
 .filter-left, .filter-right {
@@ -1222,11 +1222,9 @@ onUnmounted(() => {
 .table-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .main-table {
@@ -1244,22 +1242,29 @@ onUnmounted(() => {
 .icon-wrapper {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 24px;
   flex-shrink: 0;
   transition: transform 0.2s;
+  box-sizing: border-box;
+  padding: 4px;
+  margin: 2px;
+  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
+  border: 1px solid rgba(55, 65, 81, 0.08);
 }
 
 .image-name-cell:hover .icon-wrapper {
-  transform: scale(1.05);
+  transform: scale(1.03);
 }
 
 .icon-wrapper.image {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  color: var(--clay-ink);
 }
 
 .name-info {
@@ -1269,7 +1274,7 @@ onUnmounted(() => {
 }
 
 .name-text {
-  font-weight: 600;
+  font-weight: 900;
   color: var(--el-text-color-primary);
   font-size: 14px;
 }
@@ -1285,22 +1290,28 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 800;
 }
 
 .status-point {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
 }
 
 .status-point.running {
-  background-color: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34,197,94,0.2);
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
+    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
+    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
+  box-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
 }
 
 .status-point.stopped {
-  background-color: #94a3b8;
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
+    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
+    linear-gradient(135deg, #cbd5e1, #94a3b8);
 }
 
 .tag-cell {
@@ -1315,7 +1326,7 @@ onUnmounted(() => {
 }
 
 .text-gray {
-  color: #64748b;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 
@@ -1336,10 +1347,11 @@ onUnmounted(() => {
 
 /* Pagination */
 .pagination-bar {
-  padding: 16px 24px;
-  border-top: 1px solid #e2e8f0;
+  padding: 14px 16px;
+  border-top: 1px solid rgba(55, 65, 81, 0.12);
   display: flex;
   justify-content: flex-end;
+  background: transparent;
 }
 
 /* Pull Progress */

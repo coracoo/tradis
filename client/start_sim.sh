@@ -7,6 +7,8 @@ mkdir -p /app/client/backend/data
 mkdir -p /app/client/backend/project
 BACKEND_PORT="${BACKEND_PORT:-8080}"
 export BACKEND_PORT
+CLIENT_VERSION="${CLIENT_VERSION:-${DOCKPIER_CLIENT_VERSION:-}}"
+export CLIENT_VERSION
 MODE="${VITE_MANAGEMENT_MODE:-CS}"
 PROJECT_ROOT="${PROJECT_ROOT:-}"
 export PROJECT_ROOT
@@ -17,6 +19,7 @@ window.__ENV__ = { MANAGEMENT_MODE: "${MODE}" };
 EOF
 echo "Runtime MANAGEMENT_MODE=${MODE}"
 echo "Runtime PROJECT_ROOT=${PROJECT_ROOT}"
+echo "Runtime CLIENT_VERSION=${CLIENT_VERSION}"
 
 echo "Starting with BACKEND_PORT=$BACKEND_PORT"
 

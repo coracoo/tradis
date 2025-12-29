@@ -684,8 +684,9 @@ const getImageTag = (image) => {
     flex-direction: column;
     box-sizing: border-box;
     overflow: hidden;
-    padding: 12px 24px;
-    background-color: var(--el-bg-color-page);
+    padding: 12px 16px;
+    background-color: var(--clay-bg);
+    gap: 12px;
   }
 
 /* 顶部操作栏 */
@@ -693,12 +694,12 @@ const getImageTag = (image) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-  border: 1px solid var(--el-border-color-light);
+  margin-bottom: 0;
+  background: var(--clay-card);
+  padding: 14px 16px;
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .self-resource-alert {
@@ -724,11 +725,13 @@ const getImageTag = (image) => {
 .table-wrapper {
   flex: 1;
   overflow: hidden;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .containers-table {
@@ -739,7 +742,7 @@ const getImageTag = (image) => {
 /* 分页 */
 .pagination-bar {
   padding: 16px 24px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid rgba(55, 65, 81, 0.12);
   display: flex;
   justify-content: flex-end;
 }
@@ -772,14 +775,26 @@ const getImageTag = (image) => {
 .icon-wrapper {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(135deg, rgba(134, 191, 255, 0.24), rgba(255, 115, 180, 0.16));
+  color: var(--clay-ink);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 24px;
   flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  margin: 2px;
+  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
+  border: 1px solid rgba(55, 65, 81, 0.08);
+  transition: transform 0.2s;
+}
+
+.name-cell-wrapper:hover .icon-wrapper {
+  transform: scale(1.03);
 }
 
 .name-col {

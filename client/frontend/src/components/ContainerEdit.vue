@@ -19,7 +19,11 @@
             </div>
           </el-form-item>
           <el-form-item label="镜像" prop="image">
-             <el-input v-model="form.image" disabled />
+            <el-tooltip :content="form.image" placement="top" :disabled="!form.image">
+              <div class="ellipsis-input-wrapper">
+                <el-input v-model="form.image" disabled class="ellipsis-input" />
+              </div>
+            </el-tooltip>
           </el-form-item>
           <el-form-item label="重启策略">
             <el-select v-model="form.restart_policy">
@@ -538,6 +542,16 @@ const handleConfirm = async () => {
 }
 .cursor-pointer {
   cursor: pointer;
+}
+
+.ellipsis-input-wrapper {
+  width: 100%;
+}
+
+:deep(.ellipsis-input .el-input__inner) {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 </style>
 

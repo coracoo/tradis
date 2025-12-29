@@ -5,6 +5,9 @@
         <div class="card-header">
           <span>模板列表</span>
           <div class="card-header-actions">
+            <el-button type="info" plain :icon="Setting" @click="openVersionDialog">
+              版本号维护
+            </el-button>
             <el-button type="primary" plain :icon="Upload" :loading="syncing" @click="handleSyncToGithub">
               同步到Github
             </el-button>
@@ -76,6 +79,23 @@
         @submit="handleSubmit"
       />
     </el-dialog>
+
+    <el-dialog
+      title="维护服务端版本号"
+      v-model="versionDialogVisible"
+      width="520px"
+      destroy-on-close
+    >
+      <el-form label-width="110px">
+        <el-form-item label="当前版本号">
+          <el-input v-model="serverVersionInput" placeholder="例如：v0.4.1" :disabled="versionLoading || versionSaving" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="versionDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="versionSaving" :disabled="versionLoading" @click="saveServerVersion">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -83,8 +103,8 @@
 import { ref, onMounted } from 'vue'
 import TemplateForm from '../components/TemplateForm.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Picture, Upload } from '@element-plus/icons-vue'
-import { templateApi } from '../api/template'
+import { Plus, Edit, Delete, Picture, Upload, Setting } from '@element-plus/icons-vue'
+import { templateApi, versionApi } from '../api/template'
 
 const templates = ref([])
 const dialogVisible = ref(false)
@@ -92,6 +112,10 @@ const dialogTitle = ref('新建模板')
 const currentTemplate = ref(null)
 const formRef = ref(null)
 const syncing = ref(false)
+const versionDialogVisible = ref(false)
+const versionLoading = ref(false)
+const versionSaving = ref(false)
+const serverVersionInput = ref('')
 
 const getCategoryLabel = (val) => {
   const map = {
@@ -128,6 +152,46 @@ const fetchTemplates = async () => {
     templates.value = response.data
   } catch (error) {
     ElMessage.error('获取模板列表失败')
+  }
+}
+
+const fetchServerVersion = async () => {
+  if (versionLoading.value) return
+  versionLoading.value = true
+  try {
+    const res = await versionApi.get()
+    const data = res?.data || {}
+    serverVersionInput.value = data.server_version || ''
+  } catch (error) {
+    const detail = error?.response?.data?.error || error?.message
+    ElMessage.error(detail ? `读取版本号失败：${detail}` : '读取版本号失败')
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+const openVersionDialog = async () => {
+  versionDialogVisible.value = true
+  await fetchServerVersion()
+}
+
+const saveServerVersion = async () => {
+  const v = String(serverVersionInput.value || '').trim()
+  if (!v) {
+    ElMessage.error('版本号不能为空')
+    return
+  }
+  if (versionSaving.value) return
+  versionSaving.value = true
+  try {
+    await versionApi.update(v)
+    ElMessage.success('版本号已保存')
+    versionDialogVisible.value = false
+  } catch (error) {
+    const detail = error?.response?.data?.error || error?.message
+    ElMessage.error(detail ? `保存失败：${detail}` : '保存失败')
+  } finally {
+    versionSaving.value = false
   }
 }
 

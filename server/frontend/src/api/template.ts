@@ -33,3 +33,12 @@ export const templateApi = {
     return api.post('/templates/sync')
   }
 }
+
+export const versionApi = {
+  get() {
+    return api.get('/version')
+  },
+  update(serverVersion: string) {
+    return api.put('/version', { server_version: serverVersion })
+  }
+}

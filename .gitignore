@@ -58,6 +58,3 @@ server/server
 
 # cloudflare
 cloudflare/
-
-# Scripts
-upload_to_github_pages.sh

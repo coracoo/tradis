@@ -518,6 +518,9 @@ const {
         deploySuccess.value = true
         pushLine({ type: 'success', message: '部署任务完成！', time: new Date().toISOString() })
         ElMessage.success('部署成功')
+        api.appstore.submitDeployCount(String(projectId)).catch((e) => {
+          console.warn('Submit deploy count failed', e)
+        })
       } else {
         pushLine({ type: 'error', message: `部署失败: ${data.message || '未知错误'}`, time: new Date().toISOString() })
         ElMessage.error('部署失败')
@@ -1530,7 +1533,7 @@ const submitDeploy = async () => {
         deploying.value = false
       }, 600000)
 
-      startDeployTaskStream(url, { reset: false })
+      startDeployTaskStream(url, { reset: true })
 
     } catch (error) {
       console.error(error)
@@ -1672,18 +1675,21 @@ onMounted(() => {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 12px 16px;
+  background-color: var(--clay-bg);
+  gap: 12px;
 }
 
 .filter-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  background: var(--el-bg-color);
-  padding: 12px 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  margin-bottom: 0;
+  background: var(--clay-card);
+  padding: 14px 16px;
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
 }
 
 .filter-left, .filter-right {
@@ -1694,46 +1700,53 @@ onMounted(() => {
 
 .page-title {
   font-size: 16px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 900;
+  color: var(--clay-ink);
 }
 
 .content-wrapper {
   flex: 1;
   overflow: hidden;
-  background: var(--el-bg-color);
-  border-radius: 12px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .scroll-container {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 18px;
+  padding-bottom: 72px;
 }
 
 .app-info-header {
   display: flex;
   gap: 24px;
-  padding: 24px;
-  background: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 18px;
+  background: transparent;
+  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
 }
 
 /* App Icon */
 .app-icon-wrapper {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 24px;
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
-  border: 1px solid var(--el-border-color-lighter);
+  background: var(--clay-highlight-top), var(--clay-gradient-primary);
+  color: white;
+  box-sizing: border-box;
+  padding: 4px;
+  margin: 2px;
+  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
+  border: 1px solid rgba(255, 255, 255, 0.4);
 }
 
 .app-icon {
@@ -1759,8 +1772,8 @@ onMounted(() => {
 .app-name {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 900;
+  color: var(--clay-ink);
 }
 
 .app-desc {
@@ -1845,9 +1858,11 @@ onMounted(() => {
 
 .service-collapse-item {
   margin-bottom: 16px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
   overflow: hidden;
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
 }
 
 .global-env-collapse-item {
@@ -1869,12 +1884,12 @@ onMounted(() => {
 }
 
 :deep(.el-collapse-item__header) {
-  background-color: var(--el-fill-color-light);
+  background-color: transparent;
   padding: 0 16px;
   height: 48px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
+  font-weight: 900;
+  color: var(--clay-ink);
 }
 
 :deep(.el-collapse-item__content) {
@@ -1901,7 +1916,7 @@ onMounted(() => {
 
 .service-content {
   padding: 20px;
-  background: var(--el-bg-color);
+  background: transparent;
 }
 
 .form-row-custom {
@@ -1998,7 +2013,7 @@ onMounted(() => {
 .tutorial-content {
   line-height: 1.7;
   font-size: 14px;
-  color: #334155;
+  color: var(--el-text-color-regular);
   word-break: break-word;
   overflow-wrap: break-word;
   white-space: pre-wrap;
