@@ -11,6 +11,10 @@ export default {
     return request.get(`/appstore/apps/${id}`)
   },
 
+  getProjectVars: (id) => {
+    return request.get(`/appstore/apps/${id}/vars`)
+  },
+
   // 部署项目
   deployProject: (data) => {
     return request.post(`/appstore/deploy/${data.projectId}`, data)

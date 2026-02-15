@@ -11,6 +11,8 @@
 !**/.env.example
 !**/.env.sample
 !**/.env.template
+**/.env.local
+**/.env.*.local
 *.pid
 *.out
 *.test
@@ -19,6 +21,8 @@ coverage/
 .cache/
 **/.cache/
 **/.vite/
+**/.pnpm-store/
+**/*.tsbuildinfo
 
 # Dev & Tools
 .trae

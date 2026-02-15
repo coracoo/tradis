@@ -14,6 +14,16 @@
   --clay-coral: #ff6b7d;
   --clay-sky: #86bfff;
   --clay-ink: #2f3a4a;
+  
+  --clay-yellow: #fbbf24;
+  --clay-yellow-2: #fde68a;
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
 
   /*注释全局阴影--shadow-clay-card: 10px 10px 20px #cedbe8, -10px -10px 20px #ffffff;*/
   --shadow-clay-card: 6px 6px 14px rgba(190, 205, 225, 0.75), -6px -6px 14px rgba(255, 255, 255, 0.75);
@@ -48,6 +58,229 @@
   --el-color-danger: var(--clay-coral);
   --el-color-warning: #f59e0b;
   --el-color-info: #94a3b8;
+
+  /* Icon Backgrounds (Clay Default) */
+  --icon-bg-compose: radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%), linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  --icon-bg-container: radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%), linear-gradient(135deg, rgba(110, 231, 183, 0.14), rgba(147, 197, 253, 0.16));
+  --icon-bg-app: radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.28) 55%, rgba(255, 255, 255, 0) 100%), linear-gradient(135deg, rgba(147, 197, 253, 0.36), rgba(255, 133, 179, 0.26));
+  
+  --color-cpu: #409EFF;
+  --color-ram: #9F59F0;
+  
+  --icon-bg-image: var(--icon-bg-compose);
+  --clay-gray: #cbd5e1;
+  --clay-gray-2: #94a3b8;
+
+  /* Stat Card Gradients */
+  --stat-bg-primary: linear-gradient(135deg, rgba(147, 197, 253, 0.45), rgba(96, 165, 250, 0.65));
+  --stat-bg-success: linear-gradient(135deg, rgba(110, 231, 183, 0.45), rgba(52, 211, 153, 0.75));
+  --stat-bg-warning: linear-gradient(135deg, rgba(253, 230, 138, 0.55), rgba(251, 191, 36, 0.7));
+  --stat-bg-danger: linear-gradient(135deg, rgba(253, 164, 175, 0.55), rgba(251, 113, 133, 0.72));
+  --stat-icon-color: #ffffff;
+
+  /* Tag Backgrounds */
+  --tag-bg-success: rgba(110, 231, 183, 0.22);
+  --tag-bg-warning: rgba(253, 230, 138, 0.28);
+  --tag-bg-danger: rgba(251, 113, 133, 0.22);
+  --tag-bg-info: rgba(147, 197, 253, 0.22);
+  
+  --badge-bg: rgba(255, 255, 255, 0.55);
+
+  /* Port Status Indicators */
+  --port-header-bg: rgba(255, 255, 255, 0.35);
+  --port-header-border: 1px solid rgba(55, 65, 81, 0.1);
+  
+  --status-used-bg: radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%), radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%), linear-gradient(135deg, #fda4af, var(--clay-coral));
+  --status-used-shadow: 0 0 0 6px rgba(251, 113, 133, 0.16), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.6);
+  
+  --status-free-bg: radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%), radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%), linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
+  --status-free-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+  
+  --status-idle-bg: radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%), radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%), linear-gradient(135deg, var(--clay-gray), var(--clay-gray-2));
+  --status-idle-shadow: 0 0 0 6px rgba(203, 213, 225, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+
+  --status-active-bg: radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%), radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%), linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
+  --status-active-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+
+  /* Logs Area */
+  --log-bg: #1e1e1e;
+  --log-text: #e2e8f0;
+  --log-border: 1px solid rgba(55, 65, 81, 0.12);
+  --log-error: #ef4444;
+  --log-warning: #f59e0b;
+  --log-info: #22c55e;
+}
+
+/* SaaS Modern Theme */
+html.theme-modern {
+  --clay-bg: #f3f4f6;
+  --clay-card: #ffffff;
+  --clay-card-solid: #ffffff;
+  --clay-text: #111827;
+  --clay-text-secondary: #6b7280;
+  --clay-border: #e5e7eb;
+
+  --shadow-clay-card: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-clay-btn: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-clay-inner: none;
+  --shadow-clay-float: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+
+  --radius-4xl: 12px;
+  --radius-5xl: 8px;
+
+  --color-primary: #3b82f6;
+  --el-color-primary: #3b82f6;
+  --el-color-success: #10b981;
+  --el-color-danger: #ef4444;
+  --el-color-warning: #f59e0b;
+  
+  --el-border-radius-base: 6px;
+  --el-font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  --clay-pink: #3b82f6;
+  --clay-pink-2: #2563eb;
+  --clay-mint: #10b981;
+  --clay-mint-2: #059669;
+  --clay-coral: #ef4444;
+  --clay-yellow: #f59e0b;
+  --clay-yellow-2: #fbbf24;
+
+  --icon-bg-compose: #e0f2fe;
+  --icon-bg-container: #d1fae5;
+  --icon-bg-app: #dbeafe;
+  --clay-ink: #111827;
+  
+  --color-cpu: #3b82f6;
+  --color-ram: #8b5cf6;
+  
+  --icon-bg-image: #e0f2fe;
+  --clay-gray: #e5e7eb;
+  --clay-gray-2: #9ca3af;
+
+  /* Stat Card Gradients */
+  --stat-bg-primary: #dbeafe;
+  --stat-bg-success: #d1fae5;
+  --stat-bg-warning: #fef3c7;
+  --stat-bg-danger: #fee2e2;
+  --stat-icon-color: var(--clay-text);
+
+  /* Tag Backgrounds */
+  --tag-bg-success: #d1fae5;
+  --tag-bg-warning: #fef3c7;
+  --tag-bg-danger: #fee2e2;
+  --tag-bg-info: #dbeafe;
+  
+  --badge-bg: #f3f4f6;
+
+  /* Port Status Indicators */
+  --port-header-bg: #f9fafb;
+  --port-header-border: 1px solid #e5e7eb;
+  
+  --status-used-bg: #ef4444;
+  --status-used-shadow: 0 0 0 2px #fee2e2;
+  
+  --status-free-bg: #10b981;
+  --status-free-shadow: 0 0 0 2px #d1fae5;
+
+  --status-idle-bg: #9ca3af;
+  --status-idle-shadow: 0 0 0 2px #e5e7eb;
+
+  --status-active-bg: #10b981;
+  --status-active-shadow: 0 0 0 2px #dcfce7;
+
+  /* Logs Area */
+  --log-bg: #111827;
+  --log-text: #f3f4f6;
+  --log-border: 1px solid #e5e7eb;
+  --log-error: #ef4444;
+  --log-warning: #f59e0b;
+  --log-info: #10b981;
+}
+
+/* Retro/Vintage Theme (Warm Paper) */
+html.theme-retro {
+  --clay-bg: #f2e8d5; /* Vintage Paper */
+  --clay-card: #fdfbf7;
+  --clay-card-solid: #fdfbf7;
+  --clay-text: #433422; /* Sepia Ink */
+  --clay-text-secondary: #7a6652;
+  --clay-border: #c0b093;
+
+  --shadow-clay-card: 4px 4px 0px 0px #c0b093;
+  --shadow-clay-btn: 2px 2px 0px 0px #c0b093;
+  --shadow-clay-inner: none;
+  --shadow-clay-float: 6px 6px 0px 0px #433422;
+
+  --radius-4xl: 2px;
+  --radius-5xl: 0px;
+
+  --color-primary: #d35400; /* Burnt Orange */
+  --el-color-primary: #d35400;
+  --el-color-success: #2aa198; /* Cyan */
+  --el-color-danger: #dc322f; /* Red */
+  --el-color-warning: #b58900; /* Yellow */
+  
+  --el-border-radius-base: 0px;
+  --el-font-family: 'Courier New', Courier, monospace;
+  
+  --clay-pink: #d35400;
+  --clay-pink-2: #e67e22;
+  --clay-mint: #2aa198;
+  --clay-mint-2: #268bd2;
+  --clay-coral: #dc322f;
+  --clay-yellow: #b58900;
+  --clay-yellow-2: #d3a625;
+
+  --icon-bg-compose: #e6dbbf;
+  --icon-bg-container: #dcd0b2;
+  --icon-bg-app: #e6dbbf;
+  --clay-ink: #433422;
+  
+  --color-cpu: #d35400;
+  --color-ram: #2aa198;
+  
+  --icon-bg-image: #e6dbbf;
+  --clay-gray: #dcd0b2;
+  --clay-gray-2: #7a6652;
+
+  /* Stat Card Gradients */
+  --stat-bg-primary: #e6dbbf;
+  --stat-bg-success: #dcd0b2;
+  --stat-bg-warning: #d3a625;
+  --stat-bg-danger: #dc322f;
+  --stat-icon-color: #fdfbf7;
+
+  /* Tag Backgrounds */
+  --tag-bg-success: #dcd0b2;
+  --tag-bg-warning: #e6dbbf;
+  --tag-bg-danger: #e6dbbf;
+  --tag-bg-info: #dcd0b2;
+  
+  --badge-bg: #fff8e1;
+
+  /* Port Status Indicators */
+  --port-header-bg: #f2e8d5;
+  --port-header-border: 1px solid #c0b093;
+  
+  --status-used-bg: #dc322f;
+  --status-used-shadow: 2px 2px 0px 0px #433422;
+  
+  --status-free-bg: #2aa198;
+  --status-free-shadow: 2px 2px 0px 0px #433422;
+
+  --status-idle-bg: #7a6652;
+  --status-idle-shadow: 2px 2px 0px 0px #433422;
+
+  --status-active-bg: #5a994e;
+  --status-active-shadow: 2px 2px 0px 0px #2e5926;
+
+  /* Logs Area (Retro Terminal) */
+  --log-bg: #002b36; /* Solarized Dark */
+  --log-text: #839496;
+  --log-border: 1px solid #c0b093;
+  --log-error: #dc322f;
+  --log-warning: #b58900;
+  --log-info: #2aa198;
 }
 
 html.dark {
@@ -83,6 +316,52 @@ html.dark {
   --el-color-primary: #ff6cab;
   --el-color-success: #2ed39a;
   --el-color-danger: #ff6b7d;
+  
+  --icon-bg-app: rgba(255, 255, 255, 0.03);
+
+  /* Stat Card Gradients */
+  --stat-bg-primary: rgba(59, 130, 246, 0.2);
+  --stat-bg-success: rgba(16, 185, 129, 0.2);
+  --stat-bg-warning: rgba(245, 158, 11, 0.2);
+  --stat-bg-danger: rgba(239, 68, 68, 0.2);
+  --stat-icon-color: #e2e8f0;
+
+  /* Tag Backgrounds */
+  --tag-bg-success: rgba(16, 185, 129, 0.15);
+  --tag-bg-warning: rgba(245, 158, 11, 0.15);
+  --tag-bg-danger: rgba(239, 68, 68, 0.15);
+  --tag-bg-info: rgba(59, 130, 246, 0.15);
+  
+  --badge-bg: rgba(255, 255, 255, 0.1);
+  --clay-ink: #e2e8f0;
+
+  /* Port Status Indicators */
+  --port-header-bg: rgba(17, 26, 44, 0.6);
+  --port-header-border: 1px solid rgba(226, 232, 240, 0.1);
+  
+  --status-used-bg: linear-gradient(135deg, #f87171, #ef4444);
+  --status-used-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15), 2px 2px 6px rgba(0, 0, 0, 0.2);
+  
+  --status-free-bg: linear-gradient(135deg, #34d399, #10b981);
+  --status-free-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15), 2px 2px 6px rgba(0, 0, 0, 0.2);
+
+  --status-idle-bg: linear-gradient(135deg, #94a3b8, #64748b);
+  --status-idle-shadow: 0 0 0 4px rgba(148, 163, 184, 0.15), 2px 2px 6px rgba(0, 0, 0, 0.2);
+
+  --status-active-bg: linear-gradient(135deg, #10b981, #059669);
+  --status-active-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15), 2px 2px 6px rgba(0, 0, 0, 0.2);
+
+  /* Logs Area */
+  --log-bg: #000000;
+  --log-text: #e2e8f0;
+  --log-border: 1px solid rgba(226, 232, 240, 0.12);
+  --log-error: #ef4444;
+  --log-warning: #f59e0b;
+  --log-info: #22c55e;
+}
+
+html.dark .terminal-container {
+  background-color: #000;
 }
 
 html, body, #app {
@@ -151,7 +430,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 16px;
   border-radius: var(--radius-5xl);
   box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
   border: 1px solid var(--clay-border);
@@ -178,7 +457,7 @@ html, body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 4px;
+  padding: 0;
   min-width: 0; /* 防止内容撑大 */
 }
 
@@ -384,7 +663,101 @@ html.dark .el-pagination .el-pager li.is-active {
   background:
     radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 62%),
     linear-gradient(135deg, var(--clay-sky), #60a5fa);
-  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.55);
+}
+
+/* =========================================
+   Common Component Styles (Extracted)
+   ========================================= */
+
+/* Filter Bar */
+.filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
+}
+
+.filter-left, .filter-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Search Input Standard Width */
+.search-input {
+  width: 300px;
+}
+
+/* Pagination Bar */
+.pagination-bar {
+  padding: 14px 16px;
+  border-top: 1px solid var(--clay-border);
+  background: transparent;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Content/Table Wrapper */
+.content-wrapper,
+.table-wrapper {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--clay-card);
+  border-radius: var(--radius-5xl);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
+}
+
+/* Icon Wrapper (Standard 48px - Docker/Networks/etc) */
+.icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  margin: 2px;
+  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
+  border: 1px solid var(--clay-border);
+  transition: transform 0.2s;
+  color: var(--clay-ink);
+}
+
+/* App Icon Wrapper (Large 60px - AppStore) */
+.app-icon-wrapper {
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--el-fill-color-lighter);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--shadow-clay-inner);
+}
+
+.app-icon-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.app-icon-wrapper:hover img {
+  transform: scale(1.1);
 }
 
 .clay-tag-dot.is-success::before {
@@ -442,6 +815,11 @@ html.dark .el-textarea__inner {
   border: 1px solid rgba(55, 65, 81, 0.08);
   box-shadow: var(--shadow-clay-btn);
   transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.el-button--medium {
+  padding: 10px 20px;
+  height: 36px;
 }
 
 .el-button:hover {

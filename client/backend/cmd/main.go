@@ -136,6 +136,23 @@ func main() {
 		)
 	}))
 
+	trustedProxiesRaw := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if trustedProxiesRaw == "" {
+		trustedProxiesRaw = "127.0.0.1,::1,172.16.0.0/12"
+	}
+	trustedProxies := make([]string, 0)
+	for _, s := range strings.Split(trustedProxiesRaw, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			trustedProxies = append(trustedProxies, s)
+		}
+	}
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		log.Printf("[Trusted Proxies] 设置失败: %v", err)
+	} else {
+		log.Printf("[Trusted Proxies] 当前配置: %s", trustedProxiesRaw)
+	}
+
 	// Configure CORS
 	config := cors.DefaultConfig()
 	config.AllowAllOrigins = true
@@ -160,6 +177,8 @@ func main() {
 	api.RegisterSystemRoutes(protected)
 	api.RegisterNavigationRoutes(protected) // 注册导航路由
 	api.RegisterSettingsRoutes(protected)   // 注册设置路由
+	api.RegisterAIRoutes(protected)         // 注册 AI 配置与测试路由
+	api.RegisterMCPRoutes(protected)        // 注册 MCP（受限能力：图标目录与图标写入）
 	api.RegisterPortRoutes(protected)       // 注册端口管理路由
 
 	// 注册应用商店路由

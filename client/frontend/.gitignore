@@ -17,11 +17,14 @@ dist-ssr
 !.env.example
 !.env.sample
 !.env.template
+.env.local
+.env.*.local
 
 .vite
 coverage
 *.tsbuildinfo
 .pnpm-store
+.cache
 
 # Editor directories and files
 .vscode/*

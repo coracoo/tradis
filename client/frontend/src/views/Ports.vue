@@ -12,7 +12,7 @@
           @keyup.enter="fetchPorts"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
 
@@ -39,7 +39,7 @@
         <el-popover placement="bottom" title="扫描范围设置" :width="340" trigger="click">
           <template #reference>
             <el-button plain size="medium">
-               <el-icon style="margin-right: 4px"><Setting /></el-icon> 范围设置
+               <IconEpSetting style="margin-right: 4px" /> 端口可视范围
             </el-button>
           </template>
           <div class="range-settings">
@@ -56,7 +56,7 @@
         </el-popover>
 
         <el-button @click="fetchPorts" :loading="loading" plain size="medium">
-          <template #icon><el-icon><Refresh /></el-icon></template>
+          <template #icon><IconEpRefresh /></template>
           刷新
         </el-button>
       </div>
@@ -165,7 +165,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh, Setting } from '@element-plus/icons-vue'
 import api from '../api'
 
 const loading = ref(false)
@@ -361,9 +360,9 @@ onUnmounted(() => {
 }
 
 .column-header-box {
-  background-color: rgba(255, 255, 255, 0.35);
+  background-color: var(--port-header-bg);
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(55, 65, 81, 0.1);
+  border-bottom: var(--port-header-border);
   text-align: center;
 }
 
@@ -422,19 +421,13 @@ onUnmounted(() => {
 }
 
 .status-active {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, #fda4af, var(--clay-coral));
-  box-shadow: 0 0 0 6px rgba(251, 113, 133, 0.16), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.6);
+  background: var(--status-idle-bg);
+  box-shadow: var(--status-idle-shadow);
 }
 
 .status-inactive {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
-  box-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+  background: var(--status-free-bg);
+  box-shadow: var(--status-free-shadow);
 }
 
 .port-number {

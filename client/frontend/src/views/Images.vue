@@ -10,7 +10,7 @@
           size="medium"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
       </div>
@@ -18,34 +18,34 @@
       <div class="filter-right">
         <el-button-group class="main-actions">
           <el-button @click="fetchImages" :loading="loading" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <el-button @click="manualCheckUpdates" :loading="checkingUpdates" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             检测更新
           </el-button>
           <el-button @click="importImage" plain size="medium">
-            <template #icon><el-icon><Upload /></el-icon></template>
+            <template #icon><IconEpUpload /></template>
             导入
           </el-button>
           <el-button type="primary" @click="pullImage" size="medium">
-            <template #icon><el-icon><Download /></el-icon></template>
+            <template #icon><IconEpDownload /></template>
             拉取镜像
           </el-button>
         </el-button-group>
 
         <el-dropdown trigger="click" @command="handleGlobalAction">
           <el-button plain class="more-btn" size="medium">
-            更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="bulk-update" :icon="Download">
+              <el-dropdown-item command="bulk-update" :icon="IconEpDownload">
                 一键更新未使用镜像
               </el-dropdown-item>
-              <el-dropdown-item command="settings" :icon="Setting">配置镜像加速</el-dropdown-item>
-              <el-dropdown-item command="prune" :icon="Delete" divided class="text-danger">清除未使用镜像</el-dropdown-item>
+              <el-dropdown-item command="settings" :icon="IconEpSetting">配置镜像加速</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="IconEpDelete" divided class="text-danger">清除未使用镜像</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -69,7 +69,7 @@
           <template #default="scope">
             <div class="image-name-cell">
               <div class="icon-wrapper image">
-                <el-icon><Files /></el-icon>
+                <IconEpFiles />
               </div>
               <div class="name-info">
                 <span class="name-text">{{ getImageName(scope.row.RepoTags?.[0]) }}</span>
@@ -142,7 +142,7 @@
                   type="primary" 
                   :disabled="scope.row.isInUse"
                   @click="tagImage(scope.row)">
-                  <el-icon><Edit /></el-icon>
+                  <IconEpEdit />
                 </el-button>
               </el-tooltip>
               <el-tooltip content="导出" placement="top">
@@ -151,7 +151,7 @@
                   plain
                   type="info" 
                   @click="exportImage(scope.row)">
-                  <el-icon><Download /></el-icon>
+                  <IconEpDownload />
                 </el-button>
               </el-tooltip>
               <el-tooltip content="删除" placement="top">
@@ -161,7 +161,7 @@
                   type="danger" 
                   :disabled="scope.row.isInUse"
                   @click="deleteImage(scope.row)">
-                  <el-icon><Delete /></el-icon>
+                  <IconEpDelete />
                 </el-button>
               </el-tooltip>
             </div>
@@ -188,7 +188,7 @@
     <!-- 添加拉取镜像对话框 -->
     <el-dialog
       v-model="pullDialogVisible"
-      title="拉取镜像"
+      :title="isUpdateMode ? '更新镜像' : '拉取镜像'"
       width="500px"
       destroy-on-close
       class="compact-dialog"
@@ -200,6 +200,7 @@
               v-model="pullForm.registry"
               placeholder="源"
               style="width: 140px"
+              :disabled="isUpdateMode"
             >
               <el-option
                 v-for="option in registryOptions"
@@ -213,6 +214,7 @@
               placeholder="例如: nginx:latest"
               style="flex: 1"
               @keyup.enter="handlePullImage"
+              :disabled="isUpdateMode"
             />
           </div>
         </el-form-item>
@@ -235,7 +237,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="pullDialogVisible = false" :disabled="pullProgress.show">取消</el-button>
-          <el-button type="primary" @click="handlePullImage" :loading="pullProgress.show">开始拉取</el-button>
+          <el-button type="primary" @click="handlePullImage" :loading="pullProgress.show">{{ isUpdateMode ? '开始更新' : '开始拉取' }}</el-button>
         </span>
       </template>
     </el-dialog>
@@ -287,7 +289,7 @@
         :show-file-list="false"
 		accept=".tar"
 	  >
-		<el-icon class="el-icon--upload"><upload-filled /></el-icon>
+		<IconEpUploadFilled class="el-icon--upload" />
 		<div class="el-upload__text">
 		  拖拽文件到此处 或 <em>点击上传</em>
 		</div>
@@ -310,7 +312,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, h, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, UploadFilled, Download, Upload, Setting, Edit, Delete, Search, ArrowDown, Files } from '@element-plus/icons-vue'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
 import DockerSettings from '../components/DockerSettings.vue'
@@ -614,6 +615,7 @@ const handleCurrentChange = (val) => {
 // 修改拉取镜像的对话框
 // 添加拉取镜像相关的响应式变量
 const pullDialogVisible = ref(false)
+const isUpdateMode = ref(false)
 const pullForm = ref({
   registry: 'docker.io',
   name: ''
@@ -671,7 +673,7 @@ const {
 } = useSseLogStream({
   onOpenLine: '',
   onErrorLine: '',
-  onMessage: (event, { stop }) => {
+  onMessage: async (event, { stop }) => {
     let data = null
     try {
       data = JSON.parse(event.data)
@@ -686,6 +688,18 @@ const {
       pullProgress.value.progress = 100
       ElMessage.success('镜像拉取成功')
       pullDialogVisible.value = false
+      
+      // 清理更新状态
+      if (pullForm.value.name) {
+        try {
+          await api.images.clearUpdate({ repoTag: pullForm.value.name })
+          const map = { ...updateStatusMap.value }
+          delete map[pullForm.value.name]
+          updateStatusMap.value = map
+        } catch (e) {}
+      }
+      checkImageUpdates()
+      
       fetchImages()
       return
     }
@@ -749,6 +763,7 @@ watch(pullDialogVisible, (visible) => {
   if (!visible) {
     stopPullStream()
     pullProgress.value.show = false
+    setTimeout(() => { isUpdateMode.value = false }, 300)
   }
 })
 
@@ -1121,53 +1136,37 @@ const updateImage = async (image) => {
     ElMessage.warning('该镜像没有有效标签，无法更新')
     return
   }
+  
   if (image.isInUse) {
-    ElMessage.warning('该镜像正在被容器使用，请在项目编排或容器页面中执行升级')
-    pushNotification('warning', `${tag} 镜像正在被容器使用，请从项目编排或容器页面中升级`)
-    return
-  }
-  if (isImageUpdating(image)) {
-    ElMessage.info(`镜像 ${tag} 正在更新中，请稍候`)
-    return
-  }
-  try {
-    updatingMap.value = {
-      ...updatingMap.value,
-      [tag]: true
-    }
-    ElMessage.info(`开始更新镜像 ${tag}`)
-    pushNotification('info', `${tag} 镜像开始更新`)
-    await api.images.pull({ name: tag, registry: '' })
-    ElMessage.success(`镜像 ${tag} 已更新到最新版本`)
-    pushNotification('success', `${tag} 镜像更新成功`)
     try {
-      await api.images.clearUpdate({ repoTag: tag })
-    } catch (e) {
-      console.error('清除镜像更新记录失败:', e)
+      await ElMessageBox.confirm(
+        '该镜像正在被容器使用。更新镜像不会自动重启容器，您需要稍后手动重建容器以应用新镜像。是否继续？',
+        '更新使用中镜像',
+        {
+          confirmButtonText: '继续更新',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+    } catch {
+      return
     }
-    try {
-      const map = { ...updateStatusMap.value }
-      delete map[tag]
-      updateStatusMap.value = map
-    } catch (e) {
-      console.error('本地更新状态清理失败:', e)
-    }
-    try {
-      await checkImageUpdates()
-    } catch (e) {
-      console.error('刷新镜像更新状态失败:', e)
-    }
-    await fetchImages()
-  } catch (error) {
-    console.error('更新镜像失败:', error)
-    const serverMsg = (error && error.response && error.response.data && (typeof error.response.data === 'string' ? error.response.data : error.response.data.error)) || ''
-    ElMessage.error('更新镜像失败: ' + (serverMsg || error.message || '未知错误'))
-    pushNotification('error', `${tag} 镜像更新失败`)
-  } finally {
-    const map = { ...updatingMap.value }
-    delete map[tag]
-    updatingMap.value = map
   }
+
+  // 设置表单数据
+  pullForm.value = {
+    registry: 'docker.io',
+    name: tag
+  }
+
+  // 设置为更新模式并打开对话框
+  isUpdateMode.value = true
+  pullDialogVisible.value = true
+
+  // 自动开始拉取
+  setTimeout(() => {
+    handlePullImage()
+  }, 100)
 }
 
 onMounted(async () => {
@@ -1253,7 +1252,7 @@ onUnmounted(() => {
   padding: 4px;
   margin: 2px;
   box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
-  border: 1px solid rgba(55, 65, 81, 0.08);
+  border: 1px solid var(--clay-border);
 }
 
 .image-name-cell:hover .icon-wrapper {
@@ -1261,9 +1260,7 @@ onUnmounted(() => {
 }
 
 .icon-wrapper.image {
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  background: var(--icon-bg-image);
   color: var(--clay-ink);
 }
 
@@ -1300,18 +1297,13 @@ onUnmounted(() => {
 }
 
 .status-point.running {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
-  box-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+  background: var(--status-active-bg);
+  box-shadow: var(--status-active-shadow);
 }
 
 .status-point.stopped {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, #cbd5e1, #94a3b8);
+  background: var(--status-idle-bg);
+  box-shadow: var(--status-idle-shadow);
 }
 
 .tag-cell {
@@ -1348,7 +1340,7 @@ onUnmounted(() => {
 /* Pagination */
 .pagination-bar {
   padding: 14px 16px;
-  border-top: 1px solid rgba(55, 65, 81, 0.12);
+  border-top: 1px solid var(--clay-border);
   display: flex;
   justify-content: flex-end;
   background: transparent;

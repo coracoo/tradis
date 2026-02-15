@@ -46,7 +46,8 @@ const api = {
     list: () => request.get('/volumes'),
     create: (data) => request.post('/volumes', data),
     remove: (name) => request.delete(`/volumes/${name}`),
-    prune: () => request.post('/volumes/prune')
+    prune: () => request.post('/volumes/prune'),
+    browseStart: (name) => request.post(`/volumes/${name}/browse/start`)
   },
   
   networks: {
@@ -66,6 +67,17 @@ const api = {
     deleteNotification: (id) => request.delete(`/system/notifications/${id}`),
     markNotificationsRead: () => request.post('/system/notifications/read'),
     navigationRebuild: () => request.post('/system/navigation/rebuild')
+  },
+  ai: {
+    enrichNavigation: (data) => request.post('/ai/navigation/enrich', data),
+    enrichNavigationByTitle: (data) => request.post('/ai/navigation/enrich-by-title', data),
+    logs: (params) => request.get('/ai/logs', { params })
+  },
+
+  auth: {
+    login: (data) => request.post('/auth/login', data),
+    me: () => request.get('/auth/me'),
+    changePassword: (data) => request.post('/auth/change-password', data)
   },
 
   navigation: {

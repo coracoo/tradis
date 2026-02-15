@@ -3,25 +3,25 @@
     <div class="filter-bar clay-surface">
       <div class="filter-left">
         <el-button type="primary" @click="handleAdd" size="medium">
-          <template #icon><el-icon><Plus /></el-icon></template>
+          <template #icon><IconEpPlus /></template>
           添加应用
         </el-button>
         <el-button @click="handleManageCategories" size="medium">
-          <template #icon><el-icon><Operation /></el-icon></template>
+          <template #icon><IconEpOperation /></template>
           分类管理
         </el-button>
       </div>
       <div class="filter-right">
         <el-button :type="showDeleted ? 'warning' : 'default'" @click="toggleShowDeleted" plain size="medium">
-          <template #icon><el-icon><Delete /></el-icon></template>
+          <template #icon><IconEpDelete /></template>
           {{ showDeleted ? '显示正常' : '回收站' }}
         </el-button>
         <el-button type="danger" @click="handleRebuild" plain size="medium">
-          <template #icon><el-icon><Refresh /></el-icon></template>
+          <template #icon><IconEpRefresh /></template>
           重新识别
         </el-button>
         <el-button @click="handleRefresh" plain size="medium">
-          <template #icon><el-icon><Refresh /></el-icon></template>
+          <template #icon><IconEpRefresh /></template>
           刷新
         </el-button>
       </div>
@@ -31,7 +31,7 @@
       <div class="scroll-content">
         <div v-for="(group, groupName) in groupedApps" :key="groupName" class="category-section">
           <div class="category-header">
-            <el-icon><Folder /></el-icon>
+            <IconEpFolder />
             <span>{{ groupName }}</span>
           </div>
           <div class="app-grid">
@@ -44,14 +44,15 @@
             >
               <div class="app-content">
                 <div class="app-icon-wrapper">
-                  <i v-if="app.icon_url && app.icon_url.startsWith('mdi-')" :class="['mdi', app.icon_url, 'mdi-icon']"></i>
+                  <i v-if="isMdiIcon(app.icon_url)" :class="['mdi', app.icon_url, 'mdi-icon']"></i>
                   <img v-else-if="app.icon_url" :src="resolveIconUrl(app.icon_url)" :alt="app.title" class="app-icon-img">
-                  <el-icon v-else :size="32" color="#409eff"><Monitor /></el-icon>
+                  <IconEpMonitor v-else class="app-default-icon" />
                 </div>
                 <div class="app-info">
                   <h3 class="app-title">{{ app.title }}</h3>
                   <div class="app-tags">
                      <el-tag v-if="app.is_auto" size="small" type="danger" effect="plain">Auto</el-tag>
+                     <el-tag v-if="app.ai_generated" size="small" type="success" effect="plain">AI</el-tag>
                      <el-tag v-if="app.is_deleted" size="small" type="danger" effect="plain">Deleted</el-tag>
                   </div>
                 </div>
@@ -60,15 +61,15 @@
               <div class="app-actions-overlay">
                 <el-button-group v-if="!app.is_deleted">
                   <el-button size="small" type="primary" circle @click.stop="handleEdit(app)">
-                    <el-icon><Edit /></el-icon>
+                    <IconEpEdit />
                   </el-button>
                   <el-button size="small" type="danger" circle @click.stop="handleDelete(app)">
-                    <el-icon><Delete /></el-icon>
+                    <IconEpDelete />
                   </el-button>
                 </el-button-group>
                 <el-button-group v-else>
                   <el-button size="small" type="success" @click.stop="handleRestore(app)">
-                    <el-icon><RefreshLeft /></el-icon> 恢复
+                    <IconEpRefreshLeft class="el-icon--left" /> 恢复
                   </el-button>
                 </el-button-group>
               </div>
@@ -141,7 +142,7 @@
            >
              <el-button size="small">上传图片</el-button>
              <template #tip>
-               <div class="el-upload__tip">支持mdi-icon/URL/本地文件</div>
+               <div class="el-upload__tip">支持 mdi-icon / URL / 本地文件（png/jpg/jpeg/webp/gif/svg/ico/avif/bmp/tif）</div>
              </template>
            </el-upload>
         </el-form-item>
@@ -170,7 +171,7 @@
       <div class="category-manager">
         <div class="category-actions" style="margin-bottom: 15px;">
            <el-button type="primary" @click="handleAddCategory" size="small">
-             <el-icon><Plus /></el-icon> 新增分类
+             <IconEpPlus class="el-icon--left" /> 新增分类
            </el-button>
         </div>
         <el-table :data="categoryOptions.map(c => ({ name: c }))" style="width: 100%" max-height="400" border>
@@ -179,10 +180,10 @@
              <template #default="scope">
                <el-button-group>
                 <el-button size="small" :disabled="scope.row.name === '默认'" @click="handleRenameCategory(scope.row.name)">
-                  <el-icon><Edit /></el-icon>
+                  <IconEpEdit />
                 </el-button>
                 <el-button size="small" type="danger" :disabled="scope.row.name === '默认'" @click="handleDeleteCategory(scope.row.name)">
-                  <el-icon><Delete /></el-icon>
+                  <IconEpDelete />
                 </el-button>
                </el-button-group>
              </template>
@@ -201,7 +202,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Folder, Monitor, Edit, Delete, RefreshLeft, Operation } from '@element-plus/icons-vue'
 import api from '../api'
 
 const apps = ref([])
@@ -233,11 +233,16 @@ const getServerBase = () => {
   return base
 }
 
+const isMdiIcon = (iconUrl) => {
+  return typeof iconUrl === 'string' && iconUrl.startsWith('mdi-')
+}
+
 const resolveIconUrl = (u) => {
   if (!u) return ''
   if (u.startsWith('clay:')) {
     const name = u.slice(5).trim()
     if (!name) return ''
+    if (name.includes('.')) return `/icons/clay/${name}`
     return `/icons/clay/${name}.png`
   }
   if (u.startsWith('/icons/clay/')) return u
@@ -563,7 +568,13 @@ const handleRebuild = async () => {
   try {
     await ElMessageBox.confirm('将清空导航数据库并按当前容器重新生成，确定继续？', '提示', { type: 'warning' })
     await api.system.navigationRebuild()
-    ElMessage.success('导航已重新识别')
+    const aiResult = await api.ai.enrichNavigation({ force: true, limit: 50 })
+    const attempted = aiResult?.attempted ?? aiResult?.data?.attempted ?? 0
+    if (attempted > 0) {
+      ElMessage.success(`导航已重新识别，AI 已触发 ${attempted} 项`)
+    } else {
+      ElMessage.success('导航已重新识别，AI 未匹配到可处理项')
+    }
     fetchApps()
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('重新识别失败')
@@ -583,26 +594,8 @@ const handleRebuild = async () => {
   gap: 12px;
 }
 
-.filter-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 16px;
-}
-
-.filter-left, .filter-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.content-wrapper {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+/* Filter Bar - Extracted to layout.css */
+/* Content Wrapper - Extracted to layout.css */
 
 .scroll-content {
   flex: 1;
@@ -623,7 +616,7 @@ const handleRebuild = async () => {
   color: var(--clay-ink);
   margin-bottom: 15px;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
+  border-bottom: 1px solid var(--clay-border);
 }
 
 .app-grid {
@@ -645,7 +638,7 @@ const handleRebuild = async () => {
 .app-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-clay-float), var(--shadow-clay-inner);
-  border-color: rgba(55, 65, 81, 0.14);
+  border-color: var(--clay-border);
 }
 
 .app-content {
@@ -659,15 +652,13 @@ const handleRebuild = async () => {
   width: 48px;
   height: 48px;
   border-radius: 18px;
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.28) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(147, 197, 253, 0.36), rgba(255, 133, 179, 0.26));
+  background: var(--icon-bg-app);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   box-shadow: var(--shadow-clay-inner);
-  border: 1px solid rgba(55, 65, 81, 0.08);
+  border: 1px solid var(--clay-border);
 }
 
 .app-icon-img {
@@ -678,6 +669,11 @@ const handleRebuild = async () => {
 }
 
 .mdi-icon {
+  font-size: 28px;
+  color: var(--el-color-primary);
+}
+
+.app-default-icon {
   font-size: 28px;
   color: var(--el-color-primary);
 }

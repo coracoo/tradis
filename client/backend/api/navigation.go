@@ -25,6 +25,7 @@ type NavigationItem struct {
 	IconPath    string    `json:"icon_path,omitempty"`
 	Category    string    `json:"category"`
 	IsAuto      bool      `json:"is_auto"`
+	AiGenerated bool      `json:"ai_generated"`
 	IsDeleted   bool      `json:"is_deleted"`
 	ContainerID string    `json:"container_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -72,7 +73,7 @@ func listNavigationItems(c *gin.Context) {
 	db := database.GetDB()
 
 	includeDeleted := c.Query("include_deleted") == "true"
-	query := "SELECT id, title, url, lan_url, wan_url, icon, icon_path, category, is_auto, is_deleted, container_id, created_at, updated_at FROM navigation_items"
+	query := "SELECT id, title, url, lan_url, wan_url, icon, icon_path, category, is_auto, ai_generated, is_deleted, container_id, created_at, updated_at FROM navigation_items"
 	if !includeDeleted {
 		query += " WHERE is_deleted = 0"
 	}
@@ -80,7 +81,7 @@ func listNavigationItems(c *gin.Context) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取导航项失败", err)
 		return
 	}
 	defer rows.Close()
@@ -89,14 +90,15 @@ func listNavigationItems(c *gin.Context) {
 	for rows.Next() {
 		var item NavigationItem
 		var isAuto int
+		var aiGenerated int
 		var isDeleted int
 		// 处理可能为 NULL 的字段
 		var url, lanUrl, wanUrl sql.NullString
 		var icon, iconPath sql.NullString
 		var containerID sql.NullString
 
-		if err := rows.Scan(&item.ID, &item.Title, &url, &lanUrl, &wanUrl, &icon, &iconPath, &item.Category, &isAuto, &isDeleted, &containerID, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err := rows.Scan(&item.ID, &item.Title, &url, &lanUrl, &wanUrl, &icon, &iconPath, &item.Category, &isAuto, &aiGenerated, &isDeleted, &containerID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			respondError(c, http.StatusInternalServerError, "读取导航项失败", err)
 			return
 		}
 		item.URL = url.String
@@ -106,6 +108,7 @@ func listNavigationItems(c *gin.Context) {
 		item.IconPath = iconPath.String
 		item.ContainerID = containerID.String
 		item.IsAuto = isAuto == 1
+		item.AiGenerated = aiGenerated == 1
 		item.IsDeleted = isDeleted == 1
 		items = append(items, item)
 	}
@@ -122,7 +125,7 @@ func listNavigationItems(c *gin.Context) {
 func createNavigationItem(c *gin.Context) {
 	var req CreateNavigationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
@@ -132,7 +135,7 @@ func createNavigationItem(c *gin.Context) {
 		req.Title, req.URL, req.LanUrl, req.WanUrl, req.IconUrl, req.Category,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建导航项失败", err)
 		return
 	}
 
@@ -141,14 +144,15 @@ func createNavigationItem(c *gin.Context) {
 	// Fetch the created item
 	var item NavigationItem
 	var isAuto int
+	var aiGenerated int
 	var isDeleted int
 	var url, lanUrl, wanUrl sql.NullString
 	var icon, iconPath sql.NullString
 	var containerID sql.NullString
-	err = db.QueryRow("SELECT id, title, url, lan_url, wan_url, icon, icon_path, category, is_auto, is_deleted, container_id, created_at, updated_at FROM navigation_items WHERE id = ?", id).
-		Scan(&item.ID, &item.Title, &url, &lanUrl, &wanUrl, &icon, &iconPath, &item.Category, &isAuto, &isDeleted, &containerID, &item.CreatedAt, &item.UpdatedAt)
+	err = db.QueryRow("SELECT id, title, url, lan_url, wan_url, icon, icon_path, category, is_auto, ai_generated, is_deleted, container_id, created_at, updated_at FROM navigation_items WHERE id = ?", id).
+		Scan(&item.ID, &item.Title, &url, &lanUrl, &wanUrl, &icon, &iconPath, &item.Category, &isAuto, &aiGenerated, &isDeleted, &containerID, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "查询导航项失败", err)
 		return
 	}
 	item.URL = url.String
@@ -158,6 +162,7 @@ func createNavigationItem(c *gin.Context) {
 	item.IconPath = iconPath.String
 	item.ContainerID = containerID.String
 	item.IsAuto = isAuto == 1
+	item.AiGenerated = aiGenerated == 1
 	item.IsDeleted = isDeleted == 1
 
 	c.JSON(http.StatusCreated, item)
@@ -173,7 +178,7 @@ func updateNavigationItem(c *gin.Context) {
 	id := c.Param("id")
 	var req UpdateNavigationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
@@ -185,21 +190,22 @@ func updateNavigationItem(c *gin.Context) {
 		req.Title, req.URL, req.LanUrl, req.WanUrl, req.IconUrl, req.IconPath, req.Category, id,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "更新导航项失败", err)
 		return
 	}
 
 	// Fetch the updated item
 	var item NavigationItem
 	var isAuto int
+	var aiGenerated int
 	var isDeleted int
 	var url, lanUrl, wanUrl sql.NullString
 	var icon, iconPath sql.NullString
 	var containerID sql.NullString
-	err = db.QueryRow("SELECT id, title, url, lan_url, wan_url, icon, icon_path, category, is_auto, is_deleted, container_id, created_at, updated_at FROM navigation_items WHERE id = ?", id).
-		Scan(&item.ID, &item.Title, &url, &lanUrl, &wanUrl, &icon, &iconPath, &item.Category, &isAuto, &isDeleted, &containerID, &item.CreatedAt, &item.UpdatedAt)
+	err = db.QueryRow("SELECT id, title, url, lan_url, wan_url, icon, icon_path, category, is_auto, ai_generated, is_deleted, container_id, created_at, updated_at FROM navigation_items WHERE id = ?", id).
+		Scan(&item.ID, &item.Title, &url, &lanUrl, &wanUrl, &icon, &iconPath, &item.Category, &isAuto, &aiGenerated, &isDeleted, &containerID, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "查询导航项失败", err)
 		return
 	}
 	item.URL = url.String
@@ -209,6 +215,7 @@ func updateNavigationItem(c *gin.Context) {
 	item.IconPath = iconPath.String
 	item.ContainerID = containerID.String
 	item.IsAuto = isAuto == 1
+	item.AiGenerated = aiGenerated == 1
 	item.IsDeleted = isDeleted == 1
 
 	c.JSON(http.StatusOK, item)
@@ -226,13 +233,13 @@ func deleteNavigationItem(c *gin.Context) {
 
 	result, err := db.Exec("UPDATE navigation_items SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除导航项失败", err)
 		return
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "导航项不存在"})
+		respondError(c, http.StatusNotFound, "导航项不存在", nil)
 		return
 	}
 
@@ -251,13 +258,13 @@ func restoreNavigationItem(c *gin.Context) {
 
 	result, err := db.Exec("UPDATE navigation_items SET is_deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "恢复导航项失败", err)
 		return
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "导航项不存在"})
+		respondError(c, http.StatusNotFound, "导航项不存在", nil)
 		return
 	}
 
@@ -270,7 +277,7 @@ func uploadNavigationIcon(c *gin.Context) {
 	id := c.Param("id")
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未接收到上传文件"})
+		respondError(c, http.StatusBadRequest, "未接收到上传文件", err)
 		return
 	}
 
@@ -278,7 +285,7 @@ func uploadNavigationIcon(c *gin.Context) {
 	var title string
 	err = db.QueryRow("SELECT title FROM navigation_items WHERE id = ?", id).Scan(&title)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "导航项不存在"})
+		respondError(c, http.StatusNotFound, "导航项不存在", err)
 		return
 	}
 
@@ -293,7 +300,7 @@ func uploadNavigationIcon(c *gin.Context) {
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	switch ext {
-	case ".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp":
+	case ".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".ico", ".avif", ".bmp", ".tif", ".tiff":
 	default:
 		ext = ".png"
 	}
@@ -301,14 +308,14 @@ func uploadNavigationIcon(c *gin.Context) {
 	// 统一存储到 data/pic 目录
 	picDir := filepath.Join(settings.GetDataDir(), "pic")
 	if err := os.MkdirAll(picDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建图片目录失败"})
+		respondError(c, http.StatusInternalServerError, "创建图片目录失败", err)
 		return
 	}
 
 	filename := slug + ext
 	savePath := filepath.Join(picDir, filename)
 	if err := c.SaveUploadedFile(file, savePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存图标失败"})
+		respondError(c, http.StatusInternalServerError, "保存图标失败", err)
 		return
 	}
 
@@ -316,7 +323,7 @@ func uploadNavigationIcon(c *gin.Context) {
 	publicPath := filepath.ToSlash(filepath.Join("/data/pic", filename))
 	relativePath := filepath.ToSlash(filepath.Join("pic", filename))
 	if _, err := db.Exec("UPDATE navigation_items SET icon = ?, icon_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", publicPath, relativePath, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新导航项图标失败"})
+		respondError(c, http.StatusInternalServerError, "更新导航项图标失败", err)
 		return
 	}
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -83,10 +84,21 @@ func adminIPAllowlistMiddleware(allow []*net.IPNet) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		c.AbortWithStatusJSON(403, gin.H{
-			"error": "该接口仅允许指定 IP 访问",
-			"ip":    ipStr,
-		})
+		handlers.RespondError(c, http.StatusForbidden, "该接口仅允许指定 IP 访问", fmt.Errorf("ip=%s", ipStr))
+		c.Abort()
+	}
+}
+
+func ipAllowlistMiddleware(store *handlers.IPAllowlist) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ipStr := strings.TrimSpace(c.ClientIP())
+		ip := net.ParseIP(ipStr)
+		if store != nil && store.AllowsIP(ip) {
+			c.Next()
+			return
+		}
+		handlers.RespondError(c, http.StatusForbidden, "该接口仅允许指定 IP 访问", fmt.Errorf("ip=%s", ipStr))
+		c.Abort()
 	}
 }
 
@@ -139,7 +151,8 @@ func rateLimitByIP(l *ipFixedWindowLimiter) gin.HandlerFunc {
 			ip = "unknown"
 		}
 		if !l.Allow(ip) {
-			c.AbortWithStatusJSON(429, gin.H{"error": "请求过于频繁，请稍后重试"})
+			handlers.RespondError(c, http.StatusTooManyRequests, "请求过于频繁，请稍后重试", nil)
+			c.Abort()
 			return
 		}
 		c.Next()
@@ -611,15 +624,46 @@ func main() {
 
 	r.Static("/uploads", "./data/uploads")
 
-	allowlistRaw := strings.TrimSpace(os.Getenv("ADMIN_ALLOWLIST"))
-	if allowlistRaw == "" {
-		allowlistRaw = "127.0.0.1,::1"
+	adminAllowlistEnv := strings.TrimSpace(os.Getenv("ADMIN_ALLOWLIST"))
+	if adminAllowlistEnv == "" {
+		adminAllowlistEnv = "127.0.0.1,::1"
 	}
-	allowlist, notes := parseIPAllowlist(allowlistRaw)
+	adminAllowlist, notes := handlers.NewIPAllowlist(adminAllowlistEnv)
 	for _, n := range notes {
 		log.Printf("[IP Allowlist] %s", n)
 	}
-	log.Printf("[IP Allowlist] 写接口允许来源: %s", allowlistRaw)
+	if v, ok, err := handlers.GetKV(db, handlers.KVAdminAllowlist); err == nil && ok && strings.TrimSpace(v) != "" {
+		for _, n := range adminAllowlist.Set(v) {
+			log.Printf("[IP Allowlist] %s", n)
+		}
+	} else if err != nil {
+		log.Printf("[IP Allowlist] 读取数据库配置失败: %v", err)
+	}
+	log.Printf("[IP Allowlist] 写接口允许来源: %s", adminAllowlist.Raw())
+
+	mcpAllowlistEnv := strings.TrimSpace(os.Getenv("MCP_ALLOWLIST"))
+	if mcpAllowlistEnv == "" {
+		mcpAllowlistEnv = adminAllowlistEnv
+	}
+	mcpAllowlist, mcpNotes := handlers.NewIPAllowlist(mcpAllowlistEnv)
+	for _, n := range mcpNotes {
+		log.Printf("[MCP Allowlist] %s", n)
+	}
+	if v, ok, err := handlers.GetKV(db, handlers.KVMCPAllowlist); err == nil && ok && strings.TrimSpace(v) != "" {
+		for _, n := range mcpAllowlist.Set(v) {
+			log.Printf("[MCP Allowlist] %s", n)
+		}
+	} else if err != nil {
+		log.Printf("[MCP Allowlist] 读取数据库配置失败: %v", err)
+	}
+	log.Printf("[MCP Allowlist] 当前允许来源: %s", mcpAllowlist.Raw())
+
+	mcpToken := strings.TrimSpace(os.Getenv("MCP_TOKEN"))
+	if v, ok, err := handlers.GetKV(db, handlers.KVMCPToken); err == nil && ok && strings.TrimSpace(v) != "" {
+		mcpToken = strings.TrimSpace(v)
+	} else if err != nil {
+		log.Printf("[MCP Token] 读取数据库配置失败: %v", err)
+	}
 
 	api := r.Group("/api")
 	templatesLimiter := newIPFixedWindowLimiter(240, time.Minute)
@@ -627,19 +671,50 @@ func main() {
 	api.GET("/templates", rateLimitByIP(templatesLimiter), cacheGETJSON(templatesCache, 5*time.Second), handlers.ListTemplates(db))
 	api.GET("/templates/:id", rateLimitByIP(templatesLimiter), cacheGETJSON(templatesCache, 5*time.Second), handlers.GetTemplate(db))
 	api.POST("/templates/:id/deploy", handlers.IncrementTemplateDeploymentCount(db))
+	api.GET("/templates/:id/vars", rateLimitByIP(templatesLimiter), cacheGETJSON(templatesCache, 5*time.Second), handlers.GetTemplateVars(db))
 	api.POST("/applications", handlers.CreateApplicationRequest(db))
 	api.GET("/version", handlers.GetServerVersion(db))
 
 	admin := api.Group("")
-	admin.Use(adminIPAllowlistMiddleware(allowlist))
+	admin.Use(ipAllowlistMiddleware(adminAllowlist))
 	admin.POST("/templates", handlers.CreateTemplate(db))
 	admin.PUT("/templates/:id", handlers.UpdateTemplate(db))
+	admin.POST("/templates/parse-vars", handlers.ParseTemplateVars())
 	admin.POST("/templates/:id/enable", handlers.EnableTemplate(db))
 	admin.POST("/templates/:id/disable", handlers.DisableTemplate(db))
 	admin.DELETE("/templates/:id", handlers.DeleteTemplate(db))
 	admin.POST("/templates/sync", handlers.SyncTemplatesToGithubHandler(db))
 	admin.POST("/upload", handlers.UploadFile)
 	admin.PUT("/version", handlers.UpdateServerVersion(db))
+
+	admin.GET("/admin/allowlist", handlers.GetAllowlistHandler(db, handlers.KVAdminAllowlist, adminAllowlist, adminAllowlistEnv))
+	admin.PUT("/admin/allowlist", handlers.UpdateAllowlistHandler(db, handlers.KVAdminAllowlist, adminAllowlist))
+	admin.GET("/admin/mcp-allowlist", handlers.GetAllowlistHandler(db, handlers.KVMCPAllowlist, mcpAllowlist, mcpAllowlistEnv))
+	admin.PUT("/admin/mcp-allowlist", handlers.UpdateAllowlistHandler(db, handlers.KVMCPAllowlist, mcpAllowlist))
+	admin.GET("/admin/mcp-token", handlers.GetMCPTokenHandler(db))
+	admin.PUT("/admin/mcp-token", handlers.UpdateMCPTokenHandler(db, func(next string) { mcpToken = strings.TrimSpace(next) }))
+
+	mcp := api.Group("/mcp")
+	mcp.Use(ipAllowlistMiddleware(mcpAllowlist))
+	mcp.Use(func(c *gin.Context) {
+		token := strings.TrimSpace(mcpToken)
+		if token == "" {
+			c.Next()
+			return
+		}
+		got := strings.TrimSpace(c.GetHeader("X-MCP-Token"))
+		if got == token {
+			c.Next()
+			return
+		}
+		handlers.RespondError(c, http.StatusForbidden, "MCP token 无效", fmt.Errorf("ip=%s", strings.TrimSpace(c.ClientIP())))
+		c.Abort()
+	})
+	mcp.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 10<<20)
+		c.Next()
+	})
+	mcp.POST("/templates/import", handlers.ImportTemplatesMCP(db))
 
 	port := os.Getenv("PORT")
 	if port == "" {

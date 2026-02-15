@@ -16,8 +16,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -43,19 +45,19 @@ func getAppStoreServerURL() string {
 
 // 应用结构
 type App struct {
-	ID          uint       `json:"id"` // ID 从 string 改为 uint，以匹配 gorm.Model
-	Name        string     `json:"name"`
-	Category    string     `json:"category"`
-	Description string     `json:"description"`
-	Version     string     `json:"version"`
-	Logo        string     `json:"logo"`
-	Website     string     `json:"website"`
-	Tutorial    string     `json:"tutorial"`
-	Dotenv      string     `json:"dotenv"`
-	Compose     string     `json:"compose"` // Compose 从 map 改为 string
-	Screenshots []string   `json:"screenshots"`
-	Schema      []Variable `json:"schema"`
-	DeploymentCount int    `json:"deployment_count"`
+	ID              uint       `json:"id"` // ID 从 string 改为 uint，以匹配 gorm.Model
+	Name            string     `json:"name"`
+	Category        string     `json:"category"`
+	Description     string     `json:"description"`
+	Version         string     `json:"version"`
+	Logo            string     `json:"logo"`
+	Website         string     `json:"website"`
+	Tutorial        string     `json:"tutorial"`
+	Dotenv          string     `json:"dotenv"`
+	Compose         string     `json:"compose"` // Compose 从 map 改为 string
+	Screenshots     []string   `json:"screenshots"`
+	Schema          []Variable `json:"schema"`
+	DeploymentCount int        `json:"deployment_count"`
 }
 
 type Variable struct {
@@ -87,6 +89,46 @@ type EnvVar struct {
 	Description string `json:"description"`
 }
 
+type AppVariableInfo struct {
+	Name         string   `json:"name"`
+	Value        string   `json:"value"`
+	DefaultValue string   `json:"defaultValue"`
+	Required     bool     `json:"required"`
+	Sources      []string `json:"sources"`
+	Examples     []string `json:"examples"`
+}
+
+type AppVarsResponse struct {
+	App       *App              `json:"app"`
+	Dotenv    string            `json:"dotenv"`
+	Variables []AppVariableInfo `json:"variables"`
+	Warnings  []string          `json:"warnings"`
+}
+
+type appListCacheState struct {
+	fetchedAt     time.Time
+	apps          []App
+	etag          string
+	lastModified  string
+	lastErrAt     time.Time
+	lastErrDigest string
+}
+
+var appListCacheMu sync.Mutex
+var appListCache appListCacheState
+
+type appDetailCacheEntry struct {
+	fetchedAt     time.Time
+	app           App
+	etag          string
+	lastModified  string
+	lastErrAt     time.Time
+	lastErrDigest string
+}
+
+var appDetailCacheMu sync.Mutex
+var appDetailCache = make(map[string]appDetailCacheEntry)
+
 // mapHostPortsToContainerIDs 根据容器列表构建宿主机端口到容器ID的映射（仅记录 TCP 映射端口）。
 func mapHostPortsToContainerIDs(containers []types.Container) map[int]string {
 	portToContainer := make(map[int]string)
@@ -111,6 +153,7 @@ func RegisterAppStoreRoutes(r *gin.Engine) {
 	{
 		public.GET("/apps", listApps)
 		public.GET("/apps/:id", getApp)
+		public.GET("/apps/:id/vars", getAppVars)
 	}
 
 	// 部署和状态查询需要认证 (与 protected 组一致)
@@ -134,12 +177,12 @@ func RegisterAppStoreProtectedRoutes(r *gin.RouterGroup) {
 func submitDeployCount(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的应用ID"})
+		respondError(c, http.StatusBadRequest, "无效的应用ID", nil)
 		return
 	}
 
 	if err := submitAppStoreDeploymentCount(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交部署次数失败"})
+		respondError(c, http.StatusInternalServerError, "提交部署次数失败", err)
 		return
 	}
 
@@ -176,52 +219,123 @@ func submitAppStoreDeploymentCount(appID string) error {
 
 // 获取应用列表
 func listApps(c *gin.Context) {
+	const ttl = 60 * time.Second
+
 	if err := os.MkdirAll(getAppCacheDir(), 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建缓存目录失败"})
+		respondError(c, http.StatusInternalServerError, "创建缓存目录失败", err)
 		return
 	}
 
-	// 从应用商城服务器获取应用列表
-	url := fmt.Sprintf("%s/api/templates", getAppStoreServerURL())
-	if settings.IsDebugEnabled() {
-		log.Printf("Requesting AppStore URL: %s", settings.RedactAppStoreURL(url))
+	now := time.Now()
+	appListCacheMu.Lock()
+	cachedApps := append([]App(nil), appListCache.apps...)
+	cachedAt := appListCache.fetchedAt
+	etag := appListCache.etag
+	lastModified := appListCache.lastModified
+	appListCacheMu.Unlock()
+
+	if len(cachedApps) > 0 && !cachedAt.IsZero() && now.Sub(cachedAt) < ttl {
+		c.JSON(http.StatusOK, cachedApps)
+		return
 	}
-	resp, err := http.Get(url)
+
+	base := strings.TrimRight(getAppStoreServerURL(), "/")
+	url := fmt.Sprintf("%s/api/templates", base)
+	if settings.IsDebugEnabled() {
+		log.Printf("[appstore] listApps fetch: %s", settings.RedactAppStoreURL(url))
+	}
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		log.Printf("Error connecting to AppStore: %s", settings.RedactAppStoreURL(err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接应用商城服务器失败: " + settings.RedactAppStoreURL(err.Error())})
+		respondError(c, http.StatusInternalServerError, "构造请求失败", err)
+		return
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	if lastModified != "" {
+		req.Header.Set("If-Modified-Since", lastModified)
+	}
+
+	client := &http.Client{Timeout: 6 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		if len(cachedApps) > 0 {
+			appListCacheMu.Lock()
+			if now.Sub(appListCache.lastErrAt) > 60*time.Second || appListCache.lastErrDigest != err.Error() {
+				appListCache.lastErrAt = now
+				appListCache.lastErrDigest = err.Error()
+				if settings.IsDebugEnabled() {
+					log.Printf("[appstore] listApps fetch failed, fallback cache: %s", settings.RedactAppStoreURL(err.Error()))
+				}
+			}
+			appListCacheMu.Unlock()
+			c.JSON(http.StatusOK, cachedApps)
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "连接应用商城服务器失败", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取应用列表失败"})
+	if resp.StatusCode == http.StatusNotModified && len(cachedApps) > 0 {
+		appListCacheMu.Lock()
+		appListCache.fetchedAt = now
+		appListCacheMu.Unlock()
+		c.JSON(http.StatusOK, cachedApps)
 		return
 	}
 
-	// 读取响应
+	if resp.StatusCode != http.StatusOK {
+		if len(cachedApps) > 0 {
+			c.JSON(http.StatusOK, cachedApps)
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "获取应用列表失败", fmt.Errorf("appstore status=%d", resp.StatusCode))
+		return
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取应用列表失败"})
+		if len(cachedApps) > 0 {
+			c.JSON(http.StatusOK, cachedApps)
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "读取应用列表失败", err)
 		return
 	}
 
-	// 解析应用列表
 	var apps []App
 	if err := json.Unmarshal(body, &apps); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "解析应用列表失败"})
+		if len(cachedApps) > 0 {
+			c.JSON(http.StatusOK, cachedApps)
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "解析应用列表失败", err)
 		return
 	}
 
-	// 缓存应用列表
+	newETag := strings.TrimSpace(resp.Header.Get("ETag"))
+	newLastModified := strings.TrimSpace(resp.Header.Get("Last-Modified"))
+
+	appListCacheMu.Lock()
+	appListCache.apps = append([]App(nil), apps...)
+	appListCache.fetchedAt = now
+	if newETag != "" {
+		appListCache.etag = newETag
+	}
+	if newLastModified != "" {
+		appListCache.lastModified = newLastModified
+	}
+	appListCacheMu.Unlock()
+
 	for _, app := range apps {
 		appData, err := json.Marshal(app)
 		if err != nil {
 			continue
 		}
-		// 使用应用名称作为文件名
 		appPath := filepath.Join(getAppCacheDir(), fmt.Sprintf("%s.json", app.Name))
-		os.WriteFile(appPath, appData, 0644)
+		_ = os.WriteFile(appPath, appData, 0644)
 	}
 
 	c.JSON(http.StatusOK, apps)
@@ -233,48 +347,118 @@ func getAppFromCacheOrServer(idOrName string) (*App, error) {
 		log.Printf("[Debug] getAppFromCacheOrServer: idOrName=%s", idOrName)
 	}
 
-	// 1. 尝试从服务器获取 (优先，以获取最新信息和正确的 Name)
-	url := fmt.Sprintf("%s/api/templates/%s", getAppStoreServerURL(), idOrName)
+	key := strings.TrimSpace(idOrName)
+	if key == "" {
+		return nil, fmt.Errorf("无法获取应用详情 (ID/Name: %s)", idOrName)
+	}
+
+	const ttl = 60 * time.Second
+	now := time.Now()
+
+	appDetailCacheMu.Lock()
+	entry, hasEntry := appDetailCache[key]
+	appDetailCacheMu.Unlock()
+
+	if hasEntry && strings.TrimSpace(entry.app.Name) != "" && !entry.fetchedAt.IsZero() && now.Sub(entry.fetchedAt) < ttl {
+		cp := entry.app
+		return &cp, nil
+	}
+
+	// 1. 尝试从服务器获取（支持条件请求与 TTL 缓存）
+	base := strings.TrimRight(getAppStoreServerURL(), "/")
+	url := fmt.Sprintf("%s/api/templates/%s", base, key)
 	if settings.IsDebugEnabled() {
 		log.Printf("[Debug] Requesting Server: %s", settings.RedactAppStoreURL(url))
 	}
-	resp, err := http.Get(url)
 
-	var app App
-
-	if err == nil && resp.StatusCode == http.StatusOK {
-		// 服务器获取成功
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err := json.Unmarshal(body, &app); err == nil {
-			// 更新缓存 (使用 Name)
-			appData, _ := json.Marshal(app)
-			os.MkdirAll(getAppCacheDir(), 0755)
-			appPath := filepath.Join(getAppCacheDir(), fmt.Sprintf("%s.json", app.Name))
-			os.WriteFile(appPath, appData, 0644)
-			return &app, nil
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err == nil && hasEntry {
+		if strings.TrimSpace(entry.etag) != "" {
+			req.Header.Set("If-None-Match", strings.TrimSpace(entry.etag))
 		}
+		if strings.TrimSpace(entry.lastModified) != "" {
+			req.Header.Set("If-Modified-Since", strings.TrimSpace(entry.lastModified))
+		}
+	}
+
+	client := &http.Client{Timeout: 6 * time.Second}
+	resp, err := client.Do(req)
+	if err == nil && resp != nil {
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotModified && hasEntry && strings.TrimSpace(entry.app.Name) != "" {
+			appDetailCacheMu.Lock()
+			next := appDetailCache[key]
+			next.fetchedAt = now
+			appDetailCache[key] = next
+			appDetailCacheMu.Unlock()
+			cp := entry.app
+			return &cp, nil
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			body, rerr := io.ReadAll(resp.Body)
+			if rerr == nil {
+				var app App
+				if uerr := json.Unmarshal(body, &app); uerr == nil && strings.TrimSpace(app.Name) != "" {
+					next := appDetailCacheEntry{
+						fetchedAt: now,
+						app:       app,
+					}
+					if hasEntry {
+						next.etag = entry.etag
+						next.lastModified = entry.lastModified
+					}
+					if v := strings.TrimSpace(resp.Header.Get("ETag")); v != "" {
+						next.etag = v
+					}
+					if v := strings.TrimSpace(resp.Header.Get("Last-Modified")); v != "" {
+						next.lastModified = v
+					}
+
+					appDetailCacheMu.Lock()
+					appDetailCache[key] = next
+					appDetailCache[app.Name] = next
+					appDetailCache[fmt.Sprintf("%v", app.ID)] = next
+					appDetailCacheMu.Unlock()
+
+					if appData, merr := json.Marshal(app); merr == nil {
+						_ = os.MkdirAll(getAppCacheDir(), 0755)
+						appPath := filepath.Join(getAppCacheDir(), fmt.Sprintf("%s.json", app.Name))
+						_ = os.WriteFile(appPath, appData, 0644)
+					}
+
+					return &app, nil
+				}
+			}
+		}
+	}
+
+	if hasEntry && strings.TrimSpace(entry.app.Name) != "" {
+		cp := entry.app
+		return &cp, nil
 	}
 
 	// 2. 如果服务器失败，尝试从缓存查找
 	// 由于 ID 和 Name 映射关系不明确，如果传入的是 ID，我们可能需要遍历缓存
-	files, err := os.ReadDir(getAppCacheDir())
-	if err == nil {
+	var app App
+	_ = os.MkdirAll(getAppCacheDir(), 0755)
+	files, derr := os.ReadDir(getAppCacheDir())
+	if derr == nil {
 		for _, file := range files {
-			// 如果传入的是 Name，直接匹配文件名
-			if file.Name() == idOrName+".json" {
+			if file.Name() == key+".json" {
 				content, _ := os.ReadFile(filepath.Join(getAppCacheDir(), file.Name()))
-				json.Unmarshal(content, &app)
-				return &app, nil
+				_ = json.Unmarshal(content, &app)
+				if strings.TrimSpace(app.Name) != "" {
+					return &app, nil
+				}
 			}
 
-			// 否则读取内容匹配 ID
 			content, err := os.ReadFile(filepath.Join(getAppCacheDir(), file.Name()))
 			if err == nil {
 				var cachedApp App
 				if err := json.Unmarshal(content, &cachedApp); err == nil {
-					// 兼容 string 和 int 类型的 ID 比较
-					if fmt.Sprintf("%v", cachedApp.ID) == idOrName {
+					if fmt.Sprintf("%v", cachedApp.ID) == key && strings.TrimSpace(cachedApp.Name) != "" {
 						return &cachedApp, nil
 					}
 				}
@@ -290,10 +474,169 @@ func getApp(c *gin.Context) {
 	id := c.Param("id")
 	app, err := getAppFromCacheOrServer(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取应用详情失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, app)
+}
+
+func getAppVars(c *gin.Context) {
+	id := c.Param("id")
+	app, err := getAppFromCacheOrServer(id)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "获取应用详情失败", err)
+		return
+	}
+
+	composeText := ""
+	if app != nil {
+		composeText = app.Compose
+	}
+
+	refs := extractComposeVarRefs(composeText)
+	dotenvText := ""
+	if app != nil {
+		dotenvText = app.Dotenv
+	}
+	dotenvMap := parseDotenvToMap(dotenvText)
+
+	schemaDefaults := make(map[string]string)
+	schemaKeySet := make(map[string]struct{})
+	if app != nil {
+		for _, v := range app.Schema {
+			key := strings.TrimSpace(v.Name)
+			if key == "" {
+				continue
+			}
+			if strings.EqualFold(key, "PATH") {
+				continue
+			}
+			if !isSchemaEnvVariable(v) {
+				continue
+			}
+			if _, ok := schemaKeySet[key]; !ok {
+				schemaKeySet[key] = struct{}{}
+				schemaDefaults[key] = strings.TrimSpace(v.Default)
+			}
+		}
+	}
+
+	keySet := make(map[string]struct{})
+	for k := range refs {
+		if strings.EqualFold(k, "PATH") {
+			continue
+		}
+		keySet[k] = struct{}{}
+	}
+	for k := range dotenvMap {
+		if strings.EqualFold(k, "PATH") {
+			continue
+		}
+		keySet[k] = struct{}{}
+	}
+	for k := range schemaKeySet {
+		if strings.EqualFold(k, "PATH") {
+			continue
+		}
+		keySet[k] = struct{}{}
+	}
+
+	variables := make([]AppVariableInfo, 0, len(keySet))
+	warnings := make([]string, 0)
+
+	for k := range keySet {
+		key := strings.TrimSpace(k)
+		if key == "" || !isLikelyEnvKey(key) {
+			continue
+		}
+		if strings.EqualFold(key, "PATH") {
+			continue
+		}
+
+		_, inDotenv := dotenvMap[key]
+		ref, inCompose := refs[key]
+		_, inSchema := schemaKeySet[key]
+
+		refDefault := ""
+		examples := []string(nil)
+		if inCompose {
+			if ref.HasDefault {
+				refDefault = ref.DefaultValue
+			}
+			if len(ref.Examples) > 0 {
+				examples = append([]string(nil), ref.Examples...)
+			}
+		}
+
+		schemaDefault := ""
+		if inSchema {
+			schemaDefault = schemaDefaults[key]
+		}
+
+		dotenvVal := ""
+		if inDotenv {
+			dotenvVal = dotenvMap[key]
+		}
+
+		finalDefault := firstNonEmpty(dotenvVal, schemaDefault, refDefault, "")
+		required := inCompose && !ref.HasDefault && strings.TrimSpace(finalDefault) == ""
+		if required {
+			warnings = append(warnings, fmt.Sprintf("发现未赋值的变量引用：%s", ref.Raw))
+		}
+
+		sources := make([]string, 0, 3)
+		if inCompose {
+			sources = append(sources, "compose")
+		}
+		if inSchema {
+			sources = append(sources, "schema")
+		}
+		if inDotenv {
+			sources = append(sources, "dotenv")
+		}
+
+		variables = append(variables, AppVariableInfo{
+			Name:         key,
+			Value:        finalDefault,
+			DefaultValue: finalDefault,
+			Required:     required,
+			Sources:      sources,
+			Examples:     examples,
+		})
+	}
+
+	sort.SliceStable(variables, func(i, j int) bool {
+		a := variables[i]
+		b := variables[j]
+		if a.Required != b.Required {
+			return a.Required
+		}
+		ai := 0
+		bi := 0
+		for _, s := range a.Sources {
+			if s == "compose" {
+				ai = 1
+				break
+			}
+		}
+		for _, s := range b.Sources {
+			if s == "compose" {
+				bi = 1
+				break
+			}
+		}
+		if ai != bi {
+			return ai > bi
+		}
+		return a.Name < b.Name
+	})
+
+	c.JSON(http.StatusOK, AppVarsResponse{
+		App:       app,
+		Dotenv:    dotenvText,
+		Variables: variables,
+		Warnings:  warnings,
+	})
 }
 
 type DeployRequest struct {
@@ -493,19 +836,155 @@ func parseDotenvToMap(content string) map[string]string {
 	return out
 }
 
-// extractComposeInterpolationKeys 提取 Compose 文本中出现的 ${KEY...} 插值变量名集合
+type composeVarRef struct {
+	HasDefault   bool
+	DefaultValue string
+	Raw          string
+	Examples     []string
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func pushLimitedUnique(list []string, v string, limit int) []string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return list
+	}
+	for _, it := range list {
+		if it == s {
+			return list
+		}
+	}
+	if len(list) >= limit {
+		return list
+	}
+	return append(list, s)
+}
+
+func extractComposeVarRefs(composeContent string) map[string]composeVarRef {
+	const maxComposeScanLen = 2_000_000
+	const maxVars = 500
+
+	s := composeContent
+	if len(s) > maxComposeScanLen {
+		s = s[:maxComposeScanLen]
+	}
+	out := make(map[string]composeVarRef)
+
+	push := func(name string, hasDefault bool, def string, raw string) {
+		key := strings.TrimSpace(name)
+		if key == "" || !isLikelyEnvKey(key) || strings.EqualFold(key, "PATH") {
+			return
+		}
+
+		if _, exists := out[key]; !exists && len(out) >= maxVars {
+			return
+		}
+
+		ref := out[key]
+		if ref.Raw == "" {
+			ref.Raw = raw
+		}
+		if hasDefault && !ref.HasDefault {
+			ref.HasDefault = true
+			ref.DefaultValue = def
+		}
+		if hasDefault && ref.HasDefault && strings.TrimSpace(ref.DefaultValue) == "" && strings.TrimSpace(def) != "" {
+			ref.DefaultValue = def
+		}
+		ref.Examples = pushLimitedUnique(ref.Examples, raw, 3)
+		out[key] = ref
+	}
+
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			continue
+		}
+		if i+1 >= len(s) {
+			continue
+		}
+		next := s[i+1]
+		if next == '$' {
+			i++
+			continue
+		}
+		if next == '{' {
+			end := strings.IndexByte(s[i+2:], '}')
+			if end < 0 {
+				continue
+			}
+			end = i + 2 + end
+
+			inner := s[i+2 : end]
+			raw := s[i : end+1]
+
+			namePart := inner
+			def := ""
+			hasDefault := false
+
+			if idx := strings.Index(inner, ":-"); idx >= 0 {
+				namePart = inner[:idx]
+				def = inner[idx+2:]
+				hasDefault = true
+			} else if idx := strings.IndexByte(inner, '-'); idx >= 0 {
+				namePart = inner[:idx]
+				def = inner[idx+1:]
+				hasDefault = true
+			}
+
+			name := strings.TrimSpace(namePart)
+			push(name, hasDefault, def, raw)
+			i = end
+			continue
+		}
+
+		if (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || next == '_' {
+			j := i + 1
+			for j < len(s) {
+				b := s[j]
+				if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '_' {
+					j++
+					continue
+				}
+				break
+			}
+			name := s[i+1 : j]
+			push(name, false, "", "$"+name)
+			i = j - 1
+			continue
+		}
+	}
+
+	return out
+}
+
+func isSchemaEnvVariable(v Variable) bool {
+	pt := strings.ToLower(strings.TrimSpace(v.ParamType))
+	if pt == "env" || pt == "environment" {
+		return true
+	}
+	if pt != "" {
+		return false
+	}
+	t := strings.ToLower(strings.TrimSpace(v.Type))
+	if t == "port" || t == "path" {
+		return false
+	}
+	return true
+}
+
+// extractComposeInterpolationKeys 提取 Compose 文本中出现的变量名集合
 func extractComposeInterpolationKeys(composeContent string) map[string]struct{} {
-	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)`)
 	out := make(map[string]struct{})
-	for _, m := range re.FindAllStringSubmatch(composeContent, -1) {
-		if len(m) < 2 {
-			continue
-		}
-		key := strings.TrimSpace(m[1])
-		if !isLikelyEnvKey(key) {
-			continue
-		}
-		out[key] = struct{}{}
+	for k := range extractComposeVarRefs(composeContent) {
+		out[k] = struct{}{}
 	}
 	return out
 }
@@ -1071,7 +1550,7 @@ func deployApp(c *gin.Context) {
 
 	var req DeployRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
@@ -1664,7 +2143,7 @@ func taskEvents(c *gin.Context) {
 	t := tm.GetTask(taskId)
 
 	if t == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+		respondError(c, http.StatusNotFound, "任务不存在", nil)
 		return
 	}
 
@@ -1745,14 +2224,13 @@ func getAppStatus(c *gin.Context) {
 	// 获取应用详情以得到正确的项目名称
 	app, err := getAppFromCacheOrServer(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取应用信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取应用信息失败", err)
 		return
 	}
 
 	// 创建Docker客户端
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败"})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -1767,7 +2245,7 @@ func getAppStatus(c *gin.Context) {
 		}),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取容器列表失败"})
+		respondError(c, http.StatusInternalServerError, "获取容器列表失败", err)
 		return
 	}
 

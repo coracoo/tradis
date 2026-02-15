@@ -10,7 +10,7 @@
           size="medium"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
         <el-select v-model="statusFilter" placeholder="状态" clearable class="status-select" size="medium">
@@ -25,22 +25,22 @@
       <div class="filter-right">
         <el-button-group>
           <el-button @click="fetchContainers" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <el-button type="primary" @click="createContainer" size="medium">
-            <template #icon><el-icon><Plus /></el-icon></template>
+            <template #icon><IconEpPlus /></template>
             新建容器
           </el-button>
         </el-button-group>
 
         <el-dropdown trigger="click" @command="handleGlobalCommand">
           <el-button plain class="more-btn" size="medium">
-             更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+             更多<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="prune" :icon="Delete" :disabled="hasSelfContainer">清除未使用容器</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="IconEpDelete" :disabled="hasSelfContainer">清除未使用容器</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -74,7 +74,7 @@
         <template #default="scope">
           <div class="name-cell-wrapper">
             <div class="icon-wrapper">
-              <el-icon><Box /></el-icon>
+              <IconEpBox />
             </div>
             <div class="name-col">
               <el-button 
@@ -85,6 +85,17 @@
               >
                 {{ scope.row.Names?.[0]?.replace(/^\//, '') || '-' }}
               </el-button>
+              <el-tooltip v-if="scope.row.UpdateAvailable" content="发现新版本镜像，点击更新" placement="top">
+                <el-tag 
+                  type="danger" 
+                  effect="dark" 
+                  size="small" 
+                  class="update-badge cursor-pointer ml-1"
+                  @click.stop="handleUpdateContainer(scope.row)"
+                >
+                  <IconEpTop />
+                </el-tag>
+              </el-tooltip>
               <div class="container-short-id font-mono">{{ (scope.row.Id || '').slice(0,12) }}</div>
             </div>
           </div>
@@ -175,12 +186,12 @@
             <el-tag size="small" type="warning" effect="plain">自身</el-tag>
           </div>
           <el-button-group v-else>
-            <el-button size="small" @click="openLogs(scope.row)" title="日志"><el-icon><Document /></el-icon></el-button>
-            <el-button size="small" @click="openTerminal(scope.row)" title="终端"><el-icon><Monitor /></el-icon></el-button>
-            <el-button size="small" @click="openEdit(scope.row)" title="编辑"><el-icon><Edit /></el-icon></el-button>
+            <el-button size="small" @click="openLogs(scope.row)" title="日志"><IconEpDocument /></el-button>
+            <el-button size="small" @click="openTerminal(scope.row)" title="终端"><IconEpMonitor /></el-button>
+            <el-button size="small" @click="openEdit(scope.row)" title="编辑"><IconEpEdit /></el-button>
             <el-dropdown trigger="click">
               <el-button size="small">
-                更多<el-icon class="el-icon--right"><arrow-down /></el-icon>
+                更多<IconEpArrowDown class="el-icon--right" />
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
@@ -229,6 +240,32 @@
       :container="currentContainer"
       @success="fetchContainers"
     />
+
+    <el-dialog
+      v-model="updateDialogVisible"
+      title="容器更新"
+      width="800px"
+      :close-on-click-modal="false"
+      :show-close="true"
+      append-to-body
+      @close="handleCloseUpdateDialog"
+    >
+      <div class="update-logs-body" ref="updateLogsContent">
+        <div v-if="updateLogs.length === 0" class="text-gray-400">
+          正在连接更新服务...
+        </div>
+        <div v-for="(log, index) in updateLogs" :key="index" :class="['mb-1', log.level === 'error' ? 'text-red-400' : 'text-gray-300']">
+          <span class="mr-2 text-gray-500">[{{ dayjs().format('HH:mm:ss') }}]</span>
+          <span>{{ log.content }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="updateDialogVisible = false" :disabled="updateStreamOpen">关闭</el-button>
+          <el-button type="primary" @click="updateDialogVisible = false" v-if="!updateStreamOpen">完成</el-button>
+        </span>
+      </template>
+    </el-dialog>
 	
   </div>
 </template>
@@ -237,7 +274,6 @@
 <script setup>
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Plus, Refresh, VideoPlay, VideoPause, CircleClose, Document, Monitor, Edit, Search, Delete, Box } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { formatTimeTwoLines } from '../utils/format'
 import api from '../api'
@@ -246,6 +282,7 @@ import ContainerLogs from '../components/ContainerLogs.vue'
 import ContainerEdit from '../components/ContainerEdit.vue'
 import { useRouter, useRoute } from 'vue-router'
 import request from '../utils/request'
+import { useSseLogStream, buildSseUrl } from '../shared/sse/logStream'
 
 // 变量定义
 const router = useRouter()
@@ -264,6 +301,36 @@ const terminalDialogVisible = ref(false)
 const logDialogVisible = ref(false)
 const editDialogVisible = ref(false) // 新增编辑弹窗控制
 const logs = ref('')
+const updateDialogVisible = ref(false)
+const updateLogsContent = ref(null)
+const {
+  logs: updateLogs,
+  isOpen: updateStreamOpen,
+  start: startUpdateStream,
+  stop: stopUpdateStream,
+  clear: clearUpdateLogs
+} = useSseLogStream({
+  scrollElRef: updateLogsContent,
+  autoScroll: ref(true)
+})
+
+const handleUpdateContainer = (container) => {
+  if (isSelfContainer(container)) {
+    ElMessage.warning('容器化部署模式下，不支持更新自身容器')
+    return
+  }
+  updateDialogVisible.value = true
+  clearUpdateLogs()
+  nextTick(() => {
+    startUpdateStream(`/api/containers/${container.Id}/update/events`)
+  })
+}
+
+const handleCloseUpdateDialog = () => {
+  stopUpdateStream()
+  fetchContainers()
+}
+
 const batchStart = () => batchAction('start')
 const batchStop = () => batchAction('stop')
 const batchRestart = () => batchAction('restart')
@@ -689,63 +756,28 @@ const getImageTag = (image) => {
     gap: 12px;
   }
 
-/* 顶部操作栏 */
-.filter-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0;
-  background: var(--clay-card);
-  padding: 14px 16px;
-  border-radius: var(--radius-5xl);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-}
+/* 顶部操作栏 - 样式已提取到 layout.css */
+/* .filter-bar, .filter-left, .filter-right, .search-input */
 
 .self-resource-alert {
   margin: 0 0 12px;
   border-radius: 12px;
 }
 
-.filter-left, .filter-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.search-input {
-  width: 300px;
-}
-
 .status-select {
   width: 160px;
 }
 
-/* 表格容器 */
-.table-wrapper {
-  flex: 1;
-  overflow: hidden;
-  background: var(--clay-card);
-  border-radius: var(--radius-5xl);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+/* 表格容器 - 样式已提取到 layout.css */
+/* .table-wrapper */
 
 .containers-table {
   flex: 1;
   min-height: 0; 
 }
 
-/* 分页 */
-.pagination-bar {
-  padding: 16px 24px;
-  border-top: 1px solid rgba(55, 65, 81, 0.12);
-  display: flex;
-  justify-content: flex-end;
-}
+/* 分页 - 样式已提取到 layout.css */
+/* .pagination-bar */
 
 .self-ops {
   display: flex;
@@ -772,25 +804,9 @@ const getImageTag = (image) => {
   gap: 16px;
 }
 
+/* .icon-wrapper - 基础样式已提取到 layout.css */
 .icon-wrapper {
-  width: 48px;
-  height: 48px;
-  border-radius: 18px;
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(134, 191, 255, 0.24), rgba(255, 115, 180, 0.16));
-  color: var(--clay-ink);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  flex-shrink: 0;
-  box-sizing: border-box;
-  padding: 4px;
-  margin: 2px;
-  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
-  border: 1px solid rgba(55, 65, 81, 0.08);
-  transition: transform 0.2s;
+  background: var(--icon-bg-container);
 }
 
 .name-cell-wrapper:hover .icon-wrapper {
@@ -935,11 +951,11 @@ const getImageTag = (image) => {
 }
 
 .resource-line .fill.cpu {
-  background-color: #409EFF; /* CPU 蓝色 */
+  background-color: var(--color-cpu);
 }
 
 .resource-line .fill.ram {
-  background-color: #9F59F0; /* 内存 紫色 */
+  background-color: var(--color-ram);
 }
 
 .resource-line .value {
@@ -999,5 +1015,19 @@ const getImageTag = (image) => {
   padding: 10px 16px;
   display: flex;
   align-items: center;
+}
+
+.update-badge {
+  /* margin-left: 4px; handled by ml-1 class */
+}
+.update-logs-body {
+  background-color: #1a1a1a;
+  color: #e5e7eb;
+  padding: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.875rem;
+  height: 400px;
+  overflow-y: auto;
+  border-radius: 0.25rem;
 }
 </style>

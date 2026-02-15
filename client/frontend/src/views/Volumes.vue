@@ -11,7 +11,7 @@
           @keyup.enter="fetchVolumes"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
       </div>
@@ -19,22 +19,22 @@
       <div class="filter-right">
         <el-button-group class="main-actions">
           <el-button @click="fetchVolumes" :loading="loading" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <el-button type="primary" @click="dialogVisible = true" size="medium">
-            <template #icon><el-icon><Plus /></el-icon></template>
+            <template #icon><IconEpPlus /></template>
             新建卷
           </el-button>
         </el-button-group>
 
         <el-dropdown trigger="click" @command="handleGlobalAction">
           <el-button plain class="more-btn" size="medium">
-            更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="prune" :icon="Delete">清除未使用的存储卷</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="IconEpDelete">清除未使用的存储卷</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -56,7 +56,7 @@
           <template #default="scope">
             <div class="volume-name-cell">
               <div class="icon-wrapper volume">
-                <el-icon><Coin /></el-icon>
+                <IconEpCoin />
               </div>
               <span class="volume-name-text">{{ scope.row.Name }}</span>
             </div>
@@ -105,9 +105,18 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="120" fixed="left" align="center" class-name="col-ops">
+        <el-table-column label="操作" width="160" fixed="left" align="center" class-name="col-ops">
           <template #default="scope">
             <div class="row-ops">
+              <el-tooltip content="浏览文件" placement="top">
+                <el-button
+                  circle
+                  plain
+                  :loading="browsingName === scope.row.Name"
+                  @click="browseVolume(scope.row)">
+                  <IconEpFolderOpened />
+                </el-button>
+              </el-tooltip>
               <el-tooltip content="删除存储卷" placement="top">
                 <el-button 
                   circle 
@@ -115,7 +124,7 @@
                   type="danger" 
                   :disabled="scope.row.InUse"
                   @click="deleteVolume(scope.row)">
-                  <el-icon><Delete /></el-icon>
+                  <IconEpDelete />
                 </el-button>
               </el-tooltip>
             </div>
@@ -163,7 +172,6 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { formatTimeTwoLines } from '../utils/format'
-import { Refresh, Plus, Delete, Search, ArrowDown, Coin } from '@element-plus/icons-vue'
 import request from '../utils/request'
 
 const loading = ref(false)
@@ -178,6 +186,7 @@ const volumeForm = ref({
   name: '',
   driver: 'local'
 })
+const browsingName = ref('')
 
 // 获取存储卷列表
 const fetchVolumes = async () => {
@@ -318,6 +327,30 @@ const pruneVolumes = async () => {
   }
 }
 
+const browseVolume = async (volume) => {
+  if (!volume?.Name) return
+  browsingName.value = volume.Name
+  try {
+    const res = await api.volumes.browseStart(volume.Name)
+    const token = localStorage.getItem('token') || ''
+    const url = res?.url
+    if (!url) {
+      ElMessage.error('打开失败：未返回浏览地址')
+      return
+    }
+    const full = new URL(url, window.location.origin)
+    if (token) full.searchParams.set('token', token)
+    window.open(full.toString(), '_blank', 'noopener')
+    if (res?.readOnly) {
+      ElMessage.info('卷正在使用中，已以只读方式打开')
+    }
+  } catch (error) {
+    ElMessage.error('打开失败：' + (error.response?.data?.error || error.message))
+  } finally {
+    browsingName.value = ''
+  }
+}
+
 // 分页处理
 const handleSizeChange = (val) => {
   pageSize.value = val
@@ -415,9 +448,7 @@ onMounted(async () => {
 }
 
 .icon-wrapper.volume {
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  background: var(--icon-bg-image);
   color: var(--clay-ink);
 }
 
@@ -455,10 +486,8 @@ onMounted(async () => {
 }
 
 .status-point.stopped {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, #cbd5e1, #94a3b8);
+  background: var(--status-idle-bg);
+  box-shadow: var(--status-idle-shadow);
 }
 
 .container-list {

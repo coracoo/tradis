@@ -1,31 +1,36 @@
 <template>
   <div class="detail-view">
-    <div class="header-bar clay-surface">
-      <div class="header-left">
-        <el-button link @click="goBack">
-          <el-icon><Back /></el-icon>
+    <div class="filter-bar clay-surface">
+      <div class="filter-left">
+        <el-button link @click="goBack" class="back-btn">
+          <IconEpBack />
         </el-button>
         <div class="title-block">
           <div class="title">{{ projectName }}</div>
           <div class="path">{{ displayProjectPath }}</div>
         </div>
-        <el-tag v-if="isSelfProject" size="small" type="warning" effect="plain">自身</el-tag>
+        <el-tag v-if="isSelfProject" size="small" type="warning" effect="plain" class="ml-2">自身</el-tag>
       </div>
-      <div class="header-right">
-        <el-button @click="handleRefresh" plain size="medium" class="square-btn">
-          <template #icon><el-icon><Refresh /></el-icon></template>
-        </el-button>
-        <el-button-group>
+      <div class="filter-right">
+        <el-button-group class="main-actions">
+          <el-button @click="handleRefresh" plain size="medium">
+            <template #icon><IconEpRefresh /></template>
+            刷新
+          </el-button>
           <el-button type="primary" :loading="isBuilding" :disabled="isSelfProject" @click="handleBuild" size="medium">
+            <template #icon><IconEpRefreshRight /></template>
             重新构建
           </el-button>
           <el-button type="success" :loading="isStarting" :disabled="isRunning || isSelfProject" @click="handleStart" size="medium">
+            <template #icon><IconEpVideoPlay /></template>
             启动
           </el-button>
           <el-button type="danger" :loading="isStopping" :disabled="!isRunning || isSelfProject" @click="handleStop" size="medium">
+            <template #icon><IconEpVideoPause /></template>
             停止
           </el-button>
           <el-button type="warning" :loading="isRestarting" :disabled="isSelfProject" @click="handleRestart" size="medium">
+            <template #icon><IconEpRefresh /></template>
             重启
           </el-button>
         </el-button-group>
@@ -88,113 +93,104 @@
     </el-dialog>
 
     <div class="content-wrapper clay-surface">
-      <div class="scroll-content">
-        <div class="content-inner">
-          <el-tabs v-model="activeTab" class="detail-tabs" v-loading="isLoading">
-            <el-tab-pane label="YAML配置" name="yaml">
-              <div class="yaml-editor">
-                <div class="editor-header">
-                  <span>Compose 配置（自动识别 *.yml / *.yaml）</span>
-                  <div class="editor-actions">
-                    <el-button type="primary" size="small" :loading="isSaving" @click="handleSaveYaml">
-                      保存
-                    </el-button>
-                  </div>
+      <div class="scroll-container">
+        <el-tabs v-model="activeTab" class="detail-tabs" v-loading="isLoading">
+          <el-tab-pane label="YAML配置" name="yaml">
+            <div class="yaml-editor">
+              <div class="editor-header">
+                <span>Compose 配置（自动识别 *.yml / *.yaml）</span>
+                <div class="editor-actions">
+                  <el-button type="primary" size="small" :loading="isSaving" @click="handleSaveYaml">
+                    保存
+                  </el-button>
                 </div>
-                <el-input
-                  v-model="yamlContent"
-                  type="textarea"
-                  :rows="20"
-                  class="yaml-textarea"
-                  :spellcheck="false"
-                />
               </div>
-            </el-tab-pane>
+              <el-input
+                v-model="yamlContent"
+                type="textarea"
+                :rows="20"
+                class="yaml-textarea"
+                :spellcheck="false"
+              />
+            </div>
+          </el-tab-pane>
 
-            <el-tab-pane label=".env" name="env">
-              <div class="yaml-editor">
-                <div class="editor-header">
-                  <span>.env（仅查看）</span>
-                </div>
-                <el-input
-                  v-model="envContent"
-                  type="textarea"
-                  :rows="20"
-                  class="yaml-textarea"
-                  :spellcheck="false"
-                  readonly
-                />
+          <el-tab-pane label=".env" name="env">
+            <div class="yaml-editor">
+              <div class="editor-header">
+                <span>.env（仅查看）</span>
               </div>
-            </el-tab-pane>
+              <el-input
+                v-model="envContent"
+                type="textarea"
+                :rows="20"
+                class="yaml-textarea"
+                :spellcheck="false"
+                readonly
+              />
+            </div>
+          </el-tab-pane>
 
-            <el-tab-pane label="容器" name="containers">
-              <el-table :data="containerList" style="width: 100%" class="custom-table">
-                <el-table-column type="index" label="序号" width="80" header-align="center" />
-                <el-table-column prop="name" label="名称" width="150" header-align="center" />
-                <el-table-column prop="image" label="镜像" width="150" header-align="center" />
-                <el-table-column prop="status" label="状态" width="100" header-align="center">
-                  <template #default="scope">
-                    <el-tag :type="scope.row.status === 'running' ? 'success' : 'info'">
-                      {{ scope.row.status }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="cpu" label="CPU" min-width="100" header-align="center" />
-                <el-table-column prop="memory" label="内存" min-width="100" header-align="center" />
-                <el-table-column prop="network" label="网络" min-width="120" header-align="center" />
-                <el-table-column label="操作" width="150" fixed="right" header-align="center">
-                  <template #default="scope">
-                    <el-button-group>
-                      <el-button 
-                        size="small" 
-                        type="primary"
-                        @click="handleContainerRestart(scope.row)"
-                        :disabled="isSelfProject"
-                      >
-                        重启
-                      </el-button>
-                      <el-button 
-                        size="small" 
-                        type="danger"
-                        @click="handleContainerStop(scope.row)"
-                        :disabled="isSelfProject"
-                      >
-                        停止
-                      </el-button>
-                    </el-button-group>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </el-tab-pane>
-
-            <el-tab-pane label="日志" name="logs">
-              <div class="logs-container">
-                <div class="logs-header">
-                  <div class="logs-options">
-                    <el-switch
-                      v-model="autoScroll"
-                      active-text="自动滚动"
-                    />
-                    <el-input
-                      v-model="logFilter"
-                      placeholder="检索日志"
-                      style="width: 220px"
+          <el-tab-pane label="容器" name="containers">
+            <el-table :data="containerList" style="width: 100%" class="custom-table">
+              <el-table-column type="index" label="序号" width="80" header-align="center" />
+              <el-table-column prop="name" label="名称" width="150" header-align="center" />
+              <el-table-column prop="image" label="镜像" width="150" header-align="center" />
+              <el-table-column prop="status" label="状态" width="100" header-align="center">
+                <template #default="scope">
+                  <el-tag :type="scope.row.status === 'running' ? 'success' : 'info'">
+                    {{ scope.row.status }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="cpu" label="CPU" min-width="100" header-align="center" />
+              <el-table-column prop="memory" label="内存" min-width="100" header-align="center" />
+              <el-table-column prop="network" label="网络" min-width="120" header-align="center" />
+              <el-table-column label="操作" width="150" fixed="right" header-align="center">
+                <template #default="scope">
+                  <el-button-group>
+                    <el-button
                       size="small"
-                    />
-                  </div>
-                  <el-button @click="handleClearLogs" size="small">清空日志</el-button>
+                      type="primary"
+                      @click="handleContainerRestart(scope.row)"
+                      :disabled="isSelfProject"
+                    >
+                      重启
+                    </el-button>
+                    <el-button
+                      size="small"
+                      type="danger"
+                      @click="handleContainerStop(scope.row)"
+                      :disabled="isSelfProject"
+                    >
+                      停止
+                    </el-button>
+                  </el-button-group>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="日志" name="logs">
+            <div class="logs-container">
+              <div class="logs-header">
+                <div class="logs-options">
+                  <el-switch v-model="autoScroll" active-text="自动滚动" />
+                  <el-input v-model="logFilter" placeholder="检索日志" style="width: 220px" size="small" />
                 </div>
-                <div class="logs-content" ref="logsRef">
-                  <pre
-                    v-for="(log, index) in filteredLogs"
-                    :key="index"
-                    :class="log.level"
-                  ><template v-if="log.service"><span class="service" :style="{ color: log.serviceColor }">{{ log.service }}</span><span class="pipe"> | </span><span class="msg">{{ log.message }}</span></template><template v-else>{{ log.content }}</template></pre>
-                </div>
+                <el-button @click="handleClearLogs" size="small">清空日志</el-button>
               </div>
-            </el-tab-pane>
-          </el-tabs>
-        </div>
+              <div class="logs-content" ref="logsRef">
+                <pre v-for="(log, index) in filteredLogs" :key="index" :class="log.level"
+                  ><template v-if="log.service"
+                    ><span class="service" :style="{ color: log.serviceColor }">{{ log.service }}</span
+                    ><span class="pipe"> | </span><span class="msg">{{ log.message }}</span></template
+                  ><template v-else>{{ log.content }}</template></pre
+                >
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </div>
   </div>
@@ -204,7 +200,6 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Back, CircleClose, Refresh } from '@element-plus/icons-vue'
 import api from '../api'
 import { useSseLogStream } from '../utils/sseLogStream'
 
@@ -262,17 +257,84 @@ const {
 const buildDialogVisible = ref(false)
 const pullLatest = ref(false)
 const startAfterBuild = ref(false)
-const buildLogs = ref([])
+const buildAutoScroll = ref(true)
 const isBuildingLogs = ref(false)
-const buildEventSource = ref(null)
 const buildLogsRef = ref(null)
+const {
+  logs: buildLogs,
+  start: startBuildStream,
+  stop: stopBuildStream,
+  clear: clearBuildLogs,
+  pushLine: pushBuildLine
+} = useSseLogStream({
+  autoScroll: buildAutoScroll,
+  scrollElRef: buildLogsRef,
+  eventNames: ['log'],
+  onOpenLine: '已连接到构建服务...',
+  onErrorLine: '',
+  makeEntry: (payload) => String(payload || ''),
+  onMessage: (event, { payload, pushLine, stop }) => {
+    const line = String(payload || '')
+    if (!line) return
+    pushLine(line)
+    if (line.includes('success: 构建完成')) {
+      isBuildingLogs.value = false
+      ElMessage.success('构建完成')
+      stop()
+      if (startAfterBuild.value) {
+        handleStart()
+      }
+      return
+    }
+    if (line.includes('error:')) {
+      isBuildingLogs.value = false
+      stop()
+    }
+  },
+  onError: ({ pushLine, stop }) => {
+    if (isBuildingLogs.value === false) {
+      stop()
+      return
+    }
+    pushLine('连接错误，正在尝试重连...')
+  }
+})
 
 const actionDialogVisible = ref(false)
 const actionDialogTitle = ref('')
-const actionLogs = ref([])
+const actionAutoScroll = ref(true)
 const isActionRunning = ref(false)
-const actionEventSource = ref(null)
 const actionLogsRef = ref(null)
+const {
+  logs: actionLogs,
+  start: startActionStream,
+  stop: stopActionStream,
+  clear: clearActionLogs
+} = useSseLogStream({
+  autoScroll: actionAutoScroll,
+  scrollElRef: actionLogsRef,
+  eventNames: ['log'],
+  onOpenLine: '',
+  onErrorLine: '',
+  makeEntry: (payload) => String(payload || ''),
+  onMessage: (event, { payload, pushLine, stop }) => {
+    const line = String(payload || '')
+    if (!line) return
+    pushLine(line)
+    if (line.includes('success:') || line.includes('error:')) {
+      stop()
+      isActionRunning.value = false
+      if (line.includes('success:')) {
+        setTimeout(fetchContainers, 500)
+      }
+    }
+  },
+  onError: ({ pushLine, stop }) => {
+    pushLine('error: 连接错误')
+    stop()
+    isActionRunning.value = false
+  }
+})
 const isSelfProject = ref(false)
 
 const notifyHeader = async (type, message) => {
@@ -386,7 +448,7 @@ const handleBuild = () => {
     return
   }
   buildDialogVisible.value = true
-  buildLogs.value = []
+  clearBuildLogs()
   // 不重置 pullLatest，保留用户上次选择
 }
 
@@ -398,56 +460,14 @@ const startBuild = () => {
   if (isBuildingLogs.value) return
   
   isBuildingLogs.value = true
-  buildLogs.value = []
-  buildLogs.value.push("开始构建请求...")
+  clearBuildLogs()
+  pushBuildLine('开始构建请求...')
   
   const token = localStorage.getItem('token')
   const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
   const url = `/api/compose/${projectName.value}/build/events?pull=${pullLatest.value}${tokenParam}`
   
-  if (buildEventSource.value) {
-    buildEventSource.value.close()
-  }
-
-  const es = new EventSource(url)
-  buildEventSource.value = es
-  
-  es.onopen = () => {
-    buildLogs.value.push("已连接到构建服务...")
-  }
-
-  es.addEventListener('log', (event) => {
-    buildLogs.value.push(event.data)
-    scrollToBuildBottom()
-    
-    if (event.data.includes('success: 构建完成')) {
-      isBuildingLogs.value = false
-      ElMessage.success('构建完成')
-      es.close()
-      
-      if (startAfterBuild.value) {
-        handleStart()
-      }
-    } else if (event.data.includes('error:')) {
-      isBuildingLogs.value = false
-      // ElMessage.error('构建出错') // 日志中已有错误信息，不再弹窗
-      es.close()
-    }
-  })
-  
-  es.onerror = (e) => {
-    console.error('SSE Build Error:', e)
-    if (es.readyState === EventSource.CLOSED) {
-        buildLogs.value.push("连接已关闭")
-    } else {
-        buildLogs.value.push("连接错误，正在尝试重连...")
-    }
-    // 通常 error 后需要手动关闭，防止无限重连，除非后端支持断线重连
-    if (es.readyState === EventSource.CLOSED || isBuildingLogs.value === false) {
-       es.close()
-       isBuildingLogs.value = false
-    }
-  }
+  startBuildStream(url, { reset: false })
 }
 
 const backgroundBuildDialog = () => {
@@ -464,28 +484,14 @@ const handleCloseBuildDialog = (done) => {
   if (isBuildingLogs.value) {
     ElMessageBox.confirm('构建正在进行中，关闭窗口不会停止后台构建，确定关闭吗？')
       .then(() => {
-        if (buildEventSource.value) {
-          buildEventSource.value.close()
-          buildEventSource.value = null
-        }
+        stopBuildStream()
         isBuildingLogs.value = false
         done()
       })
       .catch(() => {})
   } else {
-    if (buildEventSource.value) {
-      buildEventSource.value.close()
-      buildEventSource.value = null
-    }
+    stopBuildStream()
     done()
-  }
-}
-
-const scrollToBuildBottom = () => {
-  if (buildLogsRef.value) {
-    nextTick(() => {
-      buildLogsRef.value.scrollTop = buildLogsRef.value.scrollHeight
-    })
   }
 }
 
@@ -501,18 +507,8 @@ const handleRestart = async () => {
   await runProjectAction('restart')
 }
 
-const scrollToActionBottom = () => {
-  if (!actionLogsRef.value) return
-  nextTick(() => {
-    actionLogsRef.value.scrollTop = actionLogsRef.value.scrollHeight
-  })
-}
-
 const closeActionEventSource = () => {
-  if (actionEventSource.value) {
-    try { actionEventSource.value.close() } catch {}
-    actionEventSource.value = null
-  }
+  stopActionStream()
   isActionRunning.value = false
 }
 
@@ -584,13 +580,8 @@ const runProjectAction = async (action) => {
   const titleMap = { start: '项目启动', stop: '项目停止', restart: '项目重启' }
   actionDialogTitle.value = titleMap[action] || '项目操作'
   actionDialogVisible.value = true
-  actionLogs.value = []
+  clearActionLogs()
   isActionRunning.value = true
-
-  if (actionEventSource.value) {
-    try { actionEventSource.value.close() } catch {}
-    actionEventSource.value = null
-  }
 
   if (action === 'start') isStarting.value = true
   if (action === 'stop') isStopping.value = true
@@ -598,25 +589,7 @@ const runProjectAction = async (action) => {
 
   const token = localStorage.getItem('token') || ''
   const url = `/api/compose/${projectName.value}/${action}/events?token=${encodeURIComponent(token)}`
-  const es = new EventSource(url)
-  actionEventSource.value = es
-
-  es.addEventListener('log', (event) => {
-    actionLogs.value.push(event.data)
-    scrollToActionBottom()
-    if (String(event.data || '').includes('success:')) {
-      closeActionEventSource()
-      setTimeout(fetchContainers, 500)
-    }
-    if (String(event.data || '').includes('error:')) {
-      closeActionEventSource()
-    }
-  })
-
-  es.onerror = () => {
-    actionLogs.value.push('error: 连接错误')
-    closeActionEventSource()
-  }
+  startActionStream(url, { reset: false })
 
   const finalize = () => {
     if (action === 'start') isStarting.value = false
@@ -754,32 +727,13 @@ const handleClearLogs = () => {
   clearLogs()
 }
 
-// 添加自动滚动相关代码
-const scrollToBottom = () => {
-  if (logsRef.value) {
-    nextTick(() => {
-      logsRef.value.scrollTop = logsRef.value.scrollHeight
-    })
-  }
-}
-
-// 监听日志变化
-watch(logs, () => {
-  if (autoScroll.value) {
-    scrollToBottom()
-  }
-})
-
 onUnmounted(() => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
   }
   stopLogsStream()
-  if (buildEventSource.value) {
-    try { buildEventSource.value.close() } catch {}
-    buildEventSource.value = null
-  }
+  stopBuildStream()
   closeActionEventSource()
   clearLogs()
   containerList.value = []
@@ -799,23 +753,16 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.header-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  flex-shrink: 0;
-}
-
 .self-resource-alert {
   margin: 0 0 12px;
-  border-radius: 18px;
+  border-radius: 12px;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.scroll-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
 }
 
 .title-block {
@@ -834,42 +781,6 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.2;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.square-btn {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border-radius: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-clay-btn);
-}
-
-.content-wrapper {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.scroll-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-}
-
-.content-inner {
-  max-width: 1200px;
-  margin: 0 auto;
 }
 
 /* 覆盖 el-tabs 样式 */
@@ -899,10 +810,10 @@ onUnmounted(() => {
 }
 
 .yaml-editor {
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--clay-border);
   border-radius: 18px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--clay-card);
   box-shadow: var(--shadow-clay-inner);
 }
 
@@ -911,8 +822,8 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 10px 16px;
-  background-color: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  background-color: var(--port-header-bg);
+  border-bottom: 1px solid var(--clay-border);
   font-weight: 500;
   color: var(--el-text-color-secondary);
 }
@@ -925,7 +836,7 @@ onUnmounted(() => {
   border: none;
   border-radius: 0;
   padding: 16px;
-  background-color: var(--el-bg-color);
+  background-color: transparent;
   font-size: 14px;
   line-height: 1.6;
   color: var(--el-text-color-primary);
@@ -935,10 +846,10 @@ onUnmounted(() => {
   height: 600px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--el-border-color-lighter);
+  border: var(--log-border);
   border-radius: 18px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--log-bg);
   box-shadow: var(--shadow-clay-inner);
 }
 
@@ -947,8 +858,8 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--port-header-bg);
+  border-bottom: var(--log-border);
 }
 
 .logs-options {
@@ -960,8 +871,8 @@ onUnmounted(() => {
 .logs-content {
   flex: 1;
   overflow-y: auto;
-  background: var(--el-bg-color-overlay);
-  color: var(--el-text-color-primary);
+  background: var(--log-bg);
+  color: var(--log-text);
   padding: 16px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
@@ -979,23 +890,25 @@ onUnmounted(() => {
 }
 
 .logs-content .pipe {
-  color: var(--el-text-color-secondary);
+  color: var(--log-text);
+  opacity: 0.6;
 }
 
 .logs-content .error {
-  color: var(--el-color-danger);
+  color: var(--log-error);
 }
 
 .logs-content .success {
-  color: var(--el-color-success);
+  color: var(--log-info);
 }
 
 .logs-content .warning {
-  color: var(--el-color-warning);
+  color: var(--log-warning);
 }
 
 .logs-content .info {
-  color: var(--el-text-color-secondary);
+  color: var(--log-text);
+  opacity: 0.8;
 }
 
 .build-options {
@@ -1007,11 +920,11 @@ onUnmounted(() => {
 .build-logs {
   height: 400px;
   overflow-y: auto;
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--el-text-color-primary);
+  background: var(--log-bg);
+  color: var(--log-text);
   padding: 16px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  border: 1px solid var(--el-border-color-lighter);
+  border: var(--log-border);
   border-radius: 18px;
   font-size: 13px;
   line-height: 1.5;
@@ -1023,4 +936,5 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+
 </style>

@@ -8,6 +8,9 @@
             <el-button type="info" plain :icon="Setting" @click="openVersionDialog">
               版本号维护
             </el-button>
+            <el-button type="info" plain @click="openSecurityDialog">
+              安全设置
+            </el-button>
             <el-button type="primary" plain :icon="Upload" :loading="syncing" @click="handleSyncToGithub">
               同步到Github
             </el-button>
@@ -96,6 +99,41 @@
         <el-button type="primary" :loading="versionSaving" :disabled="versionLoading" @click="saveServerVersion">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      title="安全设置"
+      v-model="securityDialogVisible"
+      width="720px"
+      destroy-on-close
+    >
+      <el-form label-width="160px" v-loading="securityLoading">
+        <el-form-item label="模板写接口白名单">
+          <el-input
+            v-model="adminAllowlistInput"
+            type="textarea"
+            :rows="4"
+            placeholder="支持 IP 或 CIDR，逗号或换行分隔，例如：127.0.0.1,::1,192.168.0.0/16"
+            :disabled="securitySaving"
+          />
+        </el-form-item>
+        <el-form-item label="MCP 白名单">
+          <el-input
+            v-model="mcpAllowlistInput"
+            type="textarea"
+            :rows="4"
+            placeholder="支持 IP 或 CIDR，逗号或换行分隔，例如：127.0.0.1,::1,192.168.0.0/16"
+            :disabled="securitySaving"
+          />
+        </el-form-item>
+        <el-form-item label="MCP Token（可选）">
+          <el-input v-model="mcpTokenInput" placeholder="留空表示仅按 IP 白名单校验" :disabled="securitySaving" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="securityDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="securitySaving" :disabled="securityLoading" @click="saveSecuritySettings">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -105,6 +143,7 @@ import TemplateForm from '../components/TemplateForm.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete, Picture, Upload, Setting } from '@element-plus/icons-vue'
 import { templateApi, versionApi } from '../api/template'
+import { adminApi } from '../api/admin'
 
 const templates = ref([])
 const dialogVisible = ref(false)
@@ -116,6 +155,12 @@ const versionDialogVisible = ref(false)
 const versionLoading = ref(false)
 const versionSaving = ref(false)
 const serverVersionInput = ref('')
+const securityDialogVisible = ref(false)
+const securityLoading = ref(false)
+const securitySaving = ref(false)
+const adminAllowlistInput = ref('')
+const mcpAllowlistInput = ref('')
+const mcpTokenInput = ref('')
 
 const getCategoryLabel = (val) => {
   const map = {
@@ -163,7 +208,7 @@ const fetchServerVersion = async () => {
     const data = res?.data || {}
     serverVersionInput.value = data.server_version || ''
   } catch (error) {
-    const detail = error?.response?.data?.error || error?.message
+    const detail = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error?.message
     ElMessage.error(detail ? `读取版本号失败：${detail}` : '读取版本号失败')
   } finally {
     versionLoading.value = false
@@ -173,6 +218,48 @@ const fetchServerVersion = async () => {
 const openVersionDialog = async () => {
   versionDialogVisible.value = true
   await fetchServerVersion()
+}
+
+const fetchSecuritySettings = async () => {
+  if (securityLoading.value) return
+  securityLoading.value = true
+  try {
+    const [adminRes, mcpRes, tokenRes] = await Promise.all([
+      adminApi.getAdminAllowlist(),
+      adminApi.getMcpAllowlist(),
+      adminApi.getMcpToken()
+    ])
+    adminAllowlistInput.value = String(adminRes?.data?.raw || '')
+    mcpAllowlistInput.value = String(mcpRes?.data?.raw || '')
+    mcpTokenInput.value = String(tokenRes?.data?.token || '')
+  } catch (error) {
+    const detail = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error?.message
+    ElMessage.error(detail ? `读取安全设置失败：${detail}` : '读取安全设置失败')
+  } finally {
+    securityLoading.value = false
+  }
+}
+
+const openSecurityDialog = async () => {
+  securityDialogVisible.value = true
+  await fetchSecuritySettings()
+}
+
+const saveSecuritySettings = async () => {
+  if (securitySaving.value) return
+  securitySaving.value = true
+  try {
+    await adminApi.updateAdminAllowlist(String(adminAllowlistInput.value || ''))
+    await adminApi.updateMcpAllowlist(String(mcpAllowlistInput.value || ''))
+    await adminApi.updateMcpToken(String(mcpTokenInput.value || ''))
+    ElMessage.success('安全设置已保存')
+    securityDialogVisible.value = false
+  } catch (error) {
+    const detail = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error?.message
+    ElMessage.error(detail ? `保存失败：${detail}` : '保存失败')
+  } finally {
+    securitySaving.value = false
+  }
 }
 
 const saveServerVersion = async () => {
@@ -188,7 +275,7 @@ const saveServerVersion = async () => {
     ElMessage.success('版本号已保存')
     versionDialogVisible.value = false
   } catch (error) {
-    const detail = error?.response?.data?.error || error?.message
+    const detail = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error?.message
     ElMessage.error(detail ? `保存失败：${detail}` : '保存失败')
   } finally {
     versionSaving.value = false
@@ -279,7 +366,7 @@ const handleSyncToGithub = async () => {
 
     ElMessage.success(msgParts.length ? msgParts.join('，') : '同步完成')
   } catch (error) {
-    const detail = error?.response?.data?.detail || error?.response?.data?.error || error?.message
+    const detail = error?.response?.data?.message || error?.response?.data?.details || error?.response?.data?.error || error?.message
     ElMessage.error(detail ? `同步失败：${detail}` : '同步失败')
   } finally {
     syncing.value = false

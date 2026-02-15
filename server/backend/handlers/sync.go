@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,7 +74,7 @@ func SyncTemplatesToGithubHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		res, err := syncTemplatesToGitSync(db, true)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "同步失败", "detail": err.Error()})
+			respondError(c, http.StatusInternalServerError, "同步失败", err)
 			return
 		}
 		c.JSON(200, gin.H{

@@ -20,7 +20,7 @@
             size="default"
           >
             <template #prefix>
-              <el-icon><Search /></el-icon>
+              <IconEpSearch />
             </template>
           </el-input>
         </div>
@@ -43,8 +43,7 @@
 <script setup>
 import { ref, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
-import { useSseLogStream } from '../utils/sseLogStream'
+import { useSseLogStream, buildSseUrl, getLogClass } from '../utils/sseLogStream'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -62,18 +61,10 @@ const {
   filteredLogs,
   start: startStream,
   stop: stopStream,
-  clear: clearLogs,
-  pushLine
+  clear: clearLogs
 } = useSseLogStream({
   autoScroll,
   scrollElRef: logContainer
-})
-
-const getLogClass = (log) => ({
-  'error': log.level === 'error',
-  'warning': log.level === 'warning',
-  'info': log.level === 'info',
-  'success': log.level === 'success'
 })
 
 watch(() => props.modelValue, (newVal) => {
@@ -92,9 +83,7 @@ watch(() => visible.value, (newVal) => {
 
 const startLogsStream = () => {
   if (!props.container?.Id) return
-
-  const token = localStorage.getItem('token') || ''
-  const url = `/api/containers/${props.container.Id}/logs/events?tail=200&token=${encodeURIComponent(token)}`
+  const url = buildSseUrl(`/api/containers/${props.container.Id}/logs/events`, { tail: 200 })
   try {
     startStream(url, { reset: true })
   } catch (e) {

@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar">
     <div class="logo">
-      <el-icon :size="24" class="mr-2"><Box /></el-icon>
+      <IconMdiDocker class="logo-icon mr-2" />
       <span class="font-bold text-lg">TRADIS</span>
     </div>
     <el-menu 
@@ -12,15 +12,13 @@
       <div class="menu-group-title">总览</div>
       <el-menu-item index="/overview">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/overview')" :src="getSidebarIcon('/overview')" class="menu-icon-img" alt="仪表盘" />
-          <el-icon v-else><Monitor /></el-icon>
+          <IconEpOdometer />
         </span>
         <span>仪表盘</span>
       </el-menu-item>
       <el-menu-item index="/navigation">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/navigation')" :src="getSidebarIcon('/navigation')" class="menu-icon-img" alt="导航页" />
-          <el-icon v-else><Operation /></el-icon>
+          <IconEpOperation />
         </span>
         <span>导航页</span>
       </el-menu-item>
@@ -28,29 +26,25 @@
       <div class="menu-group-title">容器管理</div>
       <el-menu-item index="/app-store">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/app-store')" :src="getSidebarIcon('/app-store')" class="menu-icon-img" alt="应用商店" />
-          <el-icon v-else><Shop /></el-icon>
+          <IconEpShop />
         </span>
         <span>应用商店</span>
       </el-menu-item>
       <el-menu-item index="/projects" v-if="isDS">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/projects')" :src="getSidebarIcon('/projects')" class="menu-icon-img" alt="项目" />
-          <el-icon v-else><Folder /></el-icon>
+          <IconEpFolder />
         </span>
         <span>项目</span>
       </el-menu-item>
       <el-menu-item index="/containers" v-if="isDS">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/containers')" :src="getSidebarIcon('/containers')" class="menu-icon-img" alt="容器" />
-          <el-icon v-else><Box /></el-icon>
+          <IconEpBox />
         </span>
         <span>容器</span>
       </el-menu-item>
       <el-menu-item index="/compose" v-if="isCS">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/compose')" :src="getSidebarIcon('/compose')" class="menu-icon-img" alt="Compose" />
-          <el-icon v-else><Folder /></el-icon>
+          <IconEpFolder />
         </span>
         <span>Compose</span>
       </el-menu-item>
@@ -58,29 +52,25 @@
       <div class="menu-group-title">资源管理</div>
       <el-menu-item index="/images">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/images')" :src="getSidebarIcon('/images')" class="menu-icon-img" alt="镜像" />
-          <el-icon v-else><Picture /></el-icon>
+          <IconEpPicture />
         </span>
         <span>镜像</span>
       </el-menu-item>
       <el-menu-item index="/volumes">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/volumes')" :src="getSidebarIcon('/volumes')" class="menu-icon-img" alt="数据卷" />
-          <el-icon v-else><Files /></el-icon>
+          <IconEpFiles />
         </span>
         <span>数据卷</span>
       </el-menu-item>
       <el-menu-item index="/networks">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/networks')" :src="getSidebarIcon('/networks')" class="menu-icon-img" alt="网络" />
-          <el-icon v-else><Connection /></el-icon>
+          <IconMdiLan />
         </span>
         <span>网络</span>
       </el-menu-item>
       <el-menu-item index="/ports">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/ports')" :src="getSidebarIcon('/ports')" class="menu-icon-img" alt="端口" />
-          <el-icon v-else><Connection /></el-icon>
+          <IconMdiLan />
         </span>
         <span>端口</span>
       </el-menu-item>
@@ -88,8 +78,7 @@
       <div class="menu-group-title">系统</div>
       <el-menu-item index="/settings">
         <span class="menu-icon-slot">
-          <img v-if="getSidebarIcon('/settings')" :src="getSidebarIcon('/settings')" class="menu-icon-img" alt="设置" />
-          <el-icon v-else><Setting /></el-icon>
+          <IconEpSetting />
         </span>
         <span>设置</span>
       </el-menu-item>
@@ -110,7 +99,7 @@
         <div class="version-line">
           <span class="version-label">服务端</span>
           <span class="version-value">{{ serverVersionText }}</span>
-          <el-tag v-if="hasNewVersion" size="small" type="warning" effect="dark" class="update-tag">有新版</el-tag>
+          <el-tag v-if="showNewVersion" size="small" type="warning" effect="dark" class="update-tag">有新版</el-tag>
         </div>
       </div>
     </div>
@@ -145,7 +134,15 @@ const hasNewVersion = ref(false)
 
 const localVersionText = computed(() => {
   const v = String(localVersion.value || '').trim()
-  return v ? v : '—'
+  if (!v) return '—'
+  return v.startsWith('v') ? v : `v${v}`
+})
+
+const showNewVersion = computed(() => {
+  const local = String(localVersion.value || '').trim()
+  const server = String(serverVersion.value || '').trim()
+  if (!local || !server) return false
+  return hasNewVersion.value
 })
 
 const serverVersionText = computed(() => {
@@ -173,25 +170,6 @@ const loadVersionStatusFromDB = async () => {
   } catch (e) {}
 }
 
-const iconMode = ref((localStorage.getItem('ui_icon_mode') || 'clay').toLowerCase())
-const useClayIcons = computed(() => iconMode.value !== 'element')
-const clayIconByRoute = {
-  '/app-store': '/icons/clay/appstore.jpg',
-  '/compose': '/icons/clay/compose.jpg',
-  '/networks': '/icons/clay/network.jpg',
-  '/volumes': '/icons/clay/volume.jpg',
-  '/settings': '/icons/clay/settings.jpg',
-  '/images': '/icons/clay/registry.jpg',
-  '/containers': '/icons/clay/compose.jpg',
-  '/overview': '/icons/clay/overview.jpg',
-  '/navigation': '/icons/clay/navigation.jpg',
-  '/ports': '/icons/clay/port.jpg'
-}
-
-const getSidebarIcon = (path) => {
-  if (!useClayIcons.value) return ''
-  return clayIconByRoute[path] || ''
-}
 
 const pingAppStore = async () => {
   try {
@@ -207,19 +185,10 @@ const pingAppStore = async () => {
 }
 
 onMounted(() => {
-  const onStorage = (e) => {
-    if (e && e.key === 'ui_icon_mode') {
-      iconMode.value = (localStorage.getItem('ui_icon_mode') || 'clay').toLowerCase()
-    }
-  }
-  window.addEventListener('storage', onStorage)
   pingAppStore()
   loadVersionStatusFromDB()
   pingTimer = setInterval(pingAppStore, 15000)
   versionTimer = setInterval(loadVersionStatusFromDB, 60000)
-  onUnmounted(() => {
-    window.removeEventListener('storage', onStorage)
-  })
 })
 
 onUnmounted(() => {
@@ -300,20 +269,19 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.menu-icon-img {
+.menu-icon-slot :deep(svg) {
   width: 20px;
   height: 20px;
-  object-fit: contain;
   filter: drop-shadow(2px 4px 10px rgba(0, 0, 0, 0.12));
   transition: transform 0.15s ease, filter 0.15s ease;
 }
 
-:deep(.el-menu-item:hover) .menu-icon-img {
+:deep(.el-menu-item:hover) .menu-icon-slot :deep(svg) {
   transform: translateY(-1px);
   filter: drop-shadow(2px 5px 14px rgba(0, 0, 0, 0.14)) saturate(1.05);
 }
 
-:deep(.el-menu-item.is-active) .menu-icon-img {
+:deep(.el-menu-item.is-active) .menu-icon-slot :deep(svg) {
   filter: drop-shadow(2px 6px 16px rgba(0, 0, 0, 0.18)) saturate(1.06);
 }
 

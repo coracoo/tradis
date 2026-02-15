@@ -12,7 +12,7 @@
           <el-input 
             v-model="loginForm.username" 
             placeholder="用户名" 
-            :prefix-icon="User" 
+            :prefix-icon="IconEpUser" 
             size="large"
           />
         </el-form-item>
@@ -21,7 +21,7 @@
             v-model="loginForm.password" 
             type="password" 
             placeholder="密码" 
-            :prefix-icon="Lock" 
+            :prefix-icon="IconEpLock" 
             show-password 
             size="large"
           />
@@ -40,8 +40,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
-import request from '../utils/request' // 修改为导入 axios 实例或者直接使用 index.js 导出的 api 对象
+import api from '../api'
 
 const router = useRouter()
 const route = useRoute()
@@ -65,12 +64,7 @@ const handleLogin = async () => {
     if (valid) {
       loading.value = true
       try {
-        // 直接使用 axios 实例进行请求，或者使用 api 对象中定义的方法（如果定义了 auth.login）
-        // 由于 api/index.js 默认导出的对象中没有 auth 模块，且也没有直接暴露 axios 实例的方法（如 .post）
-        // 所以这里应该导入 utils/request.js 或者直接在 api/index.js 中添加 auth 模块
-        
-        // 方案 1：使用 utils/request.js (如果它是一个 axios 实例)
-        const res = await request.post('/auth/login', loginForm)
+        const res = await api.auth.login(loginForm)
         
         // 兼容不同返回结构
         const token = res.token || res.data?.token
@@ -86,7 +80,6 @@ const handleLogin = async () => {
              ElMessage.error('登录失败: 未获取到 token')
         }
       } catch (error) {
-        // 错误处理通常在 request 拦截器中统一处理，这里可额外处理
         console.error(error)
       } finally {
         loading.value = false
@@ -131,11 +124,11 @@ const handleLogin = async () => {
 
 .login-button {
   width: 100%;
-  border-radius: 8px;
+  border-radius: var(--el-border-radius-base);
   font-weight: 600;
 }
 
 :deep(.el-input__wrapper) {
-  border-radius: 18px;
+  border-radius: var(--el-border-radius-base);
 }
 </style>

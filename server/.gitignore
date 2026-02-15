@@ -17,10 +17,13 @@ frontend/.env.*
 !frontend/.env.example
 !frontend/.env.sample
 !frontend/.env.template
+frontend/.env.local
+frontend/.env.*.local
 frontend/.vite
 frontend/coverage
 frontend/*.tsbuildinfo
 frontend/.pnpm-store
+frontend/.cache
 
 # Backend
 backend/*.db

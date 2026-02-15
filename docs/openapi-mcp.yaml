@@ -1,0 +1,132 @@
+openapi: 3.0.3
+info:
+  title: Trädis Templates MCP
+  version: 0.1.0
+servers:
+  - url: http://localhost:3002/api
+paths:
+  /admin/allowlist:
+    get:
+      summary: Get admin allowlist
+      responses:
+        '200':
+          description: OK
+    put:
+      summary: Update admin allowlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                raw:
+                  type: string
+              required: [raw]
+      responses:
+        '200':
+          description: OK
+  /admin/mcp-allowlist:
+    get:
+      summary: Get MCP allowlist
+      responses:
+        '200':
+          description: OK
+    put:
+      summary: Update MCP allowlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                raw:
+                  type: string
+              required: [raw]
+      responses:
+        '200':
+          description: OK
+  /admin/mcp-token:
+    get:
+      summary: Get MCP token
+      responses:
+        '200':
+          description: OK
+    put:
+      summary: Update MCP token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required: [token]
+      responses:
+        '200':
+          description: OK
+  /mcp/templates/import:
+    post:
+      summary: Import templates (batch)
+      parameters:
+        - in: header
+          name: X-MCP-Token
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [upsert_by_name, create_only]
+                dryRun:
+                  type: boolean
+                templates:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      category: { type: string }
+                      description: { type: string }
+                      version: { type: string }
+                      website: { type: string }
+                      logo: { type: string }
+                      tutorial: { type: string }
+                      dotenv: { type: string }
+                      dotenv_json:
+                        type: object
+                        additionalProperties: { type: string }
+                      compose: { type: string }
+                      screenshots:
+                        type: array
+                        items: { type: string }
+                      enabled: { type: boolean }
+                      schema:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name: { type: string }
+                            label: { type: string }
+                            description: { type: string }
+                            type: { type: string }
+                            default: { type: string }
+                            category: { type: string }
+                            serviceName: { type: string }
+                            paramType: { type: string }
+                    required: [name, compose]
+              required: [templates]
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Validation error

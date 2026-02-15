@@ -1,0 +1,17 @@
+{
+  "note": "2026-02-11 14:35:31，更新项目1个",
+  "templates_note": "累计项目1个",
+  "generated_at": "2026-02-11T14:35:31+08:00",
+  "templates": [
+    {
+      "id": 1,
+      "name": "nginx",
+      "category": "",
+      "description": "",
+      "version": "",
+      "logo": "",
+      "website": "",
+      "file": "templates/nginx.json"
+    }
+  ]
+}

@@ -190,7 +190,14 @@ const extractVarRefs = (text) => {
       continue
     }
 
-    continue
+    if (next && /[A-Za-z_]/.test(next)) {
+      let j = i + 1
+      while (j < s.length && /[A-Za-z0-9_]/.test(s[j])) j += 1
+      const name = s.slice(i + 1, j)
+      push(name, false, '', `$${name}`)
+      i = j - 1
+      continue
+    }
   }
 
   return out
@@ -365,6 +372,7 @@ export const parseComposeTemplateVariables = (composeContent) => {
 
   const refs = extractVarRefs(content)
   for (const r of refs) {
+    if (String(r?.name || '').toUpperCase() === 'PATH') continue
     const item = makeSchemaItem({
       name: r.name,
       serviceName: 'Global',

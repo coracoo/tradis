@@ -3,7 +3,6 @@ package api
 import (
 	"bufio"
 	"context"
-	"dockerpanel/backend/pkg/docker"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,9 +30,8 @@ func getContainerLogs(c *gin.Context) {
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -41,7 +39,7 @@ func getContainerLogs(c *gin.Context) {
 	// 先检查容器是否存在，并获取 TTY 配置
 	inspect, err := cli.ContainerInspect(context.Background(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "容器不存在"})
+		respondError(c, http.StatusNotFound, "容器不存在", err)
 		return
 	}
 
@@ -55,7 +53,7 @@ func getContainerLogs(c *gin.Context) {
 
 	logs, err := cli.ContainerLogs(context.Background(), id, options)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取容器日志失败", err)
 		return
 	}
 	defer logs.Close()
@@ -87,16 +85,15 @@ func getContainerLogsEvents(c *gin.Context) {
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	inspect, err := cli.ContainerInspect(ctx, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "容器不存在"})
+		respondError(c, http.StatusNotFound, "容器不存在", err)
 		return
 	}
 
@@ -115,7 +112,7 @@ func getContainerLogsEvents(c *gin.Context) {
 
 	logs, err := cli.ContainerLogs(ctx, id, options)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取容器日志失败", err)
 		return
 	}
 	defer logs.Close()

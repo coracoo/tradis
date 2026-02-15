@@ -1,9 +1,9 @@
 package api
 
 import (
-	"encoding/json"
 	"dockerpanel/backend/pkg/settings"
 	"dockerpanel/backend/pkg/system"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -28,20 +28,32 @@ func RegisterSettingsRoutes(r *gin.RouterGroup) {
 func getGlobalSettings(c *gin.Context) {
 	s, err := settings.GetSettings()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get settings"})
+		respondError(c, http.StatusInternalServerError, "Failed to get settings", err)
 		return
 	}
 	c.JSON(http.StatusOK, s)
 }
 
 type UpdateSettingsRequest struct {
-	LanUrl                     string `json:"lanUrl"`
-	WanUrl                     string `json:"wanUrl"`
-	AppStoreServerUrl          string `json:"appStoreServerUrl"`
-	AllocPortStart             int    `json:"allocPortStart"`
-	AllocPortEnd               int    `json:"allocPortEnd"`
-	AllowAutoAllocPort         bool   `json:"allowAutoAllocPort"`
-	ImageUpdateIntervalMinutes int    `json:"imageUpdateIntervalMinutes"`
+	LanUrl                      string   `json:"lanUrl"`
+	WanUrl                      string   `json:"wanUrl"`
+	AppStoreServerUrl           string   `json:"appStoreServerUrl"`
+	AllocPortStart              int      `json:"allocPortStart"`
+	AllocPortEnd                int      `json:"allocPortEnd"`
+	AllowAutoAllocPort          bool     `json:"allowAutoAllocPort"`
+	ImageUpdateIntervalMinutes  int      `json:"imageUpdateIntervalMinutes"`
+	AiEnabled                   *bool    `json:"aiEnabled"`
+	AiBaseUrl                   *string  `json:"aiBaseUrl"`
+	AiApiKey                    *string  `json:"aiApiKey"`
+	AiModel                     *string  `json:"aiModel"`
+	AiTemperature               *float64 `json:"aiTemperature"`
+	AiPrompt                    *string  `json:"aiPrompt"`
+	VolumeBackupEnabled         *bool    `json:"volumeBackupEnabled"`
+	VolumeBackupImage           *string  `json:"volumeBackupImage"`
+	VolumeBackupEnv             *string  `json:"volumeBackupEnv"`
+	VolumeBackupVolumes         []string `json:"volumeBackupVolumes"`
+	VolumeBackupArchiveDir      *string  `json:"volumeBackupArchiveDir"`
+	VolumeBackupMountDockerSock *bool    `json:"volumeBackupMountDockerSock"`
 }
 
 func updateGlobalSettings(c *gin.Context) {
@@ -51,36 +63,88 @@ func updateGlobalSettings(c *gin.Context) {
 	var req UpdateSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Printf("Error binding JSON: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "Invalid request", err)
+		return
+	}
+
+	current, err := settings.GetSettings()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "Failed to get settings", err)
 		return
 	}
 	if settings.IsDebugEnabled() {
 		log.Printf(
-			"Bound request: allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d appStoreServerUrl=%s",
+			"Bound request: allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d appStoreServerUrl=%s aiEnabled=%v aiBaseUrl=%v aiModel=%v aiTemperature=%v",
 			req.AllocPortStart,
 			req.AllocPortEnd,
 			req.AllowAutoAllocPort,
 			req.ImageUpdateIntervalMinutes,
 			settings.RedactAppStoreURL(req.AppStoreServerUrl),
+			req.AiEnabled,
+			req.AiBaseUrl,
+			req.AiModel,
+			req.AiTemperature,
 		)
 	}
 
-	err := settings.UpdateSettings(settings.Settings{
-		LanUrl:                     req.LanUrl,
-		WanUrl:                     req.WanUrl,
-		AppStoreServerUrl:          req.AppStoreServerUrl,
-		AllocPortStart:             req.AllocPortStart,
-		AllocPortEnd:               req.AllocPortEnd,
-		AllowAutoAllocPort:         req.AllowAutoAllocPort,
-		ImageUpdateIntervalMinutes: req.ImageUpdateIntervalMinutes,
-	})
+	merged := current
+	merged.LanUrl = req.LanUrl
+	merged.WanUrl = req.WanUrl
+	merged.AppStoreServerUrl = req.AppStoreServerUrl
+	merged.AllocPortStart = req.AllocPortStart
+	merged.AllocPortEnd = req.AllocPortEnd
+	merged.AllowAutoAllocPort = req.AllowAutoAllocPort
+	merged.ImageUpdateIntervalMinutes = req.ImageUpdateIntervalMinutes
+	if req.AiEnabled != nil {
+		merged.AiEnabled = *req.AiEnabled
+	}
+	if req.AiBaseUrl != nil {
+		merged.AiBaseUrl = strings.TrimSpace(*req.AiBaseUrl)
+	}
+	if req.AiModel != nil {
+		merged.AiModel = strings.TrimSpace(*req.AiModel)
+	}
+	if req.AiTemperature != nil {
+		merged.AiTemperature = *req.AiTemperature
+	}
+	if req.AiPrompt != nil {
+		merged.AiPrompt = *req.AiPrompt
+	}
+	if req.VolumeBackupEnabled != nil {
+		merged.VolumeBackupEnabled = *req.VolumeBackupEnabled
+	}
+	if req.VolumeBackupImage != nil {
+		merged.VolumeBackupImage = strings.TrimSpace(*req.VolumeBackupImage)
+	}
+	if req.VolumeBackupEnv != nil {
+		merged.VolumeBackupEnv = *req.VolumeBackupEnv
+	}
+	if req.VolumeBackupVolumes != nil {
+		merged.VolumeBackupVolumes = req.VolumeBackupVolumes
+	}
+	if req.VolumeBackupArchiveDir != nil {
+		merged.VolumeBackupArchiveDir = strings.TrimSpace(*req.VolumeBackupArchiveDir)
+	}
+	if req.VolumeBackupMountDockerSock != nil {
+		merged.VolumeBackupMountDockerSock = *req.VolumeBackupMountDockerSock
+	}
+
+	err = settings.UpdateSettings(merged)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "Failed to update settings", err)
 		return
+	}
+
+	if req.AiApiKey != nil {
+		if err := settings.SetValue("ai_api_key", strings.TrimSpace(*req.AiApiKey)); err != nil {
+			respondError(c, http.StatusInternalServerError, "Failed to update AI api key", err)
+			return
+		}
 	}
 
 	// 触发容器自动发现以更新导航项的 URL
 	go system.ProcessContainerDiscovery()
+	go system.EnsureVolumeBackupContainer(merged)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Settings updated successfully"})
 }
@@ -89,7 +153,7 @@ func getKVSetting(c *gin.Context) {
 	key := c.Param("key")
 	val, err := settings.GetValue(key)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get value"})
+		respondError(c, http.StatusInternalServerError, "Failed to get value", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"key": key, "value": val})
@@ -103,21 +167,21 @@ func setKVSetting(c *gin.Context) {
 	key := c.Param("key")
 	var req kvRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "Invalid request", err)
 		return
 	}
 	if err := settings.SetValue(key, req.Value); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set value"})
+		respondError(c, http.StatusInternalServerError, "Failed to set value", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 const (
-	kvClientVersionKey     = "client_version"
-	kvAppStoreVersionKey   = "appstore_server_version"
-	kvHasNewVersionKey     = "appstore_has_new_version"
-	kvVersionCheckedAtKey  = "appstore_version_checked_at"
+	kvClientVersionKey    = "client_version"
+	kvAppStoreVersionKey  = "appstore_server_version"
+	kvHasNewVersionKey    = "appstore_has_new_version"
+	kvVersionCheckedAtKey = "appstore_version_checked_at"
 )
 
 func InitClientVersionFromEnv() {

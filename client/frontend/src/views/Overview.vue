@@ -9,7 +9,7 @@
             <div class="stat-title">{{ stat.title }}</div>
           </div>
           <div class="stat-icon-wrapper">
-            <el-icon class="stat-icon"><component :is="stat.icon" /></el-icon>
+            <component :is="stat.iconComp" class="stat-icon" />
           </div>
         </div>
       </div>
@@ -20,10 +20,10 @@
         <div class="resources-grid">
             <div v-for="(res, key) in resources" :key="key" class="resource-card">
             <div class="resource-header">
-              <div class="resource-info">
-                <img class="resource-icon-img" :src="res.icon" :alt="res.name" />
-                <span class="resource-name">{{ res.name }}</span>
-              </div>
+            <div class="resource-info">
+              <component :is="res.iconComp" class="resource-icon-img" />
+              <span class="resource-name">{{ res.name }}</span>
+            </div>
               <span class="resource-percent" :class="getUsageColorText(res.percent)">{{ res.percent }}%</span>
             </div>
             <div class="progress-bar-bg">
@@ -44,14 +44,16 @@
           <div class="logs-list">
             <div v-for="log in displayedLogs" :key="log.id" class="log-item">
               <div class="log-status">
-                <el-icon :class="['status-icon', getEventClass(log.type)]" :size="20">
-                  <component :is="getEventIcon(log.type)" />
-                </el-icon>
+                <component
+                  :is="getEventIcon(log.typeClass || log.type)"
+                  :class="['status-icon', getEventClass(log.typeClass || log.type)]"
+                  style="font-size: 20px;"
+                />
               </div>
               <div class="log-content">
                 <div class="log-header">
-                  <span :class="['log-type-tag', getEventClass(log.type)]">
-                    {{ getEventLabel(log.type) }}
+                  <span :class="['log-type-tag', getEventClass(log.typeClass || log.type)]">
+                    {{ getEventLabel(log.typeClass || log.type) }}
                   </span>
                   <span class="log-time">{{ log.time }}</span>
                 </div>
@@ -76,50 +78,46 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import {
-  Monitor,
-  Cpu,
-  Connection,
-  Files,
-  Collection,
-  InfoFilled,
-  WarningFilled,
-  CircleCheckFilled,
-  CircleCloseFilled,
-  Refresh,
-  Platform,
-  Odometer,
-  Histogram,
-  Box
-} from '@element-plus/icons-vue'
 import api from '../api'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { formatBytes } from '../utils/format'
+import IconEpMonitor from '~icons/ep/monitor'
+import IconEpCircleCheckFilled from '~icons/ep/circle-check-filled'
+import IconEpCircleCloseFilled from '~icons/ep/circle-close-filled'
+import IconEpFiles from '~icons/ep/files'
+import IconEpCollection from '~icons/ep/collection'
+import IconEpConnection from '~icons/ep/connection'
+import IconMdiCpu64Bit from '~icons/mdi/cpu-64-bit'
+import IconMdiMemory from '~icons/mdi/memory'
+import IconMdiHarddisk from '~icons/mdi/harddisk'
+import IconEpWarningFilled from '~icons/ep/warning-filled'
+import IconEpInfoFilled from '~icons/ep/info-filled'
 
 const managementMode = (import.meta.env.VITE_MANAGEMENT_MODE || 'CS').toUpperCase()
 
 const statistics = ref([
-  { title: '容器总数', value: 0, icon: 'Monitor', type: 'stat-primary', key: 'containers' },
-  { title: '运行中', value: 0, icon: 'CircleCheckFilled', type: 'stat-success', key: 'running' },
-  { title: '已停止', value: 0, icon: 'CircleCloseFilled', type: 'stat-danger', key: 'stopped' },
-  { title: '镜像总数', value: 0, icon: 'Files', type: 'stat-warning', key: 'images' },
-  { title: '卷总数', value: 0, icon: 'Collection', type: 'stat-primary', key: 'volumes' },
-  { title: '网络总数', value: 0, icon: 'Connection', type: 'stat-primary', key: 'networks' }
+  { title: '容器总数', value: 0, iconComp: IconEpMonitor, type: 'stat-primary', key: 'containers' },
+  { title: '运行中', value: 0, iconComp: IconEpCircleCheckFilled, type: 'stat-success', key: 'running' },
+  { title: '已停止', value: 0, iconComp: IconEpCircleCloseFilled, type: 'stat-danger', key: 'stopped' },
+  { title: '镜像总数', value: 0, iconComp: IconEpFiles, type: 'stat-warning', key: 'images' },
+  { title: '卷总数', value: 0, iconComp: IconEpCollection, type: 'stat-primary', key: 'volumes' },
+  { title: '网络总数', value: 0, iconComp: IconEpConnection, type: 'stat-primary', key: 'networks' }
 ])
 const router = useRouter()
 
 // 资源使用数据
 const resources = ref({
-  cpu: { name: 'CPU', icon: '/icons/clay/cpu.jpg', percent: 0, used: '—', total: '—' },
-  memory: { name: '内存', icon: '/icons/clay/memory.jpg', percent: 0, used: '—', total: '—' },
-  disk: { name: '磁盘', icon: '/icons/clay/storage.jpg', percent: 0, used: '—', total: '—' }
+  cpu: { name: 'CPU', iconComp: IconMdiCpu64Bit, percent: 0, used: '—', total: '—' },
+  memory: { name: '内存', iconComp: IconMdiMemory, percent: 0, used: '—', total: '—' },
+  disk: { name: '磁盘', iconComp: IconMdiHarddisk, percent: 0, used: '—', total: '—' }
 })
 
 // 系统事件日志（预览）
 const eventLogs = ref([
-  { id: 1, type: 'INFO', typeClass: 'status-info', time: '12:01:32', message: '系统启动完成' },
-  { id: 2, type: 'WARN', typeClass: 'status-warn', time: '12:15:10', message: '镜像拉取速度较慢' },
-  { id: 3, type: 'ERROR', typeClass: 'status-error', time: '12:20:03', message: '容器 nginx 重启失败' }
+  { id: 1, type: 'INFO', typeClass: 'info', time: '12:01:32', message: '系统启动完成' },
+  { id: 2, type: 'WARN', typeClass: 'warning', time: '12:15:10', message: '镜像拉取速度较慢' },
+  { id: 3, type: 'ERROR', typeClass: 'danger', time: '12:20:03', message: '容器 nginx 重启失败' }
 ])
 
 const pageSize = 20
@@ -142,27 +140,33 @@ try {
 // 事件类型映射
 const getEventIcon = (type) => {
   switch (type?.toLowerCase()) {
-    case 'success': return 'CircleCheckFilled'
-    case 'warning': return 'WarningFilled'
-    case 'error': return 'CircleCloseFilled'
-    default: return 'InfoFilled'
+    case 'success': return IconEpCircleCheckFilled
+    case 'warning':
+    case 'warn': return IconEpWarningFilled
+    case 'error':
+    case 'danger': return IconEpCircleCloseFilled
+    default: return IconEpInfoFilled
   }
 }
 
 const getEventLabel = (type) => {
   switch (type?.toLowerCase()) {
-    case 'success': return 'info'
-    case 'warning': return 'warm'
-    case 'error': return 'danger'
-    default: return 'info'
+    case 'success': return '成功'
+    case 'warning':
+    case 'warn': return '警告'
+    case 'error':
+    case 'danger': return '错误'
+    default: return '信息'
   }
 }
 
 const getEventClass = (type) => {
   switch (type?.toLowerCase()) {
     case 'success': return 'event-success'
-    case 'warning': return 'event-warning'
-    case 'error': return 'event-error'
+    case 'warning':
+    case 'warn': return 'event-warning'
+    case 'error':
+    case 'danger': return 'event-error'
     default: return 'event-info'
   }
 }
@@ -179,7 +183,12 @@ const displayedLogs = computed(() => {
 const fetchEventLogs = async () => {
   try {
     const res = await api.system.events()
-    eventLogs.value = res.data || res
+    const list = Array.isArray(res?.data || res) ? (res.data || res) : []
+    eventLogs.value = list.slice(-maxEvents)
+    const maxPage = Math.max(1, Math.ceil(eventLogs.value.length / pageSize))
+    if (currentPage.value > maxPage) {
+      currentPage.value = maxPage
+    }
   } catch (error) {
     console.error('获取事件日志失败:', error)
     // 失败时不覆盖，或者显示错误信息
@@ -285,15 +294,6 @@ const handleStatClick = (stat) => {
   }
 }
 
-// 格式化字节大小
-const formatBytes = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
 // 获取颜色类名
 const getUsageColorText = (percent) => {
   if (percent >= 90) return 'text-danger'
@@ -308,19 +308,42 @@ const getUsageColorBg = (percent) => {
 }
 
 let timer = null
+const refreshInterval = 5000
 
-onMounted(() => {
+const stopRefresh = () => {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+}
+
+const startRefresh = () => {
+  stopRefresh()
   fetchStatistics()
-  fetchEventLogs() // 初始加载事件日志
-  // 每5秒刷新一次
+  fetchEventLogs()
   timer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
     fetchStatistics()
     fetchEventLogs()
-  }, 5000)
+  }, refreshInterval)
+}
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    startRefresh()
+  } else {
+    stopRefresh()
+  }
+}
+
+onMounted(() => {
+  startRefresh()
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
+  stopRefresh()
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -332,58 +355,27 @@ onUnmounted(() => {
   background-color: var(--clay-bg);
   box-sizing: border-box;
   overflow: hidden;
-  padding: 12px 16px;
   gap: 12px;
 }
 
-/* 顶部操作栏 - 统一风格 */
-.filter-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--clay-card);
-  padding: 14px 16px;
-  border-radius: var(--radius-5xl);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-  flex-shrink: 0;
-}
-
-.filter-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.page-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.filter-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 
 /* 滚动容器 */
 .scroll-container {
   flex: 1;
   overflow-y: auto;
-  padding: 18px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 12px;
   min-height: 0;
 }
 
 .overview-hero {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
-  gap: 24px;
+  gap: 16px;
   align-items: stretch;
-  padding: 22px 24px;
+  padding: 16px 20px;
   border-radius: var(--radius-5xl);
   background: var(--clay-card);
   border: 1px solid var(--clay-border);
@@ -394,12 +386,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
 }
 
 .hero-title {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: -0.4px;
   color: var(--el-text-color-primary);
@@ -423,7 +415,7 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 900;
   color: var(--el-text-color-primary);
-  margin: 0 0 16px 0;
+  margin: 0 0 12px 0;
   display: flex;
   align-items: center;
 }
@@ -439,7 +431,7 @@ onUnmounted(() => {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
@@ -450,7 +442,7 @@ onUnmounted(() => {
   background: var(--clay-card);
   border: 1px solid var(--clay-border);
   border-radius: var(--radius-5xl);
-  padding: 22px 24px;
+  padding: 16px 20px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
   box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
@@ -464,26 +456,26 @@ onUnmounted(() => {
 .stat-content {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .stat-value {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 900;
   color: var(--el-text-color-primary);
   line-height: 1.2;
 }
 
 .stat-title {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--clay-text-secondary);
   font-weight: 700;
 }
 
 .stat-icon-wrapper {
-  width: 56px;
-  height: 56px;
-  border-radius: 22px;
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -493,15 +485,15 @@ onUnmounted(() => {
 }
 
 .stat-icon {
-  font-size: 28px;
-  color: #fff;
+  font-size: 24px;
+  color: var(--stat-icon-color);
 }
 
 /* 统计卡片颜色 */
-.stat-primary .stat-icon-wrapper { background: linear-gradient(135deg, rgba(147, 197, 253, 0.45), rgba(96, 165, 250, 0.65)); }
-.stat-success .stat-icon-wrapper { background: linear-gradient(135deg, rgba(110, 231, 183, 0.45), rgba(52, 211, 153, 0.75)); }
-.stat-warning .stat-icon-wrapper { background: linear-gradient(135deg, rgba(253, 230, 138, 0.55), rgba(251, 191, 36, 0.7)); }
-.stat-danger .stat-icon-wrapper { background: linear-gradient(135deg, rgba(253, 164, 175, 0.55), rgba(251, 113, 133, 0.72)); }
+.stat-primary .stat-icon-wrapper { background: var(--stat-bg-primary); }
+.stat-success .stat-icon-wrapper { background: var(--stat-bg-success); }
+.stat-warning .stat-icon-wrapper { background: var(--stat-bg-warning); }
+.stat-danger .stat-icon-wrapper { background: var(--stat-bg-danger); }
 
 /* 资源使用区域 */
 .resources-section {
@@ -511,14 +503,14 @@ onUnmounted(() => {
 .resources-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  gap: 12px;
 }
 
 .resource-card {
   background: var(--clay-card);
   border: 1px solid var(--clay-border);
   border-radius: var(--radius-5xl);
-  padding: 22px 24px;
+  padding: 16px 20px;
   box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
   transition: all 0.3s;
 }
@@ -532,7 +524,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .resource-info {
@@ -546,7 +538,7 @@ onUnmounted(() => {
   height: 22px;
   border-radius: 8px;
   object-fit: cover;
-  box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-clay-float);
 }
 
 .resource-name {
@@ -629,8 +621,8 @@ onUnmounted(() => {
 
 .log-item {
   display: flex;
-  gap: 16px;
-  padding: 16px 24px;
+  gap: 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--clay-border);
   align-items: flex-start;
   transition: background-color 0.2s;
@@ -691,10 +683,10 @@ onUnmounted(() => {
 .event-error { color: var(--el-color-danger); }
 .event-info { color: var(--el-color-info); }
 
-.log-type-tag.event-success { background: rgba(110, 231, 183, 0.22); }
-.log-type-tag.event-warning { background: rgba(253, 230, 138, 0.28); }
-.log-type-tag.event-error { background: rgba(251, 113, 133, 0.22); }
-.log-type-tag.event-info { background: rgba(147, 197, 253, 0.22); }
+.log-type-tag.event-success { background: var(--tag-bg-success); }
+.log-type-tag.event-warning { background: var(--tag-bg-warning); }
+.log-type-tag.event-error { background: var(--tag-bg-danger); }
+.log-type-tag.event-info { background: var(--tag-bg-info); }
 
 /* 响应式调整 */
 @media (max-width: 768px) {

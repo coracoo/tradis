@@ -10,18 +10,18 @@
           size="medium"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
       </div>
       <div class="filter-right">
         <el-button-group>
           <el-button @click="handleRefresh" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <el-button type="primary" @click="handleCreate" size="medium">
-            <template #icon><el-icon><Plus /></el-icon></template>
+            <template #icon><IconEpPlus /></template>
             新建项目
           </el-button>
         </el-button-group>
@@ -56,7 +56,7 @@
                  :class="{ 'clickable': scope.row.path.startsWith('project/') }"
                  @click="scope.row.path.startsWith('project/') && handleRowClick(scope.row)">
               <div class="icon-wrapper">
-                <el-icon><Folder /></el-icon>
+                <IconEpFolder />
               </div>
               <div class="name-info">
                 <span class="name-text">{{ scope.row.name }}</span>
@@ -97,7 +97,7 @@
                   type="primary" 
                   @click="handleStart(scope.row)" 
                   :disabled="scope.row.status === '运行中' || !isManagedProject(scope.row.path) || isSelfProject(scope.row)">
-                  <el-icon><VideoPlay /></el-icon>
+                  <IconEpVideoPlay />
                 </el-button>
               </el-tooltip>
               <el-tooltip content="停止" placement="top">
@@ -106,23 +106,23 @@
                   type="warning" 
                   @click="handleStop(scope.row)" 
                   :disabled="scope.row.status !== '运行中' || !isManagedProject(scope.row.path) || isSelfProject(scope.row)">
-                  <el-icon><VideoPause /></el-icon>
+                  <IconEpVideoPause />
                 </el-button>
               </el-tooltip>
               <el-tooltip content="编辑" placement="top">
                 <el-button circle plain size="default" type="primary" @click="handleEdit(scope.row)" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">
-                  <el-icon><Edit /></el-icon>
+                  <IconEpEdit />
                 </el-button>
               </el-tooltip>
               
               <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)" :disabled="isSelfProject(scope.row)">
                 <el-button circle size="default" plain class="ml-2">
-                  <el-icon><MoreFilled /></el-icon>
+                  <IconEpMoreFilled />
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="down" :icon="CircleClose" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">清除(保留文件)</el-dropdown-item>
-                    <el-dropdown-item command="delete" :icon="Delete" divided class="text-danger" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">删除项目</el-dropdown-item>
+                    <el-dropdown-item command="down" :icon="IconEpCircleClose" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">清除(保留文件)</el-dropdown-item>
+                    <el-dropdown-item command="delete" :icon="IconEpDelete" divided class="text-danger" :disabled="!isManagedProject(scope.row.path) || isSelfProject(scope.row)">删除项目</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -166,7 +166,7 @@
               <el-input v-model="projectForm.path" placeholder="自动生成" readonly>
                 <template #append>
                   <el-tooltip content="项目将存放在 project 目录下">
-                    <el-icon><InfoFilled /></el-icon>
+                    <IconEpInfoFilled />
                   </el-tooltip>
                 </template>
               </el-input>
@@ -177,7 +177,7 @@
                   <span class="file-name">docker-compose.yml</span>
                   <el-dropdown @command="handleTemplateSelect" trigger="click">
                     <el-button size="small" link type="primary">
-                      插入模板<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                      插入模板<IconEpArrowDown class="el-icon--right" />
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
@@ -237,10 +237,10 @@ import { ref, onMounted, shallowRef, nextTick, onBeforeUnmount, computed, watch 
 import { formatTimeTwoLines, normalizeComposeProjectName } from '../utils/format'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, InfoFilled, ArrowDown, VideoPlay, VideoPause, Edit, Delete, CircleClose, Search, Folder, MoreFilled } from '@element-plus/icons-vue'
 import * as monaco from 'monaco-editor'
 import api from '../api'
 import request from '../utils/request'
+import { useSseLogStream } from '../utils/sseLogStream'
 
 // 判断是否为本项目管理的项目
 const isManagedProject = (path) => {
@@ -309,6 +309,11 @@ onBeforeUnmount(() => {
   if (editorInstance.value) {
     editorInstance.value.dispose()
   }
+  stopDeployStream()
+  if (deployTimeout) {
+    clearTimeout(deployTimeout)
+    deployTimeout = null
+  }
 })
 
 // 修改模板插入方法
@@ -334,7 +339,12 @@ services:
 const handleDialogClose = () => {
   dialogVisible.value = false
   // 清空部署日志
-  deployLogs.value = []
+  clearDeployLogs()
+  stopDeployStream()
+  if (deployTimeout) {
+    clearTimeout(deployTimeout)
+    deployTimeout = null
+  }
 }
 
 const handleCreate = () => {
@@ -346,7 +356,7 @@ const handleCreate = () => {
     autoStart: true
   }
   dialogVisible.value = true
-  deployLogs.value = []
+  clearDeployLogs()
   // 等待 DOM 更新后初始化编辑器
   nextTick(() => {
     initEditor()
@@ -387,7 +397,75 @@ const handleEdit = async (row) => {
 const loading = ref(false)
 const dialogVisible = ref(false)
 const logsContent = ref(null)
-const deployLogs = ref([])
+const deployAutoScroll = ref(true)
+const deployLogSet = new Set()
+let deployTimeout = null
+let deployHasSuccess = false
+const normalizeDeployEntry = (payload) => {
+  if (payload && typeof payload === 'object') {
+    const type = String(payload.type || '').trim() || 'info'
+    const message = String(payload.message || '').trim()
+    if (!message) return null
+    return { type, message }
+  }
+  const text = String(payload || '').trim()
+  if (!text) return null
+  const lower = text.toLowerCase()
+  const type = lower.includes('error') ? 'error' : (lower.includes('warning') ? 'warning' : 'info')
+  return { type, message: text }
+}
+const {
+  logs: deployLogs,
+  start: startDeployStream,
+  stop: stopDeployStream,
+  clear: clearDeployLogs,
+  pushLine: pushDeployLine
+} = useSseLogStream({
+  autoScroll: deployAutoScroll,
+  scrollElRef: logsContent,
+  onOpenLine: null,
+  onErrorLine: null,
+  makeEntry: (payload) => {
+    const entry = normalizeDeployEntry(payload)
+    if (!entry) return { type: 'info', message: '' }
+    return entry
+  },
+  onMessage: (event, { payload, pushLine, stop }) => {
+    const entry = normalizeDeployEntry(payload)
+    if (!entry) return
+    const key = `${entry.type}:${entry.message}`
+    if (deployLogSet.has(key)) return
+    deployLogSet.add(key)
+    pushLine(entry)
+    if (entry.type === 'success' && entry.message.includes('所有服务已成功启动')) {
+      deployHasSuccess = true
+      if (deployTimeout) {
+        clearTimeout(deployTimeout)
+        deployTimeout = null
+      }
+      ElMessage.success(entry.message)
+      stop()
+      setTimeout(() => {
+        dialogVisible.value = false
+        handleRefresh()
+      }, 500)
+      return
+    }
+    if (entry.type === 'error') {
+      ElMessage.error(entry.message)
+    }
+  },
+  onError: ({ pushLine, stop }) => {
+    if (deployTimeout) {
+      clearTimeout(deployTimeout)
+      deployTimeout = null
+    }
+    if (!deployHasSuccess) {
+      pushLine({ type: 'error', message: '与服务器连接中断，部署可能已失败' })
+    }
+    stop()
+  }
+})
 const dialogTitle = ref('新建项目')
 const projectForm = ref({
   name: '',
@@ -542,7 +620,7 @@ const handleSave = async () => {
   }
 
   // 清空部署日志
-  deployLogs.value = []
+  clearDeployLogs()
   
   // 添加基本的YAML格式校验
   try {
@@ -571,69 +649,25 @@ const handleSave = async () => {
   try {
     const encodedCompose = encodeURIComponent(projectForm.value.compose)
     const token = localStorage.getItem('token') || ''
-    const eventSource = new EventSource(
-      `/api/compose/deploy/events?name=${projectForm.value.name}&compose=${encodedCompose}&token=${token}`
-    )
+    const url = `/api/compose/deploy/events?name=${projectForm.value.name}&compose=${encodedCompose}&token=${token}`
 
-    const logSet = new Set()
-    const timeout = setTimeout(() => {
-      deployLogs.value.push({
+    deployLogSet.clear()
+    deployHasSuccess = false
+    if (deployTimeout) {
+      clearTimeout(deployTimeout)
+      deployTimeout = null
+    }
+    deployTimeout = setTimeout(() => {
+      pushDeployLine({
         type: 'warning',
         message: '日志连接超时，请稍后在项目列表查看状态'
       })
-      eventSource.close()
-    }, 600000) // 10分钟超时
+      stopDeployStream()
+    }, 600000)
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        const key = `${data.type}:${data.message}`
-        if (!logSet.has(key)) {
-          logSet.add(key)
-          deployLogs.value.push({
-            type: data.type,
-            message: data.message
-          })
-        }
-        nextTick(() => {
-          if (logsContent.value) {
-            logsContent.value.scrollTop = logsContent.value.scrollHeight
-          }
-        })
-        if (data.type === 'success' && data.message.includes('所有服务已成功启动')) {
-          clearTimeout(timeout)
-          ElMessage.success(data.message)
-          setTimeout(() => {
-            eventSource.close()
-            dialogVisible.value = false
-            handleRefresh()
-          }, 500)
-        } else if (data.type === 'error') {
-          // 错误行直接提示，但保持连接，便于继续接收日志
-          ElMessage.error(data.message)
-        }
-      } catch (e) {
-        deployLogs.value.push({
-          type: 'error',
-          message: `解析服务器消息失败: ${e.message}`
-        })
-      }
-    }
-
-    eventSource.onerror = () => {
-      clearTimeout(timeout)
-      // 若已收到成功提示，则忽略断连提示
-      const hasSuccess = deployLogs.value.some(l => l.type === 'success')
-      if (!hasSuccess) {
-        deployLogs.value.push({
-          type: 'error',
-          message: '与服务器连接中断，部署可能已失败'
-        })
-      }
-      eventSource.close()
-    }
+    startDeployStream(url, { reset: false })
   } catch (error) {
-    deployLogs.value.push({
+    pushDeployLine({
       type: 'error',
       message: `部署失败: ${error.message || '未知错误'}`
     })
@@ -913,9 +947,7 @@ services:
   width: 48px;
   height: 48px;
   border-radius: 18px;
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  background: var(--icon-bg-image);
   color: var(--clay-ink);
   display: flex;
   align-items: center;
@@ -949,7 +981,7 @@ services:
 
 /* Count Badge */
 .count-badge {
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--badge-bg);
   color: var(--clay-ink);
   padding: 8px 14px;
   border-radius: 999px;
@@ -957,7 +989,7 @@ services:
   font-weight: 900;
   display: inline-block;
   box-shadow: var(--shadow-clay-inner);
-  border: 1px solid rgba(55, 65, 81, 0.08);
+  border: 1px solid var(--clay-border);
 }
 
 /* Status Indicator */
@@ -973,26 +1005,16 @@ services:
   width: 12px;
   height: 12px;
   border-radius: 999px;
-  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.6);
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, #cbd5e1, #94a3b8);
 }
 
 .status-point.running {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, var(--clay-mint), var(--clay-mint-2));
-  box-shadow: 0 0 0 6px rgba(110, 231, 183, 0.18), 2px 2px 6px rgba(0, 0, 0, 0.08), inset 1px 1px 2px rgba(255, 255, 255, 0.65);
+  background: var(--status-active-bg);
+  box-shadow: var(--status-active-shadow);
 }
 
 .status-point.stopped {
-  background:
-    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.2) 42%, rgba(255, 255, 255, 0) 65%),
-    radial-gradient(circle at 55% 60%, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0) 55%),
-    linear-gradient(135deg, #cbd5e1, #94a3b8);
+  background: var(--status-idle-bg);
+  box-shadow: var(--status-idle-shadow);
 }
 
 /* Action Buttons */

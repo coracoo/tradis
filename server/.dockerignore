@@ -17,11 +17,16 @@
 **/dist-ssr
 **/.vite
 **/coverage
+**/.cache
+**/.pnpm-store
+**/*.tsbuildinfo
 
 **/.env
 !**/.env.example
 !**/.env.sample
 !**/.env.template
+**/.env.local
+**/.env.*.local
 
 backend/data/git_sync/templates/
 backend/data/uploads

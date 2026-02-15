@@ -8,6 +8,7 @@ import (
 	"dockerpanel/backend/pkg/settings"
 	"errors"
 	"log"
+	"net/http"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -83,13 +84,13 @@ func listPorts(c *gin.Context) {
 
 	tcpUsage, udpUsage, err := gatherDetailedPortUsage()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取端口占用失败", err)
 		return
 	}
 
 	notes, err := database.GetAllPortNotes()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取端口备注失败", err)
 		return
 	}
 
@@ -163,22 +164,22 @@ func savePortNote(c *gin.Context) {
 		Note     string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
 	tx, err := database.GetDB().Begin()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建事务失败", err)
 		return
 	}
 	if err := database.SavePortNoteTx(tx, req.Port, req.Type, strings.ToUpper(req.Protocol), req.Note); err != nil {
 		_ = tx.Rollback()
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "保存端口备注失败", err)
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "提交事务失败", err)
 		return
 	}
 	c.JSON(200, gin.H{"message": "备注已保存"})
@@ -187,7 +188,7 @@ func savePortNote(c *gin.Context) {
 func getPortRange(c *gin.Context) {
 	s, err := database.GetPortRange()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取端口范围失败", err)
 		return
 	}
 	c.JSON(200, s)
@@ -200,7 +201,7 @@ func updatePortRange(c *gin.Context) {
 		Protocol string `json:"protocol"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 	if req.Start < 0 {
@@ -219,16 +220,16 @@ func updatePortRange(c *gin.Context) {
 
 	tx, err := database.GetDB().Begin()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建事务失败", err)
 		return
 	}
 	if err := database.SavePortRangeTx(tx, req.Start, req.End, strings.ToUpper(proto)); err != nil {
 		_ = tx.Rollback()
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "保存端口范围失败", err)
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "提交事务失败", err)
 		return
 	}
 	c.JSON(200, gin.H{"message": "范围已更新"})
@@ -245,7 +246,7 @@ func allocatePorts(c *gin.Context) {
 		DryRun        bool   `json:"dryRun"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
@@ -254,7 +255,7 @@ func allocatePorts(c *gin.Context) {
 	if req.UseAllocRange {
 		s, err := settings.GetSettings()
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Failed to load allocation settings"})
+			respondError(c, http.StatusInternalServerError, "Failed to load allocation settings", err)
 			return
 		}
 		startP = s.AllocPortStart
@@ -275,7 +276,7 @@ func allocatePorts(c *gin.Context) {
 	} else {
 		rng, err := database.GetPortRange()
 		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+			respondError(c, http.StatusInternalServerError, "获取端口范围失败", err)
 			return
 		}
 		startP = rng.Start
@@ -297,7 +298,7 @@ func allocatePorts(c *gin.Context) {
 
 	tcpUsage, udpUsage, err := gatherDetailedPortUsage()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取端口占用失败", err)
 		return
 	}
 
@@ -335,7 +336,7 @@ func allocatePorts(c *gin.Context) {
 			seg, ferr := FindContiguousPorts(used, startP, endP, cnt)
 			if ferr != nil {
 				log.Printf("Failed to find %d ports in range %d-%d: %v. First few used: %v", cnt, startP, endP, ferr, getFirstFewUsed(used, startP, 10))
-				c.JSON(409, gin.H{"error": ferr.Error()})
+				respondError(c, http.StatusConflict, ferr.Error(), nil)
 				return
 			}
 			segments = append(segments, seg)
@@ -347,7 +348,7 @@ func allocatePorts(c *gin.Context) {
 		seg, ferr := FindContiguousPorts(used, startP, endP, req.Count)
 		if ferr != nil {
 			log.Printf("Failed to find %d ports in range %d-%d: %v. First few used: %v", req.Count, startP, endP, ferr, getFirstFewUsed(used, startP, 10))
-			c.JSON(409, gin.H{"error": ferr.Error()})
+			respondError(c, http.StatusConflict, ferr.Error(), nil)
 			return
 		}
 		segments = [][]int{seg}
@@ -360,18 +361,18 @@ func allocatePorts(c *gin.Context) {
 
 	tx, err := database.GetDB().Begin()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建事务失败", err)
 		return
 	}
 	for _, seg := range segments {
 		if err := database.ReservePortsTx(tx, seg, reservedBy, strings.ToUpper(proto), t); err != nil {
 			_ = tx.Rollback()
-			c.JSON(500, gin.H{"error": err.Error()})
+			respondError(c, http.StatusInternalServerError, "预留端口失败", err)
 			return
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "提交事务失败", err)
 		return
 	}
 

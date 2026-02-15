@@ -6,6 +6,7 @@ import (
 	"dockerpanel/backend/pkg/database"
 	"dockerpanel/backend/pkg/docker"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,9 +18,77 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/gin-gonic/gin"
 )
+
+func errorCodeFromStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "INVALID_PARAM"
+	case http.StatusUnauthorized:
+		return "UNAUTHORIZED"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusTooManyRequests:
+		return "RATE_LIMIT"
+	default:
+		if status >= 500 {
+			return "INTERNAL"
+		}
+		return "INTERNAL"
+	}
+}
+
+func respondError(c *gin.Context, status int, message string, err error) {
+	code := errorCodeFromStatus(status)
+	details := ""
+	if err != nil {
+		details = err.Error()
+	}
+	errorText := message
+	if details != "" {
+		errorText = fmt.Sprintf("%s: %s", message, details)
+	}
+	payload := gin.H{
+		"code":    code,
+		"message": message,
+		"error":   errorText,
+	}
+	if details != "" {
+		payload["details"] = details
+	}
+	c.JSON(status, payload)
+}
+
+func respondErrorWithDetail(c *gin.Context, status int, message string, detail string) {
+	if strings.TrimSpace(detail) == "" {
+		respondError(c, status, message, nil)
+		return
+	}
+	respondError(c, status, message, errors.New(detail))
+}
+
+func getDockerClient(c *gin.Context) (*docker.Client, bool) {
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "连接Docker失败", err)
+		return nil, false
+	}
+	return cli, true
+}
+
+func getDockerClientSSE(c *gin.Context) (*docker.Client, bool) {
+	cli, err := docker.NewDockerClient()
+	if err != nil {
+		c.String(http.StatusInternalServerError, "data: %s\n\n", `{"error":"连接Docker失败"}`)
+		return nil, false
+	}
+	return cli, true
+}
 
 // 路由注册需导出的函数
 func RegisterContainerRoutes(r *gin.RouterGroup) {
@@ -36,6 +105,8 @@ func RegisterContainerRoutes(r *gin.RouterGroup) {
 		group.POST("/:id/unpause", unpauseContainer)
 		group.POST("/prune", pruneContainers) // 注册清理容器路由，注意要放在 :id 路由之前，避免冲突，或者使用不同的路径
 		group.DELETE("/:id", removeContainer)
+		// 注册容器终端与命令执行路由（WebSocket + CLI）
+		group.GET("/:id/update/events", updateContainerEvents)
 		group.GET("/:id/logs", getContainerLogs)
 		group.GET("/:id/logs/events", getContainerLogsEvents)
 		group.GET("/:id/terminal", containerTerminal)
@@ -48,20 +119,19 @@ func RegisterContainerRoutes(r *gin.RouterGroup) {
 func pruneContainers(c *gin.Context) {
 	selfID, selfName, _, _ := getSelfIdentity()
 	if selfID != "" || selfName != "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "容器化部署模式下，禁止执行全局清理操作"})
+		respondError(c, http.StatusForbidden, "容器化部署模式下，禁止执行全局清理操作", nil)
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法连接到 Docker: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	report, err := cli.ContainersPrune(context.Background(), filters.Args{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "清理容器失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "清理容器失败", err)
 		return
 	}
 
@@ -74,17 +144,30 @@ func pruneContainers(c *gin.Context) {
 
 // 容器列表
 func ListContainers(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取容器列表失败", err)
 		return
+	}
+
+	updateMap := make(map[string]bool)
+	if allUpdates, _ := database.GetAllImageUpdates(); len(allUpdates) > 0 {
+		for _, u := range allUpdates {
+			if strings.TrimSpace(u.RepoTag) == "" {
+				continue
+			}
+			if u.LocalDigest != u.RemoteDigest {
+				for _, key := range normalizeImageVariants(u.RepoTag) {
+					updateMap[key] = true
+				}
+			}
+		}
 	}
 
 	// 获取每个容器的详细信息
@@ -153,6 +236,7 @@ func ListContainers(c *gin.Context) {
 			"RunningTime":     runningTime,
 			"Labels":          labels,
 			"isSelf":          isSelfOrProtectedContainer(container.ID, nameCandidate, container.Image, labels),
+			"UpdateAvailable": hasImageUpdate(updateMap, container.Image),
 		}
 		containersWithDetails = append(containersWithDetails, containerInfo)
 	}
@@ -167,9 +251,8 @@ func getContainerStats(c *gin.Context) {
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -177,14 +260,14 @@ func getContainerStats(c *gin.Context) {
 	// 获取容器统计信息（单次快照）
 	resp, err := cli.ContainerStats(context.Background(), id, false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取容器统计信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取容器统计信息失败", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	var statsJSON types.StatsJSON
 	if err := json.NewDecoder(resp.Body).Decode(&statsJSON); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "解析容器统计信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "解析容器统计信息失败", err)
 		return
 	}
 
@@ -243,9 +326,8 @@ func streamContainerStats(c *gin.Context) {
 		}
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.String(http.StatusInternalServerError, "data: %s\n\n", `{"error":"连接Docker失败"}`)
+	cli, ok := getDockerClientSSE(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -349,9 +431,8 @@ func streamContainerStats(c *gin.Context) {
 func GetContainer(c *gin.Context) {
 	id := c.Param("id")
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -359,7 +440,7 @@ func GetContainer(c *gin.Context) {
 	// 获取容器基础信息
 	inspect, err := cli.ContainerInspect(context.Background(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "容器不存在: " + err.Error()})
+		respondError(c, http.StatusNotFound, "容器不存在", err)
 		return
 	}
 
@@ -472,15 +553,14 @@ func restartContainer(c *gin.Context) {
 	if forbidIfSelfContainer(c, id) {
 		return
 	}
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	if err := cli.ContainerRestart(context.Background(), id, container.StopOptions{}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "重启容器失败", err)
 		return
 	}
 
@@ -493,15 +573,14 @@ func pauseContainer(c *gin.Context) {
 	if forbidIfSelfContainer(c, id) {
 		return
 	}
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	if err := cli.ContainerPause(context.Background(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "暂停容器失败", err)
 		return
 	}
 
@@ -514,15 +593,14 @@ func unpauseContainer(c *gin.Context) {
 	if forbidIfSelfContainer(c, id) {
 		return
 	}
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	if err := cli.ContainerUnpause(context.Background(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "恢复容器失败", err)
 		return
 	}
 
@@ -535,9 +613,8 @@ func startContainer(c *gin.Context) {
 	if forbidIfSelfContainer(c, id) {
 		return
 	}
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法连接到 Docker: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -545,13 +622,13 @@ func startContainer(c *gin.Context) {
 	// 先检查容器是否存在
 	inspect, err := cli.ContainerInspect(context.Background(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "容器不存在: " + err.Error()})
+		respondError(c, http.StatusNotFound, "容器不存在", err)
 		return
 	}
 
 	// 修正：前面 inspect 已经获取了详细信息，直接用 inspect 判断状态更准确
 	if inspect.State.Running {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "容器已经在运行中"})
+		respondError(c, http.StatusBadRequest, "容器已经在运行中", nil)
 		return
 	}
 
@@ -565,21 +642,21 @@ func startContainer(c *gin.Context) {
 			portRegex := regexp.MustCompile(`0.0.0.0:(\d+)`)
 			matches := portRegex.FindStringSubmatch(errMsg)
 			if len(matches) > 1 {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("端口冲突，%s，请检查端口", matches[1])})
+				respondError(c, http.StatusInternalServerError, fmt.Sprintf("端口冲突，%s，请检查端口", matches[1]), nil)
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "端口冲突，请检查端口配置"})
+				respondError(c, http.StatusInternalServerError, "端口冲突，请检查端口配置", nil)
 			}
 		case strings.Contains(errMsg, "no such file or directory"):
 			// 提取路径信息
 			pathRegex := regexp.MustCompile(`path\s+([^\s]+)\s+`)
 			matches := pathRegex.FindStringSubmatch(errMsg)
 			if len(matches) > 1 {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("路径不存在，请检查宿主机路径%s", matches[1])})
+				respondError(c, http.StatusInternalServerError, fmt.Sprintf("路径不存在，请检查宿主机路径%s", matches[1]), nil)
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "路径不存在，请检查宿主机路径配置"})
+				respondError(c, http.StatusInternalServerError, "路径不存在，请检查宿主机路径配置", nil)
 			}
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "启动容器失败: " + errMsg})
+			respondErrorWithDetail(c, http.StatusInternalServerError, "启动容器失败", errMsg)
 		}
 		return
 	}
@@ -593,17 +670,16 @@ func stopContainer(c *gin.Context) {
 	if forbidIfSelfContainer(c, id) {
 		return
 	}
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	// 先检查容器是否存在
-	_, err = cli.ContainerInspect(context.Background(), id)
+	_, err := cli.ContainerInspect(context.Background(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "容器不存在"})
+		respondError(c, http.StatusNotFound, "容器不存在", nil)
 		return
 	}
 
@@ -613,7 +689,7 @@ func stopContainer(c *gin.Context) {
 		Timeout: &timeout,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "停止容器失败", err)
 		return
 	}
 
@@ -627,9 +703,8 @@ func removeContainer(c *gin.Context) {
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -652,17 +727,17 @@ func removeContainer(c *gin.Context) {
 		}
 	}
 	timeout := 2 // 设置超时时间为 2 秒
-	err = cli.ContainerStop(context.Background(), id, container.StopOptions{
+	err := cli.ContainerStop(context.Background(), id, container.StopOptions{
 		Timeout: &timeout,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "停止容器失败", err)
 		return
 	}
 
 	err = cli.ContainerRemove(context.Background(), id, types.ContainerRemoveOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除容器失败", err)
 		return
 	}
 
@@ -698,13 +773,12 @@ type CreateContainerRequest struct {
 func createContainer(c *gin.Context) {
 	var req CreateContainerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -795,7 +869,7 @@ func createContainer(c *gin.Context) {
 	// 3. 创建容器
 	resp, err := cli.ContainerCreate(context.Background(), config, hostConfig, nil, nil, req.Name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建容器失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建容器失败", err)
 		return
 	}
 
@@ -822,22 +896,134 @@ func renameContainer(c *gin.Context) {
 	}
 	var req RenameContainerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", nil)
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
-	err = cli.ContainerRename(context.Background(), id, req.NewName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "重命名失败: " + err.Error()})
+	if err := cli.ContainerRename(context.Background(), id, req.NewName); err != nil {
+		respondError(c, http.StatusInternalServerError, "重命名失败", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "容器重命名成功"})
+}
+
+// updateContainerEvents 更新容器（拉取镜像并重建）并推送 SSE 事件
+func updateContainerEvents(c *gin.Context) {
+	id := c.Param("id")
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	if forbidIfSelfContainer(c, id) {
+		c.Writer.Write([]byte("event: log\ndata: error: 禁止操作自身容器\n\n"))
+		c.Writer.Flush()
+		return
+	}
+
+	cli, ok := getDockerClientSSE(c)
+	if !ok {
+		return
+	}
+	defer cli.Close()
+
+	ctx := c.Request.Context()
+
+	send := func(msg string) {
+		c.Writer.Write([]byte(fmt.Sprintf("event: log\ndata: %s\n\n", msg)))
+		c.Writer.Flush()
+	}
+
+	send("info: 开始检查容器配置...")
+
+	// 1. Inspect old container
+	oldContainer, err := cli.ContainerInspect(ctx, id)
+	if err != nil {
+		send(fmt.Sprintf("error: 获取容器信息失败: %v", err))
+		return
+	}
+
+	imageName := oldContainer.Config.Image
+	containerName := strings.TrimPrefix(oldContainer.Name, "/")
+
+	send(fmt.Sprintf("info: 正在拉取最新镜像 %s...", imageName))
+
+	// 2. Pull image
+	out, err := cli.ImagePull(ctx, imageName, types.ImagePullOptions{})
+	if err != nil {
+		send(fmt.Sprintf("error: 拉取镜像失败: %v", err))
+		return
+	}
+	io.Copy(io.Discard, out)
+	out.Close()
+
+	send("info: 镜像拉取完成")
+
+	// 3. Rename old container
+	backupName := fmt.Sprintf("%s_backup_%d", containerName, time.Now().Unix())
+	send(fmt.Sprintf("info: 重命名旧容器为 %s...", backupName))
+
+	if err := cli.ContainerRename(ctx, id, backupName); err != nil {
+		send(fmt.Sprintf("error: 重命名容器失败: %v", err))
+		return
+	}
+
+	// 4. Stop old container
+	send("info: 停止旧容器...")
+	timeout := 10
+	if err := cli.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout}); err != nil {
+		send(fmt.Sprintf("error: 停止容器失败: %v. 正在回滚...", err))
+		cli.ContainerRename(ctx, id, containerName)
+		return
+	}
+
+	// 5. Create new container
+	send("info: 创建新容器...")
+
+	endpointsConfig := make(map[string]*network.EndpointSettings)
+	for k, v := range oldContainer.NetworkSettings.Networks {
+		endpointsConfig[k] = &network.EndpointSettings{
+			IPAMConfig: v.IPAMConfig,
+			Links:      v.Links,
+			Aliases:    v.Aliases,
+			NetworkID:  v.NetworkID,
+		}
+	}
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: endpointsConfig,
+	}
+
+	createdBody, err := cli.ContainerCreate(ctx, oldContainer.Config, oldContainer.HostConfig, networkingConfig, nil, containerName)
+	if err != nil {
+		send(fmt.Sprintf("error: 创建新容器失败: %v. 正在回滚...", err))
+		cli.ContainerRename(ctx, id, containerName)
+		cli.ContainerStart(ctx, id, types.ContainerStartOptions{})
+		return
+	}
+
+	// 6. Start new container
+	send("info: 启动新容器...")
+	if err := cli.ContainerStart(ctx, createdBody.ID, types.ContainerStartOptions{}); err != nil {
+		send(fmt.Sprintf("error: 启动新容器失败: %v. 正在回滚...", err))
+		cli.ContainerRemove(ctx, createdBody.ID, types.ContainerRemoveOptions{Force: true})
+		cli.ContainerRename(ctx, id, containerName)
+		cli.ContainerStart(ctx, id, types.ContainerStartOptions{})
+		return
+	}
+
+	// 7. Remove old container
+	send("info: 移除旧容器...")
+	if err := cli.ContainerRemove(ctx, id, types.ContainerRemoveOptions{Force: true}); err != nil {
+		send(fmt.Sprintf("warn: 移除旧容器失败: %v (新容器已正常运行)", err))
+	}
+
+	send("success: 容器更新完成")
 }

@@ -86,16 +86,15 @@ func RegisterImageRoutes(r *gin.RouterGroup) {
 
 // 清理未使用的镜像
 func pruneImages(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	report, err := cli.ImagesPrune(context.Background(), filters.Args{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "清理镜像失败", err)
 		return
 	}
 
@@ -110,14 +109,14 @@ func importImage(c *gin.Context) {
 	// 获取上传的文件
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "获取上传文件失败: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "获取上传文件失败", err)
 		return
 	}
 
 	// 创建临时文件
 	tempFile, err := os.CreateTemp("", "docker-image-*.tar")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时文件失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建临时文件失败", err)
 		return
 	}
 	defer os.Remove(tempFile.Name())
@@ -126,13 +125,13 @@ func importImage(c *gin.Context) {
 	// 保存上传的文件到临时文件
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "打开上传文件失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "打开上传文件失败", err)
 		return
 	}
 	defer src.Close()
 
 	if _, err = io.Copy(tempFile, src); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存上传文件失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "保存上传文件失败", err)
 		return
 	}
 
@@ -148,9 +147,8 @@ func importImage(c *gin.Context) {
 	}
 
 	// 创建Docker客户端
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -158,7 +156,7 @@ func importImage(c *gin.Context) {
 	// 打开临时文件用于导入
 	importFile, err := os.Open(tempFile.Name())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取临时文件失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "读取临时文件失败", err)
 		return
 	}
 	defer importFile.Close()
@@ -166,7 +164,7 @@ func importImage(c *gin.Context) {
 	// 导入镜像
 	response, err := cli.ImageLoad(context.Background(), importFile, true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "导入镜像失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "导入镜像失败", err)
 		return
 	}
 	defer response.Body.Close()
@@ -174,7 +172,7 @@ func importImage(c *gin.Context) {
 	// 读取响应
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取导入响应失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "读取导入响应失败", err)
 		return
 	}
 
@@ -309,7 +307,7 @@ func getDockerProxy(c *gin.Context) {
 	dbRegistries, err := database.GetAllRegistries()
 	if err != nil {
 		log.Printf("获取注册表配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取注册表配置失败"})
+		respondError(c, http.StatusInternalServerError, "获取注册表配置失败", nil)
 		return
 	}
 
@@ -360,7 +358,7 @@ func getDockerProxy(c *gin.Context) {
 func updateDockerProxy(c *gin.Context) {
 	var config DockerConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的配置格式: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的配置格式", err)
 		return
 	}
 
@@ -385,7 +383,7 @@ func updateDockerProxy(c *gin.Context) {
 	// 保存到 daemon.json
 	if err := docker.UpdateDaemonConfig(daemonConfig); err != nil {
 		log.Printf("更新 daemon.json 失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新配置失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "更新配置失败", err)
 		return
 	}
 
@@ -410,7 +408,7 @@ func updateDockerProxy(c *gin.Context) {
 
 		if err := database.SaveRegistry(dbRegistry); err != nil {
 			log.Printf("保存注册表失败: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存注册表配置失败: " + err.Error()})
+			respondError(c, http.StatusInternalServerError, "保存注册表配置失败", err)
 			return
 		}
 	}
@@ -459,7 +457,7 @@ func updateDockerProxy(c *gin.Context) {
 func getDockerProxyHistory(c *gin.Context) {
 	list, err := database.GetProxyHistory(20)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取历史记录失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取历史记录失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -472,7 +470,7 @@ func pullImageProgress(c *gin.Context) {
 	registry := c.Query("registry")
 
 	if imageName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "镜像名称不能为空"})
+		respondError(c, http.StatusBadRequest, "镜像名称不能为空", nil)
 		return
 	}
 
@@ -484,15 +482,14 @@ func pullImageProgress(c *gin.Context) {
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式输出"})
+		respondError(c, http.StatusInternalServerError, "不支持流式输出", nil)
 		return
 	}
 
 	ctx := c.Request.Context()
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.String(http.StatusInternalServerError, "data: %s\n\n", fmt.Sprintf(`{"error":%q}`, err.Error()))
+	cli, ok := getDockerClient(c)
+	if !ok {
 		flusher.Flush()
 		return
 	}
@@ -504,7 +501,7 @@ func pullImageProgress(c *gin.Context) {
 	if registry != "" {
 		registries, getErr := database.GetAllRegistries()
 		if getErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取注册表配置失败: " + getErr.Error()})
+			respondError(c, http.StatusInternalServerError, "获取注册表配置失败", getErr)
 			return
 		}
 
@@ -578,16 +575,15 @@ func pullImage(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Printf("解析请求参数失败: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
 	log.Printf("开始拉取镜像: %s, 注册表: %s", req.Image, req.Registry)
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		log.Printf("创建 Docker 客户端失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
+		log.Printf("创建 Docker 客户端失败")
 		return
 	}
 	defer cli.Close()
@@ -600,7 +596,7 @@ func pullImage(c *gin.Context) {
 		registries, getErr := database.GetAllRegistries()
 		if getErr != nil {
 			log.Printf("获取注册表配置失败: %v", getErr)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取注册表配置失败: " + getErr.Error()})
+			respondError(c, http.StatusInternalServerError, "获取注册表配置失败", getErr)
 			return
 		}
 
@@ -640,7 +636,7 @@ func pullImage(c *gin.Context) {
 	reader, err := cli.ImagePull(context.Background(), imageName, options)
 	if err != nil {
 		log.Printf("拉取镜像失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "拉取镜像失败", err)
 		return
 	}
 	defer reader.Close()
@@ -648,7 +644,7 @@ func pullImage(c *gin.Context) {
 	response, err := io.ReadAll(reader)
 	if err != nil {
 		log.Printf("读取响应失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取响应失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "读取响应失败", err)
 		return
 	}
 	log.Printf("镜像拉取成功: %s", imageName)
@@ -657,16 +653,15 @@ func pullImage(c *gin.Context) {
 
 // 展示镜像
 func listImages(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	images, err := cli.ImageList(context.Background(), types.ImageListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取镜像列表失败", err)
 		return
 	}
 
@@ -675,9 +670,8 @@ func listImages(c *gin.Context) {
 
 // 删除镜像
 func removeImage(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -690,12 +684,12 @@ func removeImage(c *gin.Context) {
 		target = repoTag
 	}
 
-	_, err = cli.ImageRemove(context.Background(), target, types.ImageRemoveOptions{
+	_, err := cli.ImageRemove(context.Background(), target, types.ImageRemoveOptions{
 		Force:         true,
 		PruneChildren: true,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除镜像失败", err)
 		return
 	}
 
@@ -711,22 +705,20 @@ func tagImage(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	newTag := fmt.Sprintf("%s:%s", req.Repo, req.Tag)
 
-	err = cli.ImageTag(context.Background(), req.ID, newTag)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("修改标签失败: %v", err)})
+	if err := cli.ImageTag(context.Background(), req.ID, newTag); err != nil {
+		respondError(c, http.StatusInternalServerError, "修改标签失败", err)
 		return
 	}
 
@@ -737,16 +729,15 @@ func tagImage(c *gin.Context) {
 func exportImage(c *gin.Context) {
 	imageID := c.Param("id")
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	inspect, _, err := cli.ImageInspectWithRaw(context.Background(), imageID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取镜像信息失败: %v", err)})
+		respondError(c, http.StatusInternalServerError, "获取镜像信息失败", err)
 		return
 	}
 
@@ -769,14 +760,14 @@ func exportImage(c *gin.Context) {
 
 	reader, err := cli.ImageSave(context.Background(), names)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("导出镜像失败: %v", err)})
+		respondError(c, http.StatusInternalServerError, "导出镜像失败", err)
 		return
 	}
 	defer reader.Close()
 
 	_, err = io.Copy(c.Writer, reader)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("写入响应失败: %v", err)})
+		respondError(c, http.StatusInternalServerError, "写入响应失败", err)
 		return
 	}
 }
@@ -1043,7 +1034,7 @@ func checkImageUpdates(c *gin.Context) {
 	result, err := runImageUpdateCheck(context.Background(), force)
 	if err != nil {
 		system.LogSimpleEvent("error", fmt.Sprintf("手动镜像更新检测失败: %v", err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "写入镜像更新记录失败", err)
 		return
 	}
 	if result.WriteErrors > 0 {
@@ -1055,7 +1046,7 @@ func checkImageUpdates(c *gin.Context) {
 			result.RemoteErrors,
 			result.Duration.Seconds(),
 		))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("写入镜像更新记录失败: %d 条", result.WriteErrors)})
+		respondError(c, http.StatusInternalServerError, fmt.Sprintf("写入镜像更新记录失败: %d 条", result.WriteErrors), nil)
 		return
 	}
 	if result.FoundUpdates > 0 {
@@ -1086,7 +1077,7 @@ func checkImageUpdates(c *gin.Context) {
 func listStoredImageUpdates(c *gin.Context) {
 	items, err := database.GetAllImageUpdates()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取镜像更新记录失败", err)
 		return
 	}
 	var updates []imageUpdateInfo
@@ -1106,37 +1097,36 @@ func clearImageUpdate(c *gin.Context) {
 		RepoTag string `json:"repoTag"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 	if req.RepoTag == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "repoTag is required"})
+		respondError(c, http.StatusBadRequest, "repoTag is required", nil)
 		return
 	}
 	if err := database.DeleteImageUpdateByRepoTag(req.RepoTag); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除镜像更新记录失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 func applyImageUpdates(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	items, err := database.GetAllImageUpdates()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取镜像更新信息失败", err)
 		return
 	}
 
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取容器列表失败", err)
 		return
 	}
 

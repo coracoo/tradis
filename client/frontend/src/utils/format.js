@@ -29,3 +29,14 @@ export const normalizeComposeProjectName = (name) => {
 }
 
 export const isValidComposeProjectName = (name) => composeProjectNamePattern.test(String(name || '').toLowerCase().trim())
+
+export const formatBytes = (bytes, { decimals = 2 } = {}) => {
+  const b = Number(bytes || 0)
+  if (!Number.isFinite(b) || b <= 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(b) / Math.log(k)))
+  const value = b / Math.pow(k, i)
+  const fixed = i === 0 ? 0 : Math.max(0, Math.min(6, Number(decimals)))
+  return `${parseFloat(value.toFixed(fixed))} ${sizes[i]}`
+}

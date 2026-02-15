@@ -19,7 +19,7 @@
           @keyup.enter="refreshApps"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
         
@@ -42,11 +42,11 @@
 
       <div class="filter-right">
          <el-button @click="openApplyDialog" plain size="medium">
-           <template #icon><el-icon><Plus /></el-icon></template>
+           <template #icon><IconEpPlus /></template>
            申请应用
          </el-button>
          <el-button @click="refreshApps" :loading="loading" plain size="medium">
-           <template #icon><el-icon><Refresh /></el-icon></template>
+           <template #icon><IconEpRefresh /></template>
            刷新
          </el-button>
       </div>
@@ -57,11 +57,6 @@
         <div v-if="filteredApps.length > 0" class="app-grid">
           <el-card v-for="app in paginatedApps" :key="app.id" class="app-card" shadow="hover">
             <div class="app-card-body">
-              <div class="install-badge" :title="`安装次数：${Number(app?.deployment_count || 0)}`">
-                <span class="install-badge-label">下载</span>
-                <span class="install-badge-value">{{ formatInstallCount(app?.deployment_count) }}</span>
-                <span class="install-badge-label">次</span>
-              </div>
               <div class="app-icon-wrapper">
                 <img :src="resolvePicUrl(app.logo || app.icon)" :alt="app.name" class="app-icon" @error="handleImageError">
               </div>
@@ -75,12 +70,19 @@
               </div>
             </div>
             <div class="app-actions">
-              <el-button :type="isInstalled(app) ? 'warning' : 'primary'" plain size="small" @click="handleDeploy(app)">
-                <el-icon class="el-icon--left"><Download /></el-icon>{{ isInstalled(app) ? '新安装' : '安装' }}
-              </el-button>
-              <el-button size="small" @click="showDetail(app)">
-                <el-icon class="el-icon--left"><InfoFilled /></el-icon>详情
-              </el-button>
+              <div class="install-badge" :title="`安装次数：${Number(app?.deployment_count || 0)}`">
+                <span class="install-badge-label">下载</span>
+                <span class="install-badge-value">{{ formatInstallCount(app?.deployment_count) }}</span>
+                <span class="install-badge-label">次</span>
+              </div>
+              <div class="action-buttons">
+                <el-button :type="isInstalled(app) ? 'warning' : 'primary'" plain size="small" @click="handleDeploy(app)">
+                  <IconEpDownload class="el-icon--left" />{{ isInstalled(app) ? '新安装' : '安装' }}
+                </el-button>
+                <el-button size="small" @click="showDetail(app)">
+                  <IconEpInfoFilled class="el-icon--left" />详情
+                </el-button>
+              </div>
             </div>
           </el-card>
         </div>
@@ -115,11 +117,11 @@
             <p class="detail-desc"> <b>应用简介：</b>{{ currentApp.description }}</p>
             <div class="detail-meta">
               <span class="meta-item">
-                <el-icon><PriceTag /></el-icon>
+                <IconEpPriceTag class="el-icon--left" />
                 {{ currentApp.version }}
               </span>
               <span class="meta-item">
-                <el-icon><Folder /></el-icon>
+                <IconEpFolder class="el-icon--left" />
                 {{ getCategoryLabel(currentApp.category) }}
               </span>
               <span v-if="currentApp.website" class="meta-item meta-link">
@@ -140,10 +142,10 @@
               @click="openScreenshotViewer(bannerIndex)"
             />
             <el-button class="banner-nav banner-nav-left" circle plain @click="prevBanner">
-              <el-icon><ArrowLeft /></el-icon>
+              <IconEpArrowLeft />
             </el-button>
             <el-button class="banner-nav banner-nav-right" circle plain @click="nextBanner">
-              <el-icon><ArrowRight /></el-icon>
+              <IconEpArrowRight />
             </el-button>
           </div>
           <div class="banner-indicators">
@@ -201,7 +203,6 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Download, InfoFilled, PriceTag, Folder, Refresh, ArrowLeft, ArrowRight, Plus } from '@element-plus/icons-vue'
 import { ElImageViewer, ElMessage } from 'element-plus'
 import api from '../api'
 import request from '../utils/request'
@@ -494,40 +495,9 @@ const submitApply = async () => {
   border-radius: 14px;
 }
 
-/* Filter Bar - Same as Compose.vue */
-.filter-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 16px;
-  background: var(--clay-card);
-  border-radius: var(--radius-5xl);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-}
+/* Filter Bar - Extracted to layout.css */
 
-.filter-left, .filter-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.search-input {
-  width: 300px;
-}
-
-/* Content Wrapper - Same as Compose.vue table-wrapper */
-.content-wrapper {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--clay-card);
-  border-radius: var(--radius-5xl);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-}
+/* Content Wrapper - Extracted to layout.css */
 
 .scroll-container {
   flex: 1;
@@ -535,19 +505,13 @@ const submitApply = async () => {
   padding: 18px;
 }
 
-.pagination-bar {
-  padding: 14px 16px;
-  border-top: 1px solid var(--clay-border);
-  background: transparent;
-  display: flex;
-  justify-content: flex-end;
-}
+/* Pagination Bar - Extracted to layout.css */
 
 /* App Grid */
 .app-grid {
   display: grid;
   grid-template-columns: repeat(1, 1fr);
-  gap: 20px;
+  gap: 12px;
 }
 
 @media (min-width: 768px) {
@@ -584,6 +548,7 @@ const submitApply = async () => {
   height: 100%;
   display: flex;
   flex-direction: column;
+  padding: 16px;
 }
 
 .app-card-body {
@@ -597,9 +562,6 @@ const submitApply = async () => {
 }
 
 .install-badge {
-  position: absolute;
-  top: 119px;
-  left: 16px;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -608,8 +570,6 @@ const submitApply = async () => {
   background: var(--clay-card);
   border: 1px solid var(--clay-border);
   box-shadow: var(--shadow-clay-inner);
-  pointer-events: none;
-  z-index: 2;
 }
 
 .install-badge-label {
@@ -627,29 +587,11 @@ const submitApply = async () => {
 
 .app-card-body {
   display: flex;
-  gap: 15px;
-  margin-bottom: 15px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.app-icon-wrapper {
-  width: 60px;
-  height: 60px;
-  flex-shrink: 0;
-  border-radius: 18px;
-  overflow: hidden;
-  background: var(--el-fill-color-lighter);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--clay-border);
-  box-shadow: var(--shadow-clay-inner);
-}
-
-.app-icon {
-  width: 80%;
-  height: 80%;
-  object-fit: contain;
-}
+/* App Icon Wrapper - Extracted to layout.css */
 
 .app-info {
   flex: 1;
@@ -660,12 +602,12 @@ const submitApply = async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .app-name {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 900;
   color: var(--el-text-color-primary);
   white-space: nowrap;
@@ -684,28 +626,35 @@ const submitApply = async () => {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .app-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 10px;
   border-top: 1px solid var(--clay-border);
-  padding-top: 15px;
+  padding-top: 12px;
   margin-top: auto;
+}
+
+.action-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .app-store-view :deep(.app-actions .el-button--primary.is-plain:not(.is-text):not(.is-link)) {
   background: linear-gradient(135deg, var(--clay-pink), var(--clay-pink-2)) !important;
   border-color: transparent !important;
-  color: #ffffff !important;
+  color: var(--el-color-white) !important;
 }
 
 .app-store-view :deep(.app-actions .el-button--warning.is-plain:not(.is-text):not(.is-link)) {
-  background: linear-gradient(135deg, #fde68a, #fbbf24) !important;
+  background: linear-gradient(135deg, var(--clay-yellow-2), var(--clay-yellow)) !important;
   border-color: transparent !important;
-  color: #2f3a4a !important;
+  color: var(--clay-ink) !important;
 }
 
 /* Dialog Styles */
@@ -783,7 +732,7 @@ const submitApply = async () => {
   object-fit: contain;
   display: block;
   cursor: pointer;
-  background-color: rgb(224, 255, 255);
+  background-color: var(--el-fill-color-light);
 }
 
 .banner-nav {
@@ -791,7 +740,7 @@ const submitApply = async () => {
   top: 50%;
   transform: translateY(-50%);
   z-index: 2;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--clay-card);
   border: 1px solid var(--el-border-color-lighter);
 }
 

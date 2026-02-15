@@ -11,7 +11,7 @@
           @keyup.enter="fetchNetworks"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
       </div>
@@ -19,23 +19,23 @@
       <div class="filter-right">
         <el-button-group class="main-actions">
           <el-button @click="fetchNetworks" :loading="loading" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <el-button type="primary" @click="dialogVisible = true" size="medium">
-            <template #icon><el-icon><Plus /></el-icon></template>
+            <template #icon><IconEpPlus /></template>
             新建网络
           </el-button>
         </el-button-group>
         
         <el-dropdown trigger="click" @command="handleGlobalAction">
           <el-button plain class="more-btn" size="medium">
-            更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="ipv6">配置 Bridge IPv6</el-dropdown-item>
-              <el-dropdown-item command="prune" :icon="Remove">清理未使用网络</el-dropdown-item>
+              <el-dropdown-item command="prune" :icon="IconEpRemove">清理未使用网络</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -57,7 +57,7 @@
           <template #default="scope">
             <div class="network-name-cell">
               <div class="icon-wrapper network">
-                <el-icon><Connection /></el-icon>
+                <IconEpConnection />
               </div>
               <div class="name-info">
                 <span class="name-text">{{ scope.row.Name }}</span>
@@ -140,7 +140,7 @@
                   type="primary" 
                   :disabled="isDefaultNetwork(scope.row.Name)"
                   @click="openEditDialog(scope.row)">
-                  <el-icon><Edit /></el-icon>
+                  <IconEpEdit />
                 </el-button>
               </el-tooltip>
               <el-tooltip content="删除网络" placement="top">
@@ -150,7 +150,7 @@
                   type="danger" 
                   :disabled="isDefaultNetwork(scope.row.Name)"
                   @click="deleteNetwork(scope.row)">
-                  <el-icon><Delete /></el-icon>
+                  <IconEpDelete />
                 </el-button>
               </el-tooltip>
             </div>
@@ -347,7 +347,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Delete, Edit, Search, ArrowDown, Remove, Connection } from '@element-plus/icons-vue'
 import api from '../api'
 import request from '../utils/request'
 import { formatTimeTwoLines } from '../utils/format'
@@ -633,39 +632,8 @@ const isDefaultNetwork = (name) => {
   gap: 12px;
 }
 
-.filter-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0;
-  background: var(--clay-card);
-  padding: 14px 16px;
-  border-radius: var(--radius-5xl)  ;
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-}
-
-.filter-left, .filter-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.search-input {
-  width: 300px;
-}
-
-.table-wrapper {
-  flex: 1;
-  overflow: hidden;
-  background: var(--clay-card);
-  border-radius: var(--radius-5xl);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  border: 1px solid var(--clay-border);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+/* Filter Bar - Extracted to layout.css */
+/* Table Wrapper - Extracted to layout.css */
 
 .main-table {
   flex: 1;
@@ -680,27 +648,9 @@ const isDefaultNetwork = (name) => {
   padding: 8px 0;
 }
 
-.icon-wrapper {
-  width: 48px;
-  height: 48px;
-  border-radius: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  flex-shrink: 0;
-  box-sizing: border-box;
-  padding: 4px;
-  margin: 2px;
-  box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
-  border: 1px solid rgba(55, 65, 81, 0.08);
-  transition: transform 0.2s;
-}
-
+/* Icon Wrapper - Base extracted to layout.css */
 .icon-wrapper.network {
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(134, 191, 255, 0.24), rgba(255, 115, 180, 0.16));
+  background: var(--icon-bg-image);
   color: var(--clay-ink);
 }
 
@@ -791,14 +741,7 @@ const isDefaultNetwork = (name) => {
   gap: 8px;
 }
 
-/* Pagination */
-.pagination-bar {
-  padding: 14px 16px;
-  border-top: 1px solid rgba(55, 65, 81, 0.12);
-  display: flex;
-  justify-content: flex-end;
-  background: transparent;
-}
+/* Pagination - Extracted to layout.css */
 
 .text-gray {
   color: var(--el-text-color-secondary);

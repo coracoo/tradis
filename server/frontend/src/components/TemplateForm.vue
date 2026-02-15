@@ -450,7 +450,8 @@ import { ref, computed, watch, defineProps, defineEmits } from 'vue'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { parseComposeTemplateVariables, parseDotenvText } from '../utils/composeTemplateParser'
+import { parseDotenvText } from '../utils/composeTemplateParser'
+import { templateApi } from '../api/template'
 
 const props = defineProps({
   template: {
@@ -830,13 +831,24 @@ const isDotenvDefined = (key) => {
   return dotenvKeySetRef.value && dotenvKeySetRef.value.has(String(key || ''))
 }
 
-const handleParseVariables = () => {
+const handleParseVariables = async () => {
   const composeContent = form.value.compose || ''
 
   const { dotenv, warnings: dotenvWarnings, errors: dotenvErrors } = parseDotenvText(form.value.dotenv || '')
   dotenvKeySetRef.value = new Set(Object.keys(dotenv || {}))
 
-  const { schema, warnings, errors, refs } = parseComposeTemplateVariables(composeContent)
+  let parsedRes = null
+  try {
+    parsedRes = await templateApi.parseVars(composeContent)
+  } catch (e) {
+    parseReport.value = { warnings: [], errors: ['[compose] 解析失败'] }
+    return
+  }
+
+  const schema = parsedRes?.schema || []
+  const warnings = parsedRes?.warnings || []
+  const errors = parsedRes?.errors || []
+  const refs = parsedRes?.refs || []
 
   const missingRefs = (refs || [])
     .filter(r => r && !r.hasDefault)

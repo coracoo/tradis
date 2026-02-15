@@ -24,29 +24,27 @@ func RegisterNetworkRoutes(r *gin.RouterGroup) {
 }
 
 func pruneNetworks(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	report, err := cli.NetworksPrune(context.Background(), filters.Args{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "清理网络失败", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":        "已清理未使用的网络",
+		"message":         "已清理未使用的网络",
 		"deletedNetworks": report.NetworksDeleted,
 	})
 }
 
 func listNetworks(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -54,7 +52,7 @@ func listNetworks(c *gin.Context) {
 	// 获取详细的网络信息
 	networks, err := cli.NetworkList(context.Background(), types.NetworkListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取网络列表失败", err)
 		return
 	}
 
@@ -83,13 +81,12 @@ func createNetwork(c *gin.Context) {
 		Parent      string            `json:"parent"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -99,7 +96,7 @@ func createNetwork(c *gin.Context) {
 		existing, _ := cli.NetworkList(context.Background(), types.NetworkListOptions{})
 		for _, n := range existing {
 			if n.Name == req.Name && n.Driver == "bridge" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "同名的 bridge 网络已存在"})
+				respondError(c, http.StatusBadRequest, "同名的 bridge 网络已存在", nil)
 				return
 			}
 		}
@@ -144,7 +141,7 @@ func createNetwork(c *gin.Context) {
 
 	resp, err := cli.NetworkCreate(context.Background(), req.Name, createOpts)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建网络失败", err)
 		return
 	}
 
@@ -152,9 +149,8 @@ func createNetwork(c *gin.Context) {
 }
 
 func removeNetwork(c *gin.Context) {
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
@@ -164,18 +160,18 @@ func removeNetwork(c *gin.Context) {
 	// 获取网络信息
 	network, err := cli.NetworkInspect(context.Background(), id, types.NetworkInspectOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取网络信息失败", err)
 		return
 	}
 
 	// 检查是否为默认网络
 	if network.Name == "bridge" || network.Name == "host" || network.Name == "none" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "不能删除默认网络"})
+		respondError(c, http.StatusBadRequest, "不能删除默认网络", nil)
 		return
 	}
 
 	if err := cli.NetworkRemove(context.Background(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除网络失败", err)
 		return
 	}
 
@@ -192,7 +188,7 @@ func enableDefaultBridgeIPv6(c *gin.Context) {
 		FixedCIDRv6: req.FixedCIDRv6,
 	}
 	if err := docker.UpdateDaemonConfig(cfg); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "更新 Docker 配置失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "已启用默认 bridge IPv6，请重启 Docker 服务"})
@@ -210,38 +206,37 @@ func updateNetwork(c *gin.Context) {
 		Parent      string            `json:"parent"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "无效的请求参数", err)
 		return
 	}
 
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	network, err := cli.NetworkInspect(context.Background(), id, types.NetworkInspectOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取网络信息失败", err)
 		return
 	}
 
 	// 禁止修改默认网络
 	if network.Name == "bridge" || network.Name == "host" || network.Name == "none" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "不能修改默认网络"})
+		respondError(c, http.StatusBadRequest, "不能修改默认网络", nil)
 		return
 	}
 
 	// 若网络仍连接容器，提示先断开
 	if len(network.Containers) > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该网络已连接容器，无法修改，请先断开所有容器"})
+		respondError(c, http.StatusBadRequest, "该网络已连接容器，无法修改，请先断开所有容器", nil)
 		return
 	}
 
 	// 删除旧网络
 	if err := cli.NetworkRemove(context.Background(), network.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除旧网络失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除旧网络失败", err)
 		return
 	}
 
@@ -281,7 +276,7 @@ func updateNetwork(c *gin.Context) {
 
 	resp, err := cli.NetworkCreate(context.Background(), network.Name, createOpts)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建新网络失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建新网络失败", err)
 		return
 	}
 

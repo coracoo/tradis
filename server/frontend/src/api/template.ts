@@ -1,8 +1,4 @@
-import axios from 'axios'
-
-const api = axios.create({
-  baseURL: '/api'
-})
+import api from '../shared/http'
 
 export const templateApi = {
   list() {
@@ -31,6 +27,10 @@ export const templateApi = {
 
   syncToGithub() {
     return api.post('/templates/sync')
+  },
+
+  parseVars(compose: string) {
+    return api.post('/templates/parse-vars', { compose })
   }
 }
 

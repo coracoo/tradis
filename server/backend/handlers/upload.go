@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ import (
 func UploadFile(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(400, gin.H{"error": "文件上传失败"})
+		respondError(c, http.StatusBadRequest, "文件上传失败", err)
 		return
 	}
 
@@ -46,7 +47,7 @@ func UploadFile(c *gin.Context) {
 	// 防止名称冲突，存在则覆盖
 	savePath := filepath.Join("data", "uploads", targetName)
 	if err := c.SaveUploadedFile(file, savePath); err != nil {
-		c.JSON(500, gin.H{"error": "文件保存失败"})
+		respondError(c, http.StatusInternalServerError, "文件保存失败", err)
 		return
 	}
 

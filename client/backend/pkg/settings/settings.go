@@ -3,6 +3,7 @@ package settings
 import (
 	"database/sql"
 	"dockerpanel/backend/pkg/database"
+	"encoding/json"
 	"log"
 	"net/url"
 	"os"
@@ -26,25 +27,38 @@ var (
 )
 
 type Settings struct {
-	LanUrl                     string `json:"lanUrl"`
-	WanUrl                     string `json:"wanUrl"`
-	AppStoreServerUrl          string `json:"appStoreServerUrl"`
-	AllocPortStart             int    `json:"allocPortStart"`
-	AllocPortEnd               int    `json:"allocPortEnd"`
-	AllowAutoAllocPort         bool   `json:"allowAutoAllocPort"`
-	ImageUpdateIntervalMinutes int    `json:"imageUpdateIntervalMinutes"`
+	LanUrl                      string   `json:"lanUrl"`
+	WanUrl                      string   `json:"wanUrl"`
+	AppStoreServerUrl           string   `json:"appStoreServerUrl"`
+	AllocPortStart              int      `json:"allocPortStart"`
+	AllocPortEnd                int      `json:"allocPortEnd"`
+	AllowAutoAllocPort          bool     `json:"allowAutoAllocPort"`
+	ImageUpdateIntervalMinutes  int      `json:"imageUpdateIntervalMinutes"`
+	AiEnabled                   bool     `json:"aiEnabled"`
+	AiBaseUrl                   string   `json:"aiBaseUrl"`
+	AiApiKey                    string   `json:"aiApiKey,omitempty"`
+	AiApiKeySet                 bool     `json:"aiApiKeySet"`
+	AiModel                     string   `json:"aiModel"`
+	AiTemperature               float64  `json:"aiTemperature"`
+	AiPrompt                    string   `json:"aiPrompt"`
+	VolumeBackupEnabled         bool     `json:"volumeBackupEnabled"`
+	VolumeBackupImage           string   `json:"volumeBackupImage"`
+	VolumeBackupEnv             string   `json:"volumeBackupEnv"`
+	VolumeBackupVolumes         []string `json:"volumeBackupVolumes"`
+	VolumeBackupArchiveDir      string   `json:"volumeBackupArchiveDir"`
+	VolumeBackupMountDockerSock bool     `json:"volumeBackupMountDockerSock"`
 }
 
 type ImageRemoteDigestBackoffPolicy struct {
-	FirstFailBackoff  time.Duration
-	SecondFailBackoff time.Duration
+	FirstFailBackoff   time.Duration
+	SecondFailBackoff  time.Duration
 	MaxConsecutiveFail int
 }
 
 func GetImageRemoteDigestBackoffPolicy() ImageRemoteDigestBackoffPolicy {
 	return ImageRemoteDigestBackoffPolicy{
-		FirstFailBackoff:  24 * time.Hour,
-		SecondFailBackoff: 48 * time.Hour,
+		FirstFailBackoff:   24 * time.Hour,
+		SecondFailBackoff:  48 * time.Hour,
 		MaxConsecutiveFail: 3,
 	}
 }
@@ -160,6 +174,42 @@ func InitSettingsTable() error {
 	if err := insertDefault("image_update_interval_minutes", "120"); err != nil {
 		return err
 	}
+	if err := insertDefault("ai_enabled", "false"); err != nil {
+		return err
+	}
+	if err := insertDefault("ai_base_url", "https://api.openai.com/v1"); err != nil {
+		return err
+	}
+	if err := insertDefault("ai_api_key", ""); err != nil {
+		return err
+	}
+	if err := insertDefault("ai_model", ""); err != nil {
+		return err
+	}
+	if err := insertDefault("ai_temperature", "0.7"); err != nil {
+		return err
+	}
+	if err := insertDefault("ai_prompt", "你是一个导航整理助手。根据容器信息与端口探测结果，生成应用名称、分类与图标建议。icon 建议优先使用 /icons/clay/<filename> 或 mdi-xxx。"); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_enabled", "false"); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_image", "offen/docker-volume-backup:latest"); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_env", ""); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_volumes", "[]"); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_archive_dir", ""); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_mount_docker_sock", "true"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -210,6 +260,33 @@ func GetSettings() (Settings, error) {
 	s.AllocPortEnd = parseInt(getValue("alloc_port_end"), 56000)
 	s.AllowAutoAllocPort = parseBool(getValue("allow_auto_alloc_port"), false)
 	s.ImageUpdateIntervalMinutes = parseInt(getValue("image_update_interval_minutes"), 120)
+	s.AiEnabled = parseBool(getValue("ai_enabled"), false)
+	s.AiBaseUrl = strings.TrimSpace(getValue("ai_base_url"))
+	s.AiModel = strings.TrimSpace(getValue("ai_model"))
+	s.AiPrompt = getValue("ai_prompt")
+	key := strings.TrimSpace(getValue("ai_api_key"))
+	s.AiApiKeySet = key != ""
+	s.AiApiKey = ""
+	parseFloat := func(v string, def float64) float64 {
+		if strings.TrimSpace(v) == "" {
+			return def
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return def
+		}
+		return f
+	}
+	s.AiTemperature = parseFloat(getValue("ai_temperature"), 0.7)
+	s.VolumeBackupEnabled = parseBool(getValue("volume_backup_enabled"), false)
+	s.VolumeBackupImage = strings.TrimSpace(getValue("volume_backup_image"))
+	if s.VolumeBackupImage == "" {
+		s.VolumeBackupImage = "offen/docker-volume-backup:latest"
+	}
+	s.VolumeBackupEnv = getValue("volume_backup_env")
+	s.VolumeBackupVolumes = parseStringSlice(getValue("volume_backup_volumes"))
+	s.VolumeBackupArchiveDir = strings.TrimSpace(getValue("volume_backup_archive_dir"))
+	s.VolumeBackupMountDockerSock = parseBool(getValue("volume_backup_mount_docker_sock"), true)
 
 	return s, nil
 }
@@ -260,7 +337,7 @@ func UpdateSettings(s Settings) error {
 
 	if IsDebugEnabled() {
 		log.Printf(
-			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d",
+			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d aiEnabled=%t aiBaseUrl=%s aiModel=%s aiTemperature=%v volumeBackupEnabled=%t volumeBackupImage=%s",
 			s.LanUrl,
 			s.WanUrl,
 			RedactAppStoreURL(s.AppStoreServerUrl),
@@ -268,6 +345,12 @@ func UpdateSettings(s Settings) error {
 			s.AllocPortEnd,
 			s.AllowAutoAllocPort,
 			s.ImageUpdateIntervalMinutes,
+			s.AiEnabled,
+			s.AiBaseUrl,
+			s.AiModel,
+			s.AiTemperature,
+			s.VolumeBackupEnabled,
+			s.VolumeBackupImage,
 		)
 	}
 
@@ -298,8 +381,74 @@ func UpdateSettings(s Settings) error {
 	if err := update("image_update_interval_minutes", strconv.Itoa(s.ImageUpdateIntervalMinutes)); err != nil {
 		return err
 	}
+	if err := update("ai_enabled", strconv.FormatBool(s.AiEnabled)); err != nil {
+		return err
+	}
+	if err := update("ai_base_url", s.AiBaseUrl); err != nil {
+		return err
+	}
+	if err := update("ai_model", s.AiModel); err != nil {
+		return err
+	}
+	if err := update("ai_temperature", strconv.FormatFloat(s.AiTemperature, 'f', -1, 64)); err != nil {
+		return err
+	}
+	if err := update("ai_prompt", s.AiPrompt); err != nil {
+		return err
+	}
+	if err := update("volume_backup_enabled", strconv.FormatBool(s.VolumeBackupEnabled)); err != nil {
+		return err
+	}
+	if err := update("volume_backup_image", strings.TrimSpace(s.VolumeBackupImage)); err != nil {
+		return err
+	}
+	if err := update("volume_backup_env", s.VolumeBackupEnv); err != nil {
+		return err
+	}
+	volumesJSON := "[]"
+	if b, err := json.Marshal(normalizeStringSlice(s.VolumeBackupVolumes)); err == nil {
+		volumesJSON = string(b)
+	}
+	if err := update("volume_backup_volumes", volumesJSON); err != nil {
+		return err
+	}
+	if err := update("volume_backup_archive_dir", strings.TrimSpace(s.VolumeBackupArchiveDir)); err != nil {
+		return err
+	}
+	if err := update("volume_backup_mount_docker_sock", strconv.FormatBool(s.VolumeBackupMountDockerSock)); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func normalizeStringSlice(list []string) []string {
+	out := make([]string, 0, len(list))
+	seen := make(map[string]struct{}, len(list))
+	for _, v := range list {
+		s := strings.TrimSpace(v)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func parseStringSlice(raw string) []string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return nil
+	}
+	var list []string
+	if json.Unmarshal([]byte(s), &list) == nil {
+		return normalizeStringSlice(list)
+	}
+	return normalizeStringSlice(strings.Split(s, ","))
 }
 
 func GetValue(key string) (string, error) {

@@ -11,7 +11,7 @@
           @keyup.enter="refreshAll"
         >
           <template #prefix>
-            <el-icon><Search /></el-icon>
+            <IconEpSearch />
           </template>
         </el-input>
         
@@ -25,25 +25,27 @@
       <div class="filter-right">
         <el-button-group class="main-actions">
           <el-button @click="refreshAll" :loading="loading" plain size="medium">
-            <template #icon><el-icon><Refresh /></el-icon></template>
+            <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <!--<el-button plain size="medium" @click="handleOpenDeployProgress">
             进度查询
           </el-button>-->
           <el-button type="primary" @click="goCreateProject" size="medium">
-            <template #icon><el-icon><Plus /></el-icon></template>
+            <template #icon><IconEpPlus /></template>
             新建项目
           </el-button>
         </el-button-group>
         
         <el-dropdown trigger="click" @command="handleGlobalAction">
           <el-button plain class="more-btn" size="medium">
-            更多操作<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="prune" :icon="Remove" :disabled="hasSelfResource">清除已停止容器</el-dropdown-item>
+              <el-dropdown-item command="prune" :disabled="hasSelfResource">
+                <IconEpRemove class="el-icon--left" />清除已停止容器
+              </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -68,130 +70,135 @@
           <template #default="props">
             <div class="expanded-container" v-if="props.row.containers?.length">
               <div class="expanded-header">
-                <el-icon><Connection /></el-icon> 包含容器 ({{ props.row.containers.length }})
+                <IconEpConnection class="el-icon--left" /> 包含容器 ({{ props.row.containers.length }})
               </div>
-              <el-table 
-                :data="props.row.containers" 
-                size="default" 
-                :show-header="true"
-                class="inner-table"
-                :row-class-name="containerRowClassName"
-                :row-style="{ height: 'auto' }"
-              >
-                <el-table-column label="容器名称" min-width="180" sortable prop="name">
-                  <template #default="scope">
-                    <div class="container-name-cell" @click="goContainerDetail(scope.row)">
-                      <el-icon class="container-icon" size="18"><Platform /></el-icon>
-                      <span class="container-name-text">{{ scope.row.name }}</span>
+              <div class="container-grid">
+                <div 
+                  class="container-card clay-card" 
+                  v-for="c in props.row.containers" 
+                  :key="c.id"
+                >
+                  <div class="card-header">
+                    <div class="card-title" @click="goContainerDetail(c)">
+                      <IconEpPlatform class="container-icon" />
+                      <span class="name-text text-truncate" :title="c.name">{{ c.name }}</span>
                     </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="镜像" min-width="180" header-align="left" sortable prop="image">
-                  <template #default="scope">
-                    <div class="image-inline font-mono truncate" :title="scope.row.image">
-                      {{ getImageName(scope.row.image) }}:{{ getImageTag(scope.row.image) }}
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="端口" min-width="180" header-align="left" sortable :sort-method="(a, b) => (a.Ports?.length || 0) - (b.Ports?.length || 0)">
-                  <template #default="scope">
-                    <div class="ports-list">
-                      <template v-if="scope.row.Ports && scope.row.Ports.length">
-                        <el-tag 
-                          v-for="(port, index) in scope.row.Ports.slice(0, 3)" 
-                          :key="index" 
-                          size="small" 
-                          class="port-tag font-mono"
-                          effect="plain"
-                        >
-                          {{ formatPortWithIP(port) }}
-                        </el-tag>
-                        <el-tooltip
-                          v-if="scope.row.Ports.length > 3"
-                          placement="top"
-                          effect="light"
-                          popper-class="ports-tooltip"
-                        >
-                          <template #content>
-                            <div class="ports-tooltip-content">
-                              <div v-for="(port, index) in scope.row.Ports" :key="index" class="port-item font-mono">
-                                {{ formatPortWithIP(port) }}
-                              </div>
-                            </div>
-                          </template>
-                          <el-tag size="small" type="info" class="port-tag more-ports cursor-pointer">
-                            +{{ scope.row.Ports.length - 3 }}
-                          </el-tag>
-                        </el-tooltip>
-                      </template>
-                      <span v-else class="text-gray">-</span>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="网络" min-width="160" header-align="left" sortable :sort-method="(a, b) => getNetworkNames(a).length - getNetworkNames(b).length">
-                  <template #default="scope">
-                    <div class="networks-list">
-                      <template v-if="getNetworkNames(scope.row).length">
-                        <el-tag v-for="(n, idx) in getNetworkNames(scope.row)" :key="idx" size="small" class="network-tag">{{ n }}</el-tag>
-                      </template>
-                      <span v-else class="text-gray">-</span>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="创建时间" min-width="140" header-align="left" sortable prop="Created">
-                  <template #default="scope">
-                    <div class="text-gray font-mono whitespace-pre-line">
-                      {{ formatTimeTwoLines(scope.row.Created) }}
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="状态" width="120" sortable prop="state">
-                  <template #default="scope">
-                    <el-tag size="default" :type="isRunning(scope.row.state) ? 'success' : 'info'" effect="light">
-                      {{ toCnState(scope.row.state) }}
+                    <el-tag size="small" :type="isRunning(c.state) ? 'success' : 'info'" effect="light" class="status-tag">
+                      {{ toCnState(c.state) }}
                     </el-tag>
-                  </template>
-                </el-table-column>
-        <el-table-column label="操作" width="260" fixed="left" align="center" class-name="col-ops">
-                  <template #default="scope">
-                    <div class="op-buttons">
-                      <template v-if="!scope.row.isSelf">
+                  </div>
+
+                  <div class="card-body">
+                    <div class="info-item">
+                      <span class="label">镜像</span>
+                      <div class="value font-mono text-truncate" :title="c.image">
+                        {{ getImageName(c.image) }}:{{ getImageTag(c.image) }}
+                      </div>
+                    </div>
+                    
+                    <div class="info-item">
+                      <span class="label">端口</span>
+                      <div class="value ports-wrapper">
+                        <template v-if="c.Ports && c.Ports.length">
+                          <el-tag 
+                            v-for="(port, index) in c.Ports.slice(0, 2)" 
+                            :key="index" 
+                            size="small" 
+                            class="port-tag font-mono"
+                            effect="plain"
+                          >
+                            {{ formatPortWithIP(port) }}
+                          </el-tag>
+                          <el-tooltip
+                            v-if="c.Ports.length > 2"
+                            placement="top"
+                            effect="light"
+                            popper-class="ports-tooltip"
+                          >
+                            <template #content>
+                              <div class="ports-tooltip-content">
+                                <div v-for="(port, index) in c.Ports" :key="index" class="port-item font-mono">
+                                  {{ formatPortWithIP(port) }}
+                                </div>
+                              </div>
+                            </template>
+                            <el-tag size="small" type="info" class="port-tag more-ports cursor-pointer">
+                              +{{ c.Ports.length - 2 }}
+                            </el-tag>
+                          </el-tooltip>
+                        </template>
+                        <span v-else class="text-gray">-</span>
+                      </div>
+                    </div>
+
+                    <div class="info-item">
+                      <span class="label">网络</span>
+                      <div class="value networks-wrapper">
+                        <template v-if="getNetworkNames(c).length">
+                          <el-tag v-for="(n, idx) in getNetworkNames(c)" :key="idx" size="small" class="network-tag">{{ n }}</el-tag>
+                        </template>
+                        <span v-else class="text-gray">-</span>
+                      </div>
+                    </div>
+
+                    <div class="info-item">
+                      <span class="label">创建</span>
+                      <div class="value font-mono text-gray">
+                        {{ formatTimeTwoLines(c.Created) }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card-footer">
+                    <template v-if="!c.isSelf">
+                      <div class="action-group">
                         <el-tooltip content="终端" placement="top" :show-after="500">
-                          <el-button circle plain size="small" @click="openTerminal(scope.row)">
-                            <el-icon><Monitor /></el-icon>
+                          <el-button circle plain size="small" @click="openTerminal(c)">
+                            <IconEpMonitor />
                           </el-button>
                         </el-tooltip>
                         <el-tooltip content="日志" placement="top" :show-after="500">
-                          <el-button circle plain size="small" @click="openLogs(scope.row)">
-                            <el-icon><Document /></el-icon>
+                          <el-button circle plain size="small" @click="openLogs(c)">
+                            <IconEpDocument />
                           </el-button>
                         </el-tooltip>
+                      </div>
+                      <div class="action-divider"></div>
+                      <div class="action-group">
                         <el-tooltip content="启动" placement="top" :show-after="500">
-                          <el-button circle plain size="small" type="primary" @click="startContainer(scope.row)" :disabled="isRunning(scope.row.state)">
-                            <el-icon><VideoPlay /></el-icon>
+                          <el-button circle plain size="small" type="primary" @click="startContainer(c)" :disabled="isRunning(c.state)">
+                            <IconEpVideoPlay />
                           </el-button>
                         </el-tooltip>
                         <el-tooltip content="停止" placement="top" :show-after="500">
-                          <el-button circle plain size="small" type="warning" @click="stopContainer(scope.row)" :disabled="!isRunning(scope.row.state)">
-                            <el-icon><VideoPause /></el-icon>
+                          <el-button circle plain size="small" type="warning" @click="stopContainer(c)" :disabled="!isRunning(c.state)">
+                            <IconEpVideoPause />
                           </el-button>
                         </el-tooltip>
                         <el-tooltip content="重启" placement="top" :show-after="500">
-                          <el-button circle plain size="small" type="info" @click="restartContainer(scope.row)">
-                            <el-icon><Refresh /></el-icon>
+                          <el-button circle plain size="small" type="info" @click="restartContainer(c)">
+                            <IconEpRefresh />
                           </el-button>
                         </el-tooltip>
-                        <el-tooltip content="删除" placement="top" :show-after="500">
-                          <el-button circle plain size="small" type="danger" @click="deleteContainer(scope.row)">
-                            <el-icon><Delete /></el-icon>
-                          </el-button>
-                        </el-tooltip>
-                      </template>
-                      <el-tag v-else size="small" type="warning" effect="plain">项目本身不支持修改</el-tag>
+                        <el-popconfirm title="确定删除该容器吗？" @confirm="deleteContainer(c)">
+                          <template #reference>
+                            <div class="delete-btn-wrapper">
+                              <el-tooltip content="删除" placement="top" :show-after="500">
+                                <el-button circle plain size="small" type="danger">
+                                  <IconEpDelete />
+                                </el-button>
+                              </el-tooltip>
+                            </div>
+                          </template>
+                        </el-popconfirm>
+                      </div>
+                    </template>
+                    <div v-else class="self-tag-wrapper">
+                      <el-tag size="small" type="warning" effect="plain">项目本身不支持修改</el-tag>
                     </div>
-                  </template>
-                </el-table-column>
-              </el-table>
+                  </div>
+                </div>
+              </div>
             </div>
             <div v-else class="empty-expand">
               暂无容器
@@ -203,14 +210,34 @@
           <template #default="scope">
             <div class="project-name-cell" @click="handleNameClick(scope.row)">
               <div class="icon-wrapper" :class="scope.row.type">
-                <el-icon v-if="scope.row.type === 'compose'"><Folder /></el-icon>
-                <el-icon v-else><Box /></el-icon>
+                <IconEpFolder v-if="scope.row.type === 'compose'" />
+                <IconEpBox v-else />
               </div>
               <div class="name-info">
                 <span class="name-text">{{ scope.row.name }}</span>
                 <el-tag v-if="scope.row.isSelf" size="small" type="warning" effect="plain">达咩</el-tag>
                 <span class="type-tag" v-if="scope.row.type === 'compose'">Compose</span>
                 <span class="type-tag" v-else-if="scope.row.type === 'container'">独立容器</span>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="更新" width="140" align="center" prop="updateAvailable">
+          <template #default="scope">
+            <div>
+              <el-button
+                v-if="scope.row.updateAvailable"
+                size="small"
+                type="danger"
+                plain
+                @click.stop="scope.row.type === 'container' ? handleUpdateContainer(scope.row) : handleUpdateProject(scope.row)"
+              >
+                <IconEpTop class="mr-1" />更新
+              </el-button>
+              <span v-else class="text-gray">-</span>
+              <div v-if="scope.row.type === 'compose' && scope.row.updateCount" class="text-gray">
+                可更新 {{ scope.row.updateCount }}
               </div>
             </div>
           </template>
@@ -263,27 +290,31 @@
               <template v-if="!scope.row.isSelf">
                 <el-tooltip content="启动项目" placement="top">
                   <el-button circle size="default" type="primary" plain @click="startProject(scope.row)">
-                    <el-icon><VideoPlay /></el-icon>
+                    <IconEpVideoPlay />
                   </el-button>
                 </el-tooltip>
                 <el-tooltip content="停止项目" placement="top">
                   <el-button circle size="default" type="warning" plain @click="stopProject(scope.row)">
-                    <el-icon><VideoPause /></el-icon>
+                    <IconEpVideoPause />
                   </el-button>
                 </el-tooltip>
                 <el-tooltip content="编辑配置" placement="top">
                   <el-button circle size="default" type="info" plain @click="editProject(scope.row)">
-                    <el-icon><Edit /></el-icon>
+                    <IconEpEdit />
                   </el-button>
                 </el-tooltip>
                 <el-dropdown trigger="click" @command="(cmd) => handleProjectCommand(cmd, scope.row)">
                   <el-button circle size="default" plain class="ml-2">
-                    <el-icon><MoreFilled /></el-icon>
+                    <IconEpMoreFilled />
                   </el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
-                      <el-dropdown-item command="down" :icon="CircleClose">清理 (Down)</el-dropdown-item>
-                      <el-dropdown-item command="remove" :icon="Delete" divided class="text-danger">删除项目</el-dropdown-item>
+                      <el-dropdown-item command="down">
+                        <IconEpCircleClose class="el-icon--left" />清理 (Down)
+                      </el-dropdown-item>
+                      <el-dropdown-item command="remove" divided class="text-danger">
+                        <IconEpDelete class="el-icon--left" />删除项目
+                      </el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
@@ -343,7 +374,7 @@
               <el-input v-model="projectForm.path" placeholder="自动生成" readonly>
                 <template #append>
                   <el-tooltip content="项目将存放在 project 目录下">
-                    <el-icon><InfoFilled /></el-icon>
+                    <IconEpInfoFilled />
                   </el-tooltip>
                 </template>
               </el-input>
@@ -354,7 +385,7 @@
                   <span class="file-name">docker-compose.yml</span>
                   <el-dropdown trigger="click">
                     <el-button size="small" link type="primary">
-                      插入模板<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                      插入模板<IconEpArrowDown class="el-icon--right" />
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
@@ -456,6 +487,31 @@
         </span>
       </template>
     </el-dialog>
+    <el-dialog
+      v-model="updateDialogVisible"
+      title="项目更新"
+      width="800px"
+      :close-on-click-modal="false"
+      :show-close="true"
+      append-to-body
+      @close="handleCloseUpdateDialog"
+    >
+      <div class="update-logs-body bg-black text-white p-4 font-mono text-sm h-[400px] overflow-y-auto rounded" ref="updateLogsContent">
+        <div v-if="updateLogs.length === 0" class="text-gray-400">
+          正在连接更新服务...
+        </div>
+        <div v-for="(log, index) in updateLogs" :key="index" :class="['mb-1', log.type === 'error' ? 'text-red-400' : 'text-gray-300']">
+          <span class="mr-2 text-gray-500">[{{ dayjs().format('HH:mm:ss') }}]</span>
+          <span>{{ log.message }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="updateDialogVisible = false" :disabled="updateStreamOpen">关闭</el-button>
+          <el-button type="primary" @click="updateDialogVisible = false" v-if="!updateStreamOpen">完成</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -463,10 +519,7 @@
 import { ref, computed, onMounted, nextTick, shallowRef, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { 
-  Plus, Refresh, Remove, Search, VideoPlay, VideoPause, Edit, Delete, CircleClose,
-  Folder, Box, Platform, Connection, MoreFilled, ArrowDown, Document, Monitor, InfoFilled
-} from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
 import api from '../api'
 import { formatTimeTwoLines, normalizeComposeProjectName } from '../utils/format'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
@@ -695,6 +748,72 @@ const {
     return { type: tp, message: m || String(payload || '') }
   }
 })
+
+// Update Dialog Logic
+const updateDialogVisible = ref(false)
+const updateLogsContent = ref(null)
+const {
+  logs: updateLogs,
+  isOpen: updateStreamOpen,
+  start: startUpdateStream,
+  stop: stopUpdateStream,
+  clear: clearUpdateLogs
+} = useSseLogStream({
+  autoScroll: ref(true),
+  scrollElRef: updateLogsContent,
+  onOpenLine: '连接成功，开始更新...',
+  onErrorLine: '连接断开',
+  makeEntry: (payload) => {
+    // 简单处理日志格式: "level: message"
+    const str = String(payload || '')
+    let type = 'info'
+    let message = str
+    if (str.startsWith('error:')) {
+      type = 'error'
+      message = str.substring(6).trim()
+    } else if (str.startsWith('warn:')) {
+      type = 'warning'
+      message = str.substring(5).trim()
+    } else if (str.startsWith('info:')) {
+      type = 'info'
+      message = str.substring(5).trim()
+    } else if (str.startsWith('success:')) {
+      type = 'success'
+      message = str.substring(8).trim()
+    }
+    return { type, message }
+  }
+})
+
+const handleUpdateProject = (row) => {
+  if (row.isSelf) {
+    ElMessage.warning('自身项目不支持更新')
+    return
+  }
+  updateDialogVisible.value = true
+  clearUpdateLogs()
+  // 延迟一点启动，让 dialog 渲染出来
+  nextTick(() => {
+    startUpdateStream(`/api/compose/${row.name}/update/events`)
+  })
+}
+
+const handleCloseUpdateDialog = () => {
+  stopUpdateStream()
+  refreshAll() // 更新完成后刷新列表状态
+}
+
+const handleUpdateContainer = (row) => {
+  if (row?.isSelf) {
+    ElMessage.warning('容器化部署模式下，不支持更新自身容器')
+    return
+  }
+  updateDialogVisible.value = true
+  clearUpdateLogs()
+  nextTick(() => {
+    startUpdateStream(`/api/containers/${row.id}/update/events`)
+  })
+}
 
 const progressDialogVisible = ref(false)
 const progressTaskId = ref('')
@@ -945,6 +1064,8 @@ const refreshAll = async () => {
         path: p.path,
         createTime: p.createTime, // Added createTime
         isSelf: !!p.isSelf,
+        updateAvailable: !!p.updateAvailable,
+        updateCount: p.updateCount || 0,
         containers: []
       })
     }
@@ -969,6 +1090,7 @@ const refreshAll = async () => {
         Ports: c.Ports,     // Added Ports
         NetworkSettings: c.NetworkSettings, // Added NetworkSettings
         isSelf,
+        updateAvailable: !!c.UpdateAvailable,
         // Helper for status runtime if needed, though usually in Status string
         Status: c.Status
       }
@@ -1875,7 +1997,7 @@ watch(
   padding: 4px;
   margin: 2px;
   box-shadow: var(--shadow-clay-btn), var(--shadow-clay-inner);
-  border: 1px solid rgba(55, 65, 81, 0.08);
+  border: 1px solid var(--clay-border);
 }
 
 .project-name-cell:hover .icon-wrapper {
@@ -1883,16 +2005,12 @@ watch(
 }
 
 .icon-wrapper.compose {
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(147, 197, 253, 0.28), rgba(255, 133, 179, 0.18));
+  background: var(--icon-bg-compose);
   color: var(--clay-ink);
 }
 
 .icon-wrapper.container {
-  background:
-    radial-gradient(120% 90% at 20% 10%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 55%, rgba(255, 255, 255, 0) 100%),
-    linear-gradient(135deg, rgba(110, 231, 183, 0.14), rgba(147, 197, 253, 0.16));
+  background: var(--icon-bg-container);
   color: var(--clay-ink);
 }
 
@@ -1935,18 +2053,19 @@ watch(
 }
 
 .status-point {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
 }
 
 .status-point.running {
-  background-color: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34,197,94,0.2);
+  background: var(--status-active-bg);
+  box-shadow: var(--status-active-shadow);
 }
 
 .status-point.stopped {
-  background-color: var(--el-text-color-disabled);
+  background: var(--status-idle-bg);
+  box-shadow: var(--status-idle-shadow);
 }
 
 .status-point.partial {
@@ -2077,4 +2196,142 @@ watch(
  .whitespace-pre-line { white-space: pre-line; }
  .networks-list { display: flex; flex-wrap: wrap; gap: 4px; }
  .network-tag { background: rgba(255, 255, 255, 0.55); color: var(--el-text-color-secondary); border: 1px solid rgba(55, 65, 81, 0.08); box-shadow: var(--shadow-clay-inner); }
- </style>
+ 
+ /* Refactored Container Card Styles */
+ .container-grid {
+   display: grid;
+   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+   gap: var(--spacing-md);
+   padding: var(--spacing-md);
+   background: var(--el-fill-color-light);
+   border-radius: var(--el-border-radius-base);
+   margin-top: var(--spacing-xs);
+ }
+ 
+ .container-card {
+   display: flex;
+   flex-direction: column;
+   padding: var(--spacing-md);
+   border-radius: var(--el-border-radius-base);
+   background: var(--clay-card-solid);
+   box-shadow: var(--shadow-clay-card);
+   transition: transform 0.2s, box-shadow 0.2s;
+   border: 1px solid var(--clay-border);
+ }
+ 
+ .container-card:hover {
+   transform: translateY(-2px);
+   box-shadow: var(--shadow-clay-float);
+ }
+ 
+ .card-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   margin-bottom: var(--spacing-md);
+   padding-bottom: var(--spacing-sm);
+   border-bottom: 1px dashed var(--el-border-color-lighter);
+ }
+ 
+ .card-title {
+   display: flex;
+   align-items: center;
+   gap: var(--spacing-sm);
+   font-weight: 600;
+   font-size: 16px;
+   color: var(--el-text-color-primary);
+   cursor: pointer;
+   overflow: hidden;
+ }
+ 
+ .card-title:hover {
+   color: var(--el-color-primary);
+ }
+ 
+ .name-text {
+   flex: 1;
+ }
+ 
+ .card-body {
+   flex: 1;
+   display: flex;
+   flex-direction: column;
+   gap: var(--spacing-sm);
+   margin-bottom: var(--spacing-md);
+ }
+ 
+ .info-item {
+   display: flex;
+   align-items: flex-start;
+   gap: var(--spacing-sm);
+   font-size: 13px;
+ }
+ 
+ .label {
+   color: var(--el-text-color-secondary);
+   width: 40px;
+   flex-shrink: 0;
+ }
+ 
+ .value {
+   flex: 1;
+   color: var(--el-text-color-regular);
+   overflow: hidden;
+ }
+ 
+ .text-truncate {
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+ }
+ 
+ .ports-wrapper, .networks-wrapper {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 4px;
+ }
+ 
+ .card-footer {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding-top: var(--spacing-sm);
+   border-top: 1px dashed var(--el-border-color-lighter);
+ }
+ 
+ .action-group {
+   display: flex;
+   gap: 8px;
+ }
+ 
+ .action-divider {
+   width: 1px;
+   height: 20px;
+   background: var(--el-border-color-lighter);
+   margin: 0 4px;
+ }
+ 
+ .delete-btn-wrapper {
+   display: inline-block;
+ }
+ 
+ .self-tag-wrapper {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.update-badge {
+  margin-left: 8px;
+}
+.update-logs-body {
+  background-color: #1a1a1a;
+  color: #e5e7eb;
+  padding: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.875rem;
+  height: 400px;
+  overflow-y: auto;
+  border-radius: 0.25rem;
+}
+</style>

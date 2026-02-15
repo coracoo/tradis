@@ -268,7 +268,22 @@ func createTables() error {
 	if err := ensureTableColumns("navigation_items", []columnSpec{
 		{Name: "is_deleted", AddColumnSQL: "is_deleted INTEGER DEFAULT 0"},
 		{Name: "icon_path", AddColumnSQL: "icon_path TEXT"},
+		{Name: "ai_generated", AddColumnSQL: "ai_generated INTEGER DEFAULT 0"},
 	}); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	    CREATE TABLE IF NOT EXISTS ai_logs (
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
+	        scope TEXT,
+	        level TEXT,
+	        message TEXT,
+	        details TEXT,
+	        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	    );
+	`)
+	if err != nil {
 		return err
 	}
 

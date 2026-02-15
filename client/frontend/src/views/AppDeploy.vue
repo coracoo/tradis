@@ -3,13 +3,13 @@
     <div class="filter-bar">
       <div class="filter-left">
         <el-button @click="goBack" circle plain size="small">
-          <el-icon><ArrowLeft /></el-icon>
+          <IconEpArrowLeft />
         </el-button>
         <span class="page-title">部署应用 - {{ project?.name }}</span>
       </div>
       <div class="filter-right">
         <el-button @click="fetchProject" plain size="medium">
-          <template #icon><el-icon><Refresh /></el-icon></template>
+          <template #icon><IconEpRefresh /></template>
           刷新
         </el-button>
       </div>
@@ -58,8 +58,8 @@
                        size="small" 
                        @click="handleAutoAllocate" 
                        :loading="allocating"
-                       icon="MagicStick"
                      >
+                       <template #icon><IconEpMagicStick /></template>
                        {{ allocating ? '正在分配...' : '一键分配端口' }}
                      </el-button>
                   </div>
@@ -74,8 +74,9 @@
             <el-empty description="暂无配置参数" />
           </div>
 
-          <!-- 按服务分组展示 -->
-          <el-collapse v-model="activeServiceNames" class="service-collapse-container">
+          <div class="deploy-grid">
+            <div class="deploy-left">
+              <el-collapse v-model="activeServiceNames" class="service-collapse-container">
             <el-collapse-item
               name="__dotenv__"
               class="service-collapse-item global-env-collapse-item"
@@ -85,7 +86,7 @@
                   <div class="service-header-left">
                     <span class="service-name-text">全局变量（.env）</span>
                     <el-button size="small" link type="primary" class="add-param-btn" @click.stop="handleAddGlobalDotenvKey">
-                      <el-icon><Plus /></el-icon> 添加参数
+                      <IconEpPlus class="el-icon--left" /> 添加参数
                     </el-button>
                   </div>
                   <div class="service-header-right">
@@ -132,7 +133,7 @@
 
                       <el-col :span="1" style="text-align: center;">
                         <el-button link type="danger" @click="handleRemoveDotenvKey(row.key)">
-                          <el-icon><Remove /></el-icon>
+                          <IconEpMinus />
                         </el-button>
                       </el-col>
                     </el-row>
@@ -151,7 +152,7 @@
                   <div class="service-header-left">
                     <span class="service-name-text">{{ serviceName === 'Global' ? '全局配置' : serviceName }}</span>
                     <el-button size="small" link type="primary" class="add-param-btn" @click.stop="handleAddCustomParam(serviceName)">
-                      <el-icon><Plus /></el-icon> 添加参数
+                      <IconEpPlus class="el-icon--left" /> 添加参数
                     </el-button>
                   </div>
                   <div class="service-header-right">
@@ -201,7 +202,7 @@
                           >
                             <template #suffix>
                                <el-tooltip v-if="config.description" :content="config.description" placement="top">
-                                <el-icon class="help-icon"><QuestionFilled /></el-icon>
+                                  <IconEpQuestionFilled class="help-icon" />
                               </el-tooltip>
                             </template>
                           </el-input>
@@ -242,13 +243,14 @@
                               :value="opt" 
                             />
                           </el-select>
+                          <div v-if="shouldShowDotenvInheritanceHint(config)" class="inherit-hint">将从 .env 注入</div>
                         </el-form-item>
                       </el-col>
 
                       <!-- 4. 删除按钮 -->
                       <el-col :span="1" style="text-align: center;">
                         <el-button link type="danger" @click="handleRemoveParam(config)">
-                          <el-icon><Remove /></el-icon>
+                          <IconEpMinus />
                         </el-button>
                       </el-col>
                     </el-row>
@@ -258,9 +260,7 @@
                 <!-- 高级配置 -->
                 <div v-if="group.advanced.length > 0" class="config-section">
                   <div class="advanced-header" @click="toggleAdvanced(serviceName)" style="cursor: pointer; padding: 10px 0; display: flex; align-items: center; color: var(--el-text-color-secondary);">
-                    <el-icon :class="{ 'is-active': activeAdvancedCollapse.includes(`advanced-${serviceName}`) }" style="margin-right: 5px; transition: transform 0.3s;">
-                      <ArrowRight />
-                    </el-icon>
+                    <IconEpArrowRight :class="{ 'is-active': activeAdvancedCollapse.includes(`advanced-${serviceName}`) }" style="margin-right: 5px; transition: transform 0.3s;" />
                     <span>高级配置 ({{ group.advanced.length }})</span>
                   </div>
                   <el-collapse-transition>
@@ -300,7 +300,7 @@
                               >
                                 <template #suffix>
                                   <el-tooltip v-if="config.description" :content="config.description" placement="top">
-                                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
+                                    <IconEpQuestionFilled class="help-icon" />
                                   </el-tooltip>
                                 </template>
                               </el-input>
@@ -348,7 +348,7 @@
                           <!-- 4. 删除按钮 -->
                           <el-col :span="1" style="text-align: center;">
                             <el-button link type="danger" @click="handleRemoveParam(config)">
-                              <el-icon><Remove /></el-icon>
+                              <IconEpMinus />
                             </el-button>
                           </el-col>
                         </el-row>
@@ -358,7 +358,50 @@
                 </div>
               </div>
             </el-collapse-item>
-          </el-collapse>
+              </el-collapse>
+            </div>
+            <div class="deploy-right">
+              <div class="var-panel">
+                <div class="var-panel-header">
+                  <div class="var-panel-title">变量</div>
+                  <div class="var-panel-tags">
+                    <el-tag v-if="requiredVarsMissingCount > 0" size="small" effect="plain" type="warning">缺 {{ requiredVarsMissingCount }}</el-tag>
+                    <el-tag size="small" effect="plain" type="info">{{ filteredCatalogVariables.length }}/{{ catalogVariables.length }}</el-tag>
+                  </div>
+                </div>
+                <el-input v-model="varSearch" placeholder="搜索变量/来源/示例/值" clearable size="small" />
+                <div class="var-panel-actions">
+                  <el-switch v-model="varOnlyReferenced" size="small" active-text="仅被引用" inactive-text="全部变量" />
+                </div>
+                <div v-if="catalogVariables.length === 0" class="var-empty">
+                  <el-empty description="暂无变量" />
+                </div>
+                <div v-else class="var-list">
+                  <div v-for="v in filteredCatalogVariables" :key="v.name" class="var-row">
+                    <div class="var-row-top">
+                      <div class="var-name mono-text">{{ v.name }}</div>
+                      <div class="var-tags">
+                        <el-tag v-if="v.required" size="small" type="danger" effect="plain">必填</el-tag>
+                        <el-tag v-if="v.sources.includes('compose')" size="small" type="info" effect="plain">引用</el-tag>
+                        <el-tag v-if="v.sources.includes('dotenv')" size="small" type="success" effect="plain">已定义</el-tag>
+                        <el-tag v-else size="small" type="warning" effect="plain">未定义</el-tag>
+                      </div>
+                    </div>
+                    <el-input
+                      :model-value="getCatalogVarValue(v.name, v.defaultValue)"
+                      size="small"
+                      class="mono-input"
+                      :placeholder="String(v.defaultValue || '')"
+                      @update:model-value="(val) => handleSetDotenvValue(v.name, val)"
+                    />
+                    <div v-if="v.examples && v.examples.length" class="var-examples mono-text">
+                      {{ v.examples[0] }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <!-- 操作按钮 -->
           <div class="form-actions">
@@ -441,7 +484,6 @@
 <script setup>
 import { ref, computed, onMounted, reactive, nextTick, shallowRef, triggerRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { QuestionFilled, ArrowRight, ArrowLeft, Plus, Remove, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElImageViewer } from 'element-plus'
 import { parseDocument, isMap } from 'yaml'
 import api from '../api'
@@ -585,6 +627,9 @@ const tutorialHtml = computed(() => renderMarkdown(project.value?.tutorial || ''
 const formData = ref({})
 const rules = reactive({})
 const dotenvText = ref('')
+const appVarCatalog = ref({ variables: [], warnings: [] })
+const varSearch = ref('')
+const varOnlyReferenced = ref(true)
 const dotenvKeyDraftMap = reactive({})
 const getDotenvKeyDraft = (key) => {
   const k = String(key || '').trim()
@@ -856,6 +901,70 @@ const dotenvRows = computed(() => {
     .map((k) => ({ key: k, value: map[k] }))
 })
 
+const dotenvMapForVars = computed(() => {
+  return parseDotenvTextToOrderedMap(dotenvText.value).map || {}
+})
+
+const shouldShowDotenvInheritanceHint = (config) => {
+  if (!config) return false
+  const svc = String(config?.serviceName || '').trim()
+  if (!svc || svc === 'Global') return false
+  if (!isEnvConfigItem(config)) return false
+  const key = String(config?.name || '').trim()
+  if (!key) return false
+  const cur = String(formData.value?.[config.formKey] ?? '').trim()
+  if (cur) return false
+  return Object.prototype.hasOwnProperty.call(dotenvMapForVars.value, key)
+}
+
+const catalogVariables = computed(() => {
+  const list = appVarCatalog.value && Array.isArray(appVarCatalog.value.variables) ? appVarCatalog.value.variables : []
+  return list
+    .filter(v => v && typeof v === 'object' && String(v.name || '').trim())
+    .map(v => ({
+      name: String(v.name || '').trim(),
+      required: !!v.required,
+      defaultValue: String(v.defaultValue ?? v.value ?? ''),
+      sources: Array.isArray(v.sources) ? v.sources.map(s => String(s || '').trim()).filter(Boolean) : [],
+      examples: Array.isArray(v.examples) ? v.examples.map(s => String(s || '').trim()).filter(Boolean) : []
+    }))
+})
+
+const requiredVarsMissingCount = computed(() => {
+  const map = dotenvMapForVars.value || {}
+  return catalogVariables.value.filter(v => v.required && !Object.prototype.hasOwnProperty.call(map, v.name)).length
+})
+
+const filteredCatalogVariables = computed(() => {
+  const q = String(varSearch.value || '').trim().toLowerCase()
+  const onlyRef = !!varOnlyReferenced.value
+  const map = dotenvMapForVars.value || {}
+
+  return catalogVariables.value.filter(v => {
+    if (!v || !v.name) return false
+    if (onlyRef && !v.sources.includes('compose')) return false
+    if (!q) return true
+
+    const ex = (v.examples || []).join(' ')
+    const src = (v.sources || []).join(' ')
+    const val = Object.prototype.hasOwnProperty.call(map, v.name) ? String(map[v.name] ?? '') : ''
+    return (
+      v.name.toLowerCase().includes(q) ||
+      src.toLowerCase().includes(q) ||
+      ex.toLowerCase().includes(q) ||
+      val.toLowerCase().includes(q)
+    )
+  })
+})
+
+const getCatalogVarValue = (name, fallback) => {
+  const k = String(name || '').trim()
+  if (!k) return ''
+  const map = dotenvMapForVars.value || {}
+  if (Object.prototype.hasOwnProperty.call(map, k)) return String(map[k] ?? '')
+  return String(fallback ?? '')
+}
+
 /**
  * handleSetDotenvValue 在表单里修改全局变量时，同步写回 .env 文本
  */
@@ -1007,6 +1116,23 @@ const initForm = () => {
   })
 }
 
+const ensureDotenvContainsRequiredVars = () => {
+  const vars = catalogVariables.value || []
+  if (vars.length === 0) return
+  const { map } = parseDotenvTextToOrderedMap(dotenvText.value)
+  const missing = []
+  vars.forEach((v) => {
+    if (!v || !v.required) return
+    const k = String(v.name || '').trim()
+    if (!k) return
+    if (Object.prototype.hasOwnProperty.call(map, k)) return
+    missing.push(`${k}=`)
+  })
+  if (missing.length > 0) {
+    dotenvText.value = appendDotenvLines(dotenvText.value, missing)
+  }
+}
+
 const isValidPortNumber = (v) => {
   const t = String(v ?? '').trim()
   if (!t) return false
@@ -1034,13 +1160,21 @@ const setHostPortValueToConfig = (cfg, port) => {
 const fetchProject = async () => {
   loading.value = true
   try {
-    const res = await api.appstore.getProjectDetail(projectId)
-    // 兼容处理：如果响应本身就是对象数据（无 data 属性），或者包含 data 属性
+    const res = await api.appstore.getProjectVars(projectId)
     const data = res.data || res
-    if (data) {
-      project.value = data
+    const app = data && data.app ? data.app : null
+    if (app) {
+      project.value = app
+      if (typeof data.dotenv === 'string') {
+        project.value.dotenv = data.dotenv
+      }
+      appVarCatalog.value = {
+        variables: Array.isArray(data.variables) ? data.variables : [],
+        warnings: Array.isArray(data.warnings) ? data.warnings : []
+      }
       autoAllocTriggered.value = false
       initForm()
+      ensureDotenvContainsRequiredVars()
     } else {
       ElMessage.error('未找到该应用')
     }
@@ -1329,7 +1463,17 @@ const hasInterpolationInAnyValue = (v) => {
   return false
 }
 
-const collectServicesNeedEnvFileFromCompose = (yamlText) => {
+const isEnvConfigItem = (cfg) => {
+  const paramType = String(cfg?.paramType || '').trim()
+  const typ = String(cfg?.type || '').trim()
+  if (paramType) {
+    return paramType === 'env' || paramType === 'environment'
+  }
+  return ['string', 'password', 'number', 'boolean', 'text'].includes(typ)
+}
+
+const collectServicesNeedEnvFileFromCompose = (yamlText, opts = {}) => {
+  const { config, dotenvMap } = opts || {}
   const need = new Set()
   const input = String(yamlText || '')
   try {
@@ -1344,6 +1488,21 @@ const collectServicesNeedEnvFileFromCompose = (yamlText) => {
       if (!svcNode) continue
       const json = typeof svcNode.toJSON === 'function' ? svcNode.toJSON() : null
       if (hasInterpolationInAnyValue(json)) need.add(svcName)
+    }
+
+    const envMap = dotenvMap && typeof dotenvMap === 'object' ? dotenvMap : null
+    const cfgList = Array.isArray(config) ? config : null
+    if (envMap && cfgList) {
+      for (const cfg of cfgList) {
+        const svc = String(cfg?.serviceName || '').trim()
+        if (!svc || svc === 'Global') continue
+        if (!isEnvConfigItem(cfg)) continue
+        const key = String(cfg?.name || '').trim()
+        if (!key) continue
+        if (Object.prototype.hasOwnProperty.call(envMap, key)) {
+          need.add(svc)
+        }
+      }
     }
     return need
   } catch (e) {
@@ -1373,9 +1532,11 @@ const submitDeploy = async () => {
     // 0. 构建最终的环境变量/参数映射 (为了兼容性保留 Env Map，虽然主要靠 Config 数组)
     const finalEnv = {}
     const dotenvKeySet = new Set()
+    let dotenvMap = {}
     try {
-      const { map } = parseDotenvTextToOrderedMap(String(dotenvText.value || ''))
-      Object.keys(map || {}).forEach(k => {
+      const parsed = parseDotenvTextToOrderedMap(String(dotenvText.value || ''))
+      dotenvMap = parsed?.map || {}
+      Object.keys(dotenvMap || {}).forEach(k => {
         const kk = String(k || '').trim()
         if (kk) dotenvKeySet.add(kk)
       })
@@ -1431,7 +1592,7 @@ const submitDeploy = async () => {
     }
     const hasDotenv = String(dotenvText.value || '').trim().length > 0
     if (hasDotenv) {
-      const servicesNeedEnvFileFromYaml = collectServicesNeedEnvFileFromCompose(yamlContent)
+      const servicesNeedEnvFileFromYaml = collectServicesNeedEnvFileFromCompose(yamlContent, { config: effectiveConfig, dotenvMap })
       yamlContent = injectEnvFileForServicesAst(yamlContent, servicesNeedEnvFileFromYaml)
     } else {
       yamlContent = removeDotenvEnvFileRefsAst(yamlContent)
@@ -1704,6 +1865,13 @@ onMounted(() => {
   color: var(--clay-ink);
 }
 
+.inherit-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.2;
+}
+
 .content-wrapper {
   flex: 1;
   overflow: hidden;
@@ -1799,9 +1967,9 @@ onMounted(() => {
 .global-env-bar {
   margin-bottom: 18px;
   padding: 14px 16px;
-  border: 1px solid rgba(34, 197, 94, 0.35);
+  border: 1px solid var(--el-color-success-light-5);
   border-radius: 8px;
-  background: rgba(34, 197, 94, 0.08);
+  background: var(--tag-bg-success);
 }
 
 .dotenv-editor-container {
@@ -1817,7 +1985,7 @@ onMounted(() => {
 
 .dotenv-form-title {
   font-weight: 600;
-  color: rgba(34, 197, 94, 0.95);
+  color: var(--el-color-success);
 }
 
 .dotenv-key {
@@ -1826,7 +1994,7 @@ onMounted(() => {
 }
 
 .dotenv-table :deep(.el-table__header-wrapper th) {
-  background: rgba(34, 197, 94, 0.06);
+  background: var(--tag-bg-success);
 }
 
 .global-env-textarea :deep(.el-textarea__inner) {
@@ -1866,17 +2034,17 @@ onMounted(() => {
 }
 
 .global-env-collapse-item {
-  border-color: rgba(34, 197, 94, 0.35);
+  border-color: var(--el-color-success-light-5);
 }
 
 .global-env-collapse-item :deep(.el-collapse-item__header) {
-  background: rgba(34, 197, 94, 0.08);
+  background: var(--tag-bg-success);
 }
 
 .global-env-section {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: rgba(34, 197, 94, 0.04);
+  background: var(--tag-bg-success);
 }
 
 .mono-input :deep(.el-input__inner) {
@@ -2066,11 +2234,11 @@ onMounted(() => {
   margin-top: 24px;
   margin-bottom: 12px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--clay-ink);
 }
 
 :deep(.tutorial-content a) {
-  color: #3b82f6;
+  color: var(--el-color-primary);
   text-decoration: none;
 }
 
@@ -2090,7 +2258,7 @@ onMounted(() => {
 /* Overrides */
 :deep(.el-tabs__nav-wrap::after) {
   height: 1px;
-  background-color: #e2e8f0;
+  background-color: var(--el-border-color-lighter);
 }
 
 :deep(.el-button--medium) {
@@ -2115,5 +2283,116 @@ onMounted(() => {
   text-align: center;
   color: var(--el-text-color-secondary);
   padding: 40px;
+}
+
+.deploy-grid {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.deploy-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.deploy-right {
+  flex: 0 0 360px;
+  width: 360px;
+  min-width: 320px;
+}
+
+.var-panel {
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+  padding: 12px;
+}
+
+.var-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.var-panel-title {
+  font-weight: 900;
+  color: var(--clay-ink);
+}
+
+.var-panel-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.var-panel-actions {
+  margin-top: 10px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.var-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 680px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.var-row {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 14px;
+  padding: 10px;
+  background: var(--el-bg-color);
+}
+
+.var-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.var-name {
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+}
+
+.var-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.var-examples {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  word-break: break-word;
+}
+
+.mono-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+@media (max-width: 1100px) {
+  .deploy-grid {
+    flex-direction: column;
+  }
+  .deploy-right {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .var-list {
+    max-height: none;
+  }
 }
 </style>

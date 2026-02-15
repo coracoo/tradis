@@ -540,10 +540,12 @@ onBeforeUnmount(() => {
 .terminal-container {
   display: flex;
   min-height: 500px;
-  background-color: var(--el-bg-color-overlay);
+  background-color: var(--clay-card);
   padding: 5px;
-  border-radius: 8px;
+  border-radius: 16px;
   gap: 10px;
+  border: 1px solid var(--clay-border);
+  box-shadow: var(--clay-card-shadow);
 }
 
 .terminal {
@@ -552,9 +554,10 @@ onBeforeUnmount(() => {
 
 .left-panel {
   width: 250px;
-  background-color: var(--el-bg-color);
+  background-color: rgba(255, 255, 255, 0.3);
   padding: 10px;
-  border-radius: 8px;
+  border-radius: 16px;
+  border: 1px solid var(--clay-border);
 }
 
 .session-list {

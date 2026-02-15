@@ -113,16 +113,15 @@ func shouldApplyMinAPIVersionFix(engineVersion string, apiVersion string) bool {
 // 获取系统信息
 func getSystemInfo(c *gin.Context) {
 	// 创建Docker客户端
-	cli, err := docker.NewDockerClient()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接Docker失败: " + err.Error()})
+	cli, ok := getDockerClient(c)
+	if !ok {
 		return
 	}
 	defer cli.Close()
 
 	info, err := cli.Info(context.Background())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取Docker信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取Docker信息失败", err)
 		return
 	}
 
@@ -172,21 +171,21 @@ func getSystemInfo(c *gin.Context) {
 	// 获取系统内存信息
 	memInfo, err := mem.VirtualMemory()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取内存信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取内存信息失败", err)
 		return
 	}
 
 	// 获取CPU信息
 	cpuPercent, err := cpu.Percent(0, false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取CPU信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取CPU信息失败", err)
 		return
 	}
 
 	// 获取磁盘信息
 	diskInfo, err := disk.Usage("/")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取磁盘信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取磁盘信息失败", err)
 		return
 	}
 
@@ -237,21 +236,21 @@ func getSystemStats(c *gin.Context) {
 	// 获取CPU使用率
 	cpuPercent, err := cpu.Percent(0, false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取CPU信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取CPU信息失败", err)
 		return
 	}
 
 	// 获取内存使用率
 	memInfo, err := mem.VirtualMemory()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取内存信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取内存信息失败", err)
 		return
 	}
 
 	// 获取磁盘使用率
 	diskInfo, err := disk.Usage("/")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取磁盘信息失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取磁盘信息失败", err)
 		return
 	}
 
@@ -400,7 +399,7 @@ func getSystemLoad() (float64, float64, float64, error) {
 func getSystemEvents(c *gin.Context) {
 	logs, err := system.GetRecentLogs(100)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read system logs: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "读取系统日志失败", err)
 		return
 	}
 
@@ -428,12 +427,12 @@ type notificationRequest struct {
 func addNotification(c *gin.Context) {
 	var req notificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification"})
+		respondError(c, http.StatusBadRequest, "无效的通知参数", err)
 		return
 	}
 	message := strings.TrimSpace(req.Message)
 	if message == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "message is required"})
+		respondError(c, http.StatusBadRequest, "message is required", nil)
 		return
 	}
 	n := &database.Notification{
@@ -442,7 +441,7 @@ func addNotification(c *gin.Context) {
 		Read:    false,
 	}
 	if err := database.SaveNotification(n); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存通知失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "保存通知失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, n)
@@ -458,7 +457,7 @@ func getNotifications(c *gin.Context) {
 	}
 	list, err := database.GetNotifications(limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取通知失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取通知失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, list)
@@ -468,11 +467,11 @@ func deleteNotification(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		respondError(c, http.StatusBadRequest, "invalid id", err)
 		return
 	}
 	if err := database.DeleteNotification(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除通知失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "删除通知失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
@@ -480,7 +479,7 @@ func deleteNotification(c *gin.Context) {
 
 func markNotificationsRead(c *gin.Context) {
 	if err := database.MarkAllNotificationsRead(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "标记通知已读失败: " + err.Error()})
+		respondError(c, http.StatusInternalServerError, "标记通知已读失败", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})

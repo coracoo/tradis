@@ -9,17 +9,11 @@
       <div v-else class="title">{{ displayTitle }}</div>
     </div>
     <div class="actions">
-      <!---<el-tooltip content="刷新" placement="bottom">
-        <el-button circle text @click="$emit('refresh')">
-          <el-icon><Refresh /></el-icon>
-        </el-button>
-      </el-tooltip>-->
-
       <div class="notification-area">
         <el-tooltip content="消息通知" placement="bottom">
           <div class="notification-wrapper">
             <el-button circle text @click="showNotifications">
-              <el-icon><Bell /></el-icon>
+              <IconEpBell />
             </el-button>
             <span v-if="hasUnreadNotifications" class="notification-dot"></span>
           </div>
@@ -81,7 +75,7 @@
               </div>
               <el-tooltip content="删除" placement="left">
                 <el-button circle text class="item-delete" @click.stop="handleDeleteNotification(item)">
-                  <el-icon><Delete /></el-icon>
+                  <IconEpDelete />
                 </el-button>
               </el-tooltip>
             </div>
@@ -91,8 +85,8 @@
 
       <el-tooltip :content="isDark ? '切换到亮色模式' : '切换到暗色模式'" placement="bottom">
         <el-button circle text @click="toggleTheme">
-          <el-icon v-if="isDark"><Moon /></el-icon>
-          <el-icon v-else><Sunny /></el-icon>
+          <IconEpMoon v-if="isDark" />
+          <IconEpSunny v-else />
         </el-button>
       </el-tooltip>
 
@@ -115,7 +109,6 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { Refresh, Bell, Moon, Sunny, Delete } from '@element-plus/icons-vue'
 import api from '../api'
 const props = defineProps({
   title: { type: String, default: 'Dockpier' }
@@ -432,6 +425,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin: 0 16px;
   background: var(--clay-card);
   border: 1px solid var(--clay-border);
   border-radius: var(--radius-5xl);

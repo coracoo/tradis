@@ -506,23 +506,3 @@ watch(() => dialogVisible.value, (val) => {
 }
 </style>
 
-<style>
-/* Global styles override for dialog */
-.app-dialog.el-dialog {
-  background-color: var(--el-bg-color-overlay);
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: var(--el-box-shadow);
-}
-
-.app-dialog .el-dialog__header,
-.app-dialog .el-dialog__body,
-.app-dialog .el-dialog__footer {
-  background-color: var(--el-bg-color-overlay) !important;
-  color: var(--el-text-color-primary);
-}
-
-.app-dialog .el-dialog__footer {
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-</style>

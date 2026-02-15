@@ -1,0 +1,36 @@
+{
+  "id": 1,
+  "name": "nginx",
+  "category": "",
+  "description": "",
+  "version": "",
+  "logo": "",
+  "website": "",
+  "tutorial": "",
+  "dotenv": "A=1\nB=2\n",
+  "compose": "services:\n  web:\n    image: nginx\n    command: [\"sh\",\"-c\",\"echo $A \u0026\u0026 echo ${B:-2} \u0026\u0026 echo $$HOME\"]\n",
+  "screenshots": [],
+  "schema": [
+    {
+      "name": "A",
+      "label": "A",
+      "description": "",
+      "type": "string",
+      "default": "",
+      "category": "basic",
+      "serviceName": "Global",
+      "paramType": "env"
+    },
+    {
+      "name": "B",
+      "label": "B",
+      "description": "",
+      "type": "string",
+      "default": "2",
+      "category": "basic",
+      "serviceName": "Global",
+      "paramType": "env"
+    }
+  ],
+  "enabled": true
+}

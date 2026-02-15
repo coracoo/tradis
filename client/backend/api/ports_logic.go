@@ -86,11 +86,11 @@ func processPorts(start, end int, proto string, usageMap map[int]PortUsage, opts
 			// Unused ports have empty type in createRecordHelper, but in usageMap they might be empty too.
 			// However, if usage.Used is false, the port has NO type effectively.
 			// So if filtering by a specific type, we should exclude unused ports.
-			
+
 			if !usage.Used {
 				continue
 			}
-			
+
 			if !strings.EqualFold(usage.Type, opts.Type) {
 				continue
 			}

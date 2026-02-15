@@ -263,10 +263,27 @@ func parsePorts(ports []string) nat.PortMap {
 
 // 修改构造函数返回自定义Client
 func NewDockerClient() (*Client, error) {
-	cli, err := client.NewClientWithOpts(
-		client.WithHost("unix:///var/run/docker.sock"),
-		client.WithAPIVersionNegotiation(),
-	)
+	dockerHost := strings.TrimSpace(os.Getenv("DOCKER_HOST"))
+	if dockerHost == "" {
+		dockerSock := strings.TrimSpace(os.Getenv("DOCKER_SOCK"))
+		if dockerSock == "" {
+			dockerSock = "/var/run/docker.sock"
+		}
+		if strings.HasPrefix(dockerSock, "unix://") {
+			dockerHost = dockerSock
+		} else {
+			dockerHost = "unix://" + dockerSock
+		}
+	}
+
+	opts := []client.Opt{client.WithAPIVersionNegotiation()}
+	if strings.TrimSpace(os.Getenv("DOCKER_HOST")) != "" {
+		opts = append(opts, client.FromEnv)
+	} else {
+		opts = append(opts, client.WithHost(dockerHost))
+	}
+
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, err
 	}

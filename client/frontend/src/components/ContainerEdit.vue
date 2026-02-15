@@ -14,7 +14,7 @@
           <el-form-item label="容器名称" prop="name">
             <el-input v-model="form.name" placeholder="请输入新容器名称" />
             <div class="form-tip">
-              <el-icon><InfoFilled /></el-icon>
+              <IconEpInfoFilled class="el-icon--left" />
               修改容器名称将重新创建容器，旧容器将被删除
             </div>
           </el-form-item>
@@ -56,11 +56,11 @@
               <el-option label="UDP" value="udp" />
             </el-select>
             <el-button type="danger" circle @click="removePort(index)">
-              <el-icon><Delete /></el-icon>
+              <IconEpDelete />
             </el-button>
           </div>
           <el-button type="primary" plain class="add-btn" @click="addPort">
-            <el-icon><Plus /></el-icon> 添加端口映射
+            <IconEpPlus class="el-icon--left" /> 添加端口映射
           </el-button>
         </div>
       </el-tab-pane>
@@ -77,11 +77,11 @@
               <el-option label="只读 (ro)" value="ro" />
             </el-select>
             <el-button type="danger" circle @click="removeVolume(index)">
-              <el-icon><Delete /></el-icon>
+              <IconEpDelete />
             </el-button>
           </div>
           <el-button type="primary" plain class="add-btn" @click="addVolume">
-            <el-icon><Plus /></el-icon> 添加存储卷
+            <IconEpPlus class="el-icon--left" /> 添加存储卷
           </el-button>
         </div>
       </el-tab-pane>
@@ -94,11 +94,11 @@
             <span class="separator">=</span>
             <el-input v-model="item.value" placeholder="变量值 (VALUE)" />
             <el-button type="danger" circle @click="removeEnv(index)">
-              <el-icon><Delete /></el-icon>
+              <IconEpDelete />
             </el-button>
           </div>
           <el-button type="primary" plain class="add-btn" @click="addEnv">
-            <el-icon><Plus /></el-icon> 添加环境变量
+            <IconEpPlus class="el-icon--left" /> 添加环境变量
           </el-button>
         </div>
       </el-tab-pane>
@@ -146,11 +146,11 @@
               <el-input v-model="item.container" placeholder="容器内路径" />
               <el-input v-model="item.perm" placeholder="权限 (rwm)" style="width: 100px" />
               <el-button type="danger" circle @click="removeDevice(index)">
-                <el-icon><Delete /></el-icon>
+                <IconEpDelete />
               </el-button>
             </div>
             <el-button type="primary" plain class="add-btn" @click="addDevice">
-              <el-icon><Plus /></el-icon> 添加设备映射
+              <IconEpPlus class="el-icon--left" /> 添加设备映射
             </el-button>
           </div>
         </el-form>
@@ -171,7 +171,6 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { InfoFilled, Plus, Delete } from '@element-plus/icons-vue'
 import api from '../api'
 
 const props = defineProps({
@@ -556,46 +555,5 @@ const handleConfirm = async () => {
 </style>
 
 <style>
-.app-dialog {
-  border-radius: 12px !important;
-  overflow: hidden;
-  box-shadow: var(--el-box-shadow) !important;
-}
-.app-dialog .el-dialog__header {
-  padding: 20px 24px;
-  margin-right: 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-.app-dialog .el-dialog__title {
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-.app-dialog .el-dialog__body {
-  padding: 24px;
-}
-.app-dialog .el-dialog__footer {
-  padding: 20px 24px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  background-color: var(--el-bg-color);
-}
-.app-dialog .el-dialog__headerbtn {
-  top: 24px;
-}
-.custom-tabs.el-tabs--border-card {
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid var(--el-border-color);
-  box-shadow: none;
-}
-.custom-tabs.el-tabs--border-card > .el-tabs__header {
-  background-color: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color);
-}
-.custom-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
-  background-color: var(--el-bg-color-overlay);
-  border-right-color: var(--el-border-color);
-  border-left-color: var(--el-border-color);
-  color: var(--el-color-primary);
-  font-weight: 600;
-}
+/* Remove global style pollution */
 </style>
