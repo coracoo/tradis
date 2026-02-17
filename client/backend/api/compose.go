@@ -2526,6 +2526,10 @@ func saveProjectEnv(c *gin.Context) {
 	if forbidIfSelfProject(c, name) {
 		return
 	}
+	if s, err := settings.GetSettings(); err != nil || !s.AdvancedMode {
+		respondError(c, http.StatusForbidden, "未开启高级模式，禁止保存 .env", nil)
+		return
+	}
 
 	var data struct {
 		Content string `json:"content"`
@@ -2559,6 +2563,10 @@ func saveProjectYaml(c *gin.Context) {
 		return
 	}
 	if forbidIfSelfProject(c, name) {
+		return
+	}
+	if s, err := settings.GetSettings(); err != nil || !s.AdvancedMode {
+		respondError(c, http.StatusForbidden, "未开启高级模式，禁止保存 YAML", nil)
 		return
 	}
 	var data struct {

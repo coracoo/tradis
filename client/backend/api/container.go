@@ -5,6 +5,7 @@ import (
 	"context"
 	"dockerpanel/backend/pkg/database"
 	"dockerpanel/backend/pkg/docker"
+	"dockerpanel/backend/pkg/system"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -150,10 +152,81 @@ func ListContainers(c *gin.Context) {
 	}
 	defer cli.Close()
 
+	level := system.CurrentLoadLevel()
+	c.Header("X-Tradis-Load-Level", string(level))
+	c.Header("X-Tradis-Suggested-Refresh-Seconds", strconv.Itoa(system.SuggestedRefreshSeconds(level)))
+
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "获取容器列表失败", err)
 		return
+	}
+
+	updateTTL := 5 * time.Second
+	switch level {
+	case system.LoadLevelHigh:
+		updateTTL = 10 * time.Second
+	case system.LoadLevelCritical:
+		updateTTL = 30 * time.Second
+	}
+	updateMap := getCachedImageUpdateMap(updateTTL)
+
+	containersWithDetails := make([]gin.H, 0, len(containers))
+	ctx := context.Background()
+
+	inspectConcurrency := 8
+	inspectRunningOnly := false
+	switch level {
+	case system.LoadLevelHigh:
+		inspectConcurrency = 4
+		inspectRunningOnly = true
+	case system.LoadLevelCritical:
+		inspectConcurrency = 0
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, inspectConcurrency)
+
+	for _, container := range containers {
+		container := container
+
+		if inspectConcurrency == 0 || (inspectRunningOnly && strings.ToLower(container.State) != "running") {
+			containersWithDetails = append(containersWithDetails, buildContainerListItem(container, types.ContainerJSON{}, false, updateMap))
+			continue
+		}
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			inspect, err := cli.ContainerInspect(ctx, container.ID)
+			inspectOk := err == nil
+			item := buildContainerListItem(container, inspect, inspectOk, updateMap)
+			mu.Lock()
+			containersWithDetails = append(containersWithDetails, item)
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	c.JSON(http.StatusOK, containersWithDetails)
+}
+
+var imageUpdateMapCache struct {
+	mu      sync.Mutex
+	expires time.Time
+	value   map[string]bool
+}
+
+func getCachedImageUpdateMap(ttl time.Duration) map[string]bool {
+	imageUpdateMapCache.mu.Lock()
+	defer imageUpdateMapCache.mu.Unlock()
+
+	now := time.Now()
+	if imageUpdateMapCache.value != nil && now.Before(imageUpdateMapCache.expires) {
+		return imageUpdateMapCache.value
 	}
 
 	updateMap := make(map[string]bool)
@@ -170,78 +243,79 @@ func ListContainers(c *gin.Context) {
 		}
 	}
 
-	// 获取每个容器的详细信息
-	var containersWithDetails []gin.H
-	for _, container := range containers {
-		inspect, err := cli.ContainerInspect(context.Background(), container.ID)
-		if err != nil {
-			continue
+	imageUpdateMapCache.value = updateMap
+	imageUpdateMapCache.expires = now.Add(ttl)
+	return updateMap
+}
+
+func buildContainerListItem(container types.Container, inspect types.ContainerJSON, inspectOk bool, updateMap map[string]bool) gin.H {
+	formattedPorts := make([]gin.H, 0, len(container.Ports))
+	for _, port := range container.Ports {
+		portInfo := gin.H{
+			"PrivatePort": port.PrivatePort,
+			"Type":        port.Type,
 		}
 
-		// 处理端口映射，添加 IP 地址
-		formattedPorts := make([]gin.H, 0)
-		for _, port := range container.Ports {
-			portInfo := gin.H{
-				"PrivatePort": port.PrivatePort,
-				"Type":        port.Type,
+		if port.PublicPort != 0 {
+			hostIP := "0.0.0.0"
+			if port.IP != "" {
+				hostIP = port.IP
 			}
-
-			if port.PublicPort != 0 {
-				// 添加 IP 信息
-				hostIP := "0.0.0.0"
-				if port.IP != "" {
-					hostIP = port.IP
-				}
-				portInfo["PublicPort"] = port.PublicPort
-				portInfo["IP"] = hostIP
-			}
-
-			formattedPorts = append(formattedPorts, portInfo)
+			portInfo["PublicPort"] = port.PublicPort
+			portInfo["IP"] = hostIP
 		}
 
-		// 计算运行时间
-		var runningTime string
-		if container.State == "running" {
-			startTime, err := time.Parse(time.RFC3339, inspect.State.StartedAt)
-			if err != nil {
-				runningTime = "时间解析错误"
-			} else {
-				runningTime = time.Since(startTime).Round(time.Second).String()
-			}
-		} else {
-			runningTime = "未运行"
-		}
-
-		nameCandidate := ""
-		if len(container.Names) > 0 {
-			nameCandidate = strings.TrimPrefix(container.Names[0], "/")
-		}
-
-		var labels map[string]string
-		if inspect.Config != nil {
-			labels = inspect.Config.Labels
-		}
-
-		containerInfo := gin.H{
-			"Id":              container.ID,
-			"Names":           container.Names,
-			"Image":           container.Image,
-			"ImageID":         inspect.Image,
-			"State":           container.State,
-			"Status":          container.Status,
-			"Created":         container.Created,
-			"Ports":           formattedPorts,
-			"NetworkSettings": inspect.NetworkSettings,
-			"HostConfig":      inspect.HostConfig,
-			"RunningTime":     runningTime,
-			"Labels":          labels,
-			"isSelf":          isSelfOrProtectedContainer(container.ID, nameCandidate, container.Image, labels),
-			"UpdateAvailable": hasImageUpdate(updateMap, container.Image),
-		}
-		containersWithDetails = append(containersWithDetails, containerInfo)
+		formattedPorts = append(formattedPorts, portInfo)
 	}
 
-	c.JSON(http.StatusOK, containersWithDetails)
+	runningTime := "未运行"
+	if strings.ToLower(container.State) == "running" {
+		runningTime = "运行中"
+		if inspectOk {
+			if startTime, err := time.Parse(time.RFC3339, inspect.State.StartedAt); err == nil {
+				runningTime = time.Since(startTime).Round(time.Second).String()
+			}
+		}
+	}
+
+	nameCandidate := ""
+	if len(container.Names) > 0 {
+		nameCandidate = strings.TrimPrefix(container.Names[0], "/")
+	}
+
+	var labels map[string]string
+	if inspectOk && inspect.Config != nil {
+		labels = inspect.Config.Labels
+	}
+
+	imageID := container.ImageID
+	if inspectOk && strings.TrimSpace(inspect.Image) != "" {
+		imageID = inspect.Image
+	}
+
+	var networkSettings any
+	var hostConfig any
+	if inspectOk {
+		networkSettings = inspect.NetworkSettings
+		hostConfig = inspect.HostConfig
+	}
+
+	return gin.H{
+		"Id":              container.ID,
+		"Names":           container.Names,
+		"Image":           container.Image,
+		"ImageID":         imageID,
+		"State":           container.State,
+		"Status":          container.Status,
+		"Created":         container.Created,
+		"Ports":           formattedPorts,
+		"NetworkSettings": networkSettings,
+		"HostConfig":      hostConfig,
+		"RunningTime":     runningTime,
+		"Labels":          labels,
+		"isSelf":          isSelfOrProtectedContainer(container.ID, nameCandidate, container.Image, labels),
+		"UpdateAvailable": hasImageUpdate(updateMap, container.Image),
+	}
 }
 
 // 获取单个容器的资源使用情况

@@ -66,11 +66,14 @@ const api = {
     getNotifications: (params) => request.get('/system/notifications', { params }),
     deleteNotification: (id) => request.delete(`/system/notifications/${id}`),
     markNotificationsRead: () => request.post('/system/notifications/read'),
-    navigationRebuild: () => request.post('/system/navigation/rebuild')
+    navigationRebuild: () => request.post('/system/navigation/rebuild'),
+    volumeBackupRebuild: () => request.post('/system/volume-backup/rebuild')
   },
   ai: {
     enrichNavigation: (data) => request.post('/ai/navigation/enrich', data),
     enrichNavigationByTitle: (data) => request.post('/ai/navigation/enrich-by-title', data),
+    enrichNavigationById: (data) => request.post('/ai/navigation/enrich-by-id', data),
+    generateCompose: (data) => request.post('/ai/compose/generate', data),
     logs: (params) => request.get('/ai/logs', { params })
   },
 
@@ -85,6 +88,7 @@ const api = {
     add: (data) => request.post('/navigation', data),
     update: (id, data) => request.put(`/navigation/${id}`, data),
     delete: (id) => request.delete(`/navigation/${id}`),
+    purge: (id) => request.delete(`/navigation/${id}`, { params: { permanent: true } }),
     restore: (id) => request.post(`/navigation/${id}/restore`),
     uploadIcon: (id, file) => {
       const form = new FormData()

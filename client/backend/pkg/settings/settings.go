@@ -30,6 +30,7 @@ type Settings struct {
 	LanUrl                      string   `json:"lanUrl"`
 	WanUrl                      string   `json:"wanUrl"`
 	AppStoreServerUrl           string   `json:"appStoreServerUrl"`
+	AdvancedMode                bool     `json:"advancedMode"`
 	AllocPortStart              int      `json:"allocPortStart"`
 	AllocPortEnd                int      `json:"allocPortEnd"`
 	AllowAutoAllocPort          bool     `json:"allowAutoAllocPort"`
@@ -44,6 +45,7 @@ type Settings struct {
 	VolumeBackupEnabled         bool     `json:"volumeBackupEnabled"`
 	VolumeBackupImage           string   `json:"volumeBackupImage"`
 	VolumeBackupEnv             string   `json:"volumeBackupEnv"`
+	VolumeBackupCronExpression  string   `json:"volumeBackupCronExpression"`
 	VolumeBackupVolumes         []string `json:"volumeBackupVolumes"`
 	VolumeBackupArchiveDir      string   `json:"volumeBackupArchiveDir"`
 	VolumeBackupMountDockerSock bool     `json:"volumeBackupMountDockerSock"`
@@ -162,6 +164,9 @@ func InitSettingsTable() error {
 	if err := insertDefault("appstore_server_url", DefaultAppStoreServerURL); err != nil {
 		return err
 	}
+	if err := insertDefault("advanced_mode", "false"); err != nil {
+		return err
+	}
 	if err := insertDefault("alloc_port_start", "55500"); err != nil {
 		return err
 	}
@@ -189,8 +194,24 @@ func InitSettingsTable() error {
 	if err := insertDefault("ai_temperature", "0.7"); err != nil {
 		return err
 	}
-	if err := insertDefault("ai_prompt", "你是一个导航整理助手。根据容器信息与端口探测结果，生成应用名称、分类与图标建议。icon 建议优先使用 /icons/clay/<filename> 或 mdi-xxx。"); err != nil {
+	defaultAIPrompt := "你是一个导航整理助手。你必须只输出严格 JSON：{\"title\":\"\",\"category\":\"\",\"icon\":\"\"}。title 与 category 必须非空。category 必须尽量给出具体中文分类；仅当完全无法判断时输出 未分类。icon 必须是 http(s) 图标 URL 或 mdi-docker。不要输出解释、推理过程、Markdown、代码块或额外字段。"
+	if err := insertDefault("ai_prompt", defaultAIPrompt); err != nil {
 		return err
+	}
+	{
+		var cur string
+		_ = db.QueryRow("SELECT value FROM global_settings WHERE key = ?", "ai_prompt").Scan(&cur)
+		clean := strings.TrimSpace(cur)
+		if clean != "" {
+			isLegacy := strings.Contains(clean, "根据容器信息与端口探测结果") ||
+				strings.Contains(clean, "从互联网搜索") ||
+				strings.Contains(clean, "图标网络地址") ||
+				strings.Contains(clean, "仅当完全无法判断时输出 默认") ||
+				strings.Contains(clean, "输出 default")
+			if isLegacy {
+				_, _ = db.Exec("UPDATE global_settings SET value = ? WHERE key = ?", defaultAIPrompt, "ai_prompt")
+			}
+		}
 	}
 	if err := insertDefault("volume_backup_enabled", "false"); err != nil {
 		return err
@@ -199,6 +220,9 @@ func InitSettingsTable() error {
 		return err
 	}
 	if err := insertDefault("volume_backup_env", ""); err != nil {
+		return err
+	}
+	if err := insertDefault("volume_backup_cron_expression", "@daily"); err != nil {
 		return err
 	}
 	if err := insertDefault("volume_backup_volumes", "[]"); err != nil {
@@ -256,6 +280,7 @@ func GetSettings() (Settings, error) {
 		return def
 	}
 
+	s.AdvancedMode = parseBool(getValue("advanced_mode"), false)
 	s.AllocPortStart = parseInt(getValue("alloc_port_start"), 55500)
 	s.AllocPortEnd = parseInt(getValue("alloc_port_end"), 56000)
 	s.AllowAutoAllocPort = parseBool(getValue("allow_auto_alloc_port"), false)
@@ -284,6 +309,10 @@ func GetSettings() (Settings, error) {
 		s.VolumeBackupImage = "offen/docker-volume-backup:latest"
 	}
 	s.VolumeBackupEnv = getValue("volume_backup_env")
+	s.VolumeBackupCronExpression = strings.TrimSpace(getValue("volume_backup_cron_expression"))
+	if s.VolumeBackupCronExpression == "" {
+		s.VolumeBackupCronExpression = "@daily"
+	}
 	s.VolumeBackupVolumes = parseStringSlice(getValue("volume_backup_volumes"))
 	s.VolumeBackupArchiveDir = strings.TrimSpace(getValue("volume_backup_archive_dir"))
 	s.VolumeBackupMountDockerSock = parseBool(getValue("volume_backup_mount_docker_sock"), true)
@@ -337,10 +366,11 @@ func UpdateSettings(s Settings) error {
 
 	if IsDebugEnabled() {
 		log.Printf(
-			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d aiEnabled=%t aiBaseUrl=%s aiModel=%s aiTemperature=%v volumeBackupEnabled=%t volumeBackupImage=%s",
+			"Updating settings: lanUrl=%s wanUrl=%s appStoreServerUrl=%s advancedMode=%t allocPortStart=%d allocPortEnd=%d allowAutoAllocPort=%t imageUpdateIntervalMinutes=%d aiEnabled=%t aiBaseUrl=%s aiModel=%s aiTemperature=%v volumeBackupEnabled=%t volumeBackupImage=%s",
 			s.LanUrl,
 			s.WanUrl,
 			RedactAppStoreURL(s.AppStoreServerUrl),
+			s.AdvancedMode,
 			s.AllocPortStart,
 			s.AllocPortEnd,
 			s.AllowAutoAllocPort,
@@ -367,6 +397,9 @@ func UpdateSettings(s Settings) error {
 		return err
 	}
 	if err := update("appstore_server_url", s.AppStoreServerUrl); err != nil {
+		return err
+	}
+	if err := update("advanced_mode", strconv.FormatBool(s.AdvancedMode)); err != nil {
 		return err
 	}
 	if err := update("alloc_port_start", strconv.Itoa(s.AllocPortStart)); err != nil {
@@ -403,6 +436,9 @@ func UpdateSettings(s Settings) error {
 		return err
 	}
 	if err := update("volume_backup_env", s.VolumeBackupEnv); err != nil {
+		return err
+	}
+	if err := update("volume_backup_cron_expression", strings.TrimSpace(s.VolumeBackupCronExpression)); err != nil {
 		return err
 	}
 	volumesJSON := "[]"

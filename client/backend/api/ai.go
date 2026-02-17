@@ -20,6 +20,8 @@ func RegisterAIRoutes(r *gin.RouterGroup) {
 		group.GET("/logs", listAILogs)
 		group.POST("/navigation/enrich", enrichNavigationOnce)
 		group.POST("/navigation/enrich-by-title", enrichNavigationByTitle)
+		group.POST("/navigation/enrich-by-id", enrichNavigationByID)
+		group.POST("/compose/generate", generateComposeYAML)
 		group.POST("/test", testAIConnectivity)
 	}
 }

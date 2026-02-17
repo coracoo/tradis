@@ -9,6 +9,7 @@ import (
 	"dockerpanel/backend/pkg/task"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"net/http"
@@ -69,6 +70,7 @@ type Variable struct {
 	Category    string `json:"category"` // "basic", "advanced"
 	ServiceName string `json:"serviceName"`
 	ParamType   string `json:"paramType"` // port, path, env, hardware, other
+	EnvFile     string `json:"envFile,omitempty"`
 }
 
 type Port struct {
@@ -102,7 +104,54 @@ type AppVarsResponse struct {
 	App       *App              `json:"app"`
 	Dotenv    string            `json:"dotenv"`
 	Variables []AppVariableInfo `json:"variables"`
+	Params    []AppParam        `json:"params,omitempty"`
 	Warnings  []string          `json:"warnings"`
+}
+
+type AppParamKind string
+
+const (
+	AppParamKindEnv    AppParamKind = "env"
+	AppParamKindSecret AppParamKind = "secret"
+)
+
+type AppParamUsage string
+
+const (
+	AppParamUsageInterpolation AppParamUsage = "interpolation"
+	AppParamUsageRuntimeEnv    AppParamUsage = "runtime_env"
+	AppParamUsageSecretMount   AppParamUsage = "secret_mount"
+)
+
+type AppParamSource string
+
+const (
+	AppParamSourceUserInput      AppParamSource = "user_input"
+	AppParamSourceSchema         AppParamSource = "schema"
+	AppParamSourceDotenv         AppParamSource = "dotenv"
+	AppParamSourceComposeRef     AppParamSource = "compose_ref"
+	AppParamSourceComposeDefault AppParamSource = "compose_default"
+	AppParamSourceEnvFile        AppParamSource = "env_file"
+	AppParamSourceComposeSecret  AppParamSource = "compose_secret"
+)
+
+type AppParamBinding struct {
+	ServiceName string `json:"serviceName"`
+	Target      string `json:"target"`
+	File        string `json:"file,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type AppParam struct {
+	Key          string            `json:"key"`
+	Kind         AppParamKind      `json:"kind"`
+	Value        string            `json:"value,omitempty"`
+	DefaultValue string            `json:"defaultValue,omitempty"`
+	Required     bool              `json:"required"`
+	Usages       []AppParamUsage   `json:"usages,omitempty"`
+	Sources      []AppParamSource  `json:"sources,omitempty"`
+	Examples     []string          `json:"examples,omitempty"`
+	Bindings     []AppParamBinding `json:"bindings,omitempty"`
 }
 
 type appListCacheState struct {
@@ -499,6 +548,15 @@ func getAppVars(c *gin.Context) {
 		dotenvText = app.Dotenv
 	}
 	dotenvMap := parseDotenvToMap(dotenvText)
+	envFilesByService, envFileErr := extractServiceEnvFileRefs(composeText)
+	if envFileErr != nil {
+		envFilesByService = map[string][]envFileRef{}
+	}
+	secretDefs, secretUses, secretErr := extractComposeSecrets(composeText)
+	if secretErr != nil {
+		secretDefs = map[string]composeSecretDef{}
+		secretUses = nil
+	}
 
 	schemaDefaults := make(map[string]string)
 	schemaKeySet := make(map[string]struct{})
@@ -631,10 +689,235 @@ func getAppVars(c *gin.Context) {
 		return a.Name < b.Name
 	})
 
+	paramsMap := make(map[string]*AppParam)
+	ensureEnvParam := func(key string) *AppParam {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil
+		}
+		if p, ok := paramsMap[key]; ok {
+			return p
+		}
+		p := &AppParam{
+			Key:      key,
+			Kind:     AppParamKindEnv,
+			Required: false,
+		}
+		paramsMap[key] = p
+		return p
+	}
+	addSource := func(p *AppParam, s AppParamSource) {
+		for _, it := range p.Sources {
+			if it == s {
+				return
+			}
+		}
+		p.Sources = append(p.Sources, s)
+	}
+	addUsage := func(p *AppParam, u AppParamUsage) {
+		for _, it := range p.Usages {
+			if it == u {
+				return
+			}
+		}
+		p.Usages = append(p.Usages, u)
+	}
+	addExample := func(p *AppParam, ex string) {
+		ex = strings.TrimSpace(ex)
+		if ex == "" {
+			return
+		}
+		for _, it := range p.Examples {
+			if it == ex {
+				return
+			}
+		}
+		if len(p.Examples) >= 3 {
+			return
+		}
+		p.Examples = append(p.Examples, ex)
+	}
+	addBinding := func(p *AppParam, b AppParamBinding) {
+		b.ServiceName = strings.TrimSpace(b.ServiceName)
+		b.Target = strings.TrimSpace(b.Target)
+		b.File = strings.TrimSpace(b.File)
+		if b.ServiceName == "" || b.Target == "" {
+			return
+		}
+		for _, it := range p.Bindings {
+			if it.ServiceName == b.ServiceName && it.Target == b.Target && it.File == b.File {
+				return
+			}
+		}
+		p.Bindings = append(p.Bindings, b)
+	}
+
+	schemaDefaultMap := make(map[string]string)
+	if app != nil {
+		for _, v := range app.Schema {
+			key := strings.TrimSpace(v.Name)
+			if key == "" || strings.EqualFold(key, "PATH") || !isLikelyEnvKey(key) {
+				continue
+			}
+			if !isSchemaEnvVariable(v) {
+				continue
+			}
+			if strings.TrimSpace(v.Default) == "" {
+				continue
+			}
+			if _, ok := schemaDefaultMap[key]; !ok {
+				schemaDefaultMap[key] = strings.TrimSpace(v.Default)
+			}
+		}
+	}
+
+	for k, ref := range refs {
+		if strings.EqualFold(k, "PATH") {
+			continue
+		}
+		p := ensureEnvParam(k)
+		if p == nil {
+			continue
+		}
+		addUsage(p, AppParamUsageInterpolation)
+		addSource(p, AppParamSourceComposeRef)
+		for _, ex := range ref.Examples {
+			addExample(p, ex)
+		}
+		if ref.HasDefault && strings.TrimSpace(p.DefaultValue) == "" {
+			p.DefaultValue = strings.TrimSpace(ref.DefaultValue)
+			addSource(p, AppParamSourceComposeDefault)
+		}
+	}
+
+	for k := range dotenvMap {
+		if strings.EqualFold(k, "PATH") {
+			continue
+		}
+		p := ensureEnvParam(k)
+		if p == nil {
+			continue
+		}
+		addSource(p, AppParamSourceDotenv)
+	}
+
+	if app != nil {
+		for _, v := range app.Schema {
+			key := strings.TrimSpace(v.Name)
+			if key == "" || strings.EqualFold(key, "PATH") || !isLikelyEnvKey(key) {
+				continue
+			}
+			if !isSchemaEnvVariable(v) {
+				continue
+			}
+			p := ensureEnvParam(key)
+			if p == nil {
+				continue
+			}
+			addSource(p, AppParamSourceSchema)
+			if strings.TrimSpace(p.DefaultValue) == "" && strings.TrimSpace(v.Default) != "" {
+				p.DefaultValue = strings.TrimSpace(v.Default)
+			}
+
+			svc := strings.TrimSpace(v.ServiceName)
+			if svc == "" {
+				svc = "Global"
+			}
+			if svc != "Global" {
+				addUsage(p, AppParamUsageRuntimeEnv)
+				files := envFilesByService[svc]
+				if len(files) > 0 {
+					targetFile := strings.TrimSpace(v.EnvFile)
+					if targetFile == "" {
+						if len(files) == 1 {
+							targetFile = strings.TrimSpace(files[0].Path)
+						} else {
+							warnings = append(warnings, fmt.Sprintf("服务 %s 存在多个 env_file，但变量 %s 未指定 envFile 绑定", svc, key))
+						}
+					}
+					if targetFile != "" {
+						addBinding(p, AppParamBinding{ServiceName: svc, Target: "env_file", File: targetFile})
+					}
+				} else {
+					addBinding(p, AppParamBinding{ServiceName: svc, Target: "environment"})
+				}
+			}
+		}
+	}
+
+	for key, p := range paramsMap {
+		ref, inCompose := refs[key]
+		finalDefault := firstNonEmpty(dotenvMap[key], schemaDefaultMap[key], func() string {
+			if inCompose && ref.HasDefault {
+				return ref.DefaultValue
+			}
+			return ""
+		}(), "")
+		required := inCompose && !ref.HasDefault && strings.TrimSpace(finalDefault) == ""
+		p.Required = required
+	}
+
+	for _, it := range secretUses {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			continue
+		}
+		p, ok := paramsMap[name]
+		if ok && p.Kind != AppParamKindSecret {
+			continue
+		}
+		var sp *AppParam
+		if !ok {
+			sp = &AppParam{Key: name, Kind: AppParamKindSecret, Required: true}
+			paramsMap[name] = sp
+		} else {
+			sp = p
+			sp.Kind = AppParamKindSecret
+			sp.Required = true
+		}
+		addUsage(sp, AppParamUsageSecretMount)
+		addSource(sp, AppParamSourceComposeSecret)
+		def, hasDef := secretDefs[name]
+		if hasDef {
+			if def.External {
+				addBinding(sp, AppParamBinding{ServiceName: it.Service, Target: "secret_external", File: name, Required: true})
+			} else {
+				addBinding(sp, AppParamBinding{ServiceName: it.Service, Target: "secret_file", File: def.File, Required: true})
+			}
+		} else {
+			addBinding(sp, AppParamBinding{ServiceName: it.Service, Target: "secret", File: "", Required: true})
+		}
+	}
+
+	params := make([]AppParam, 0, len(paramsMap))
+	for _, p := range paramsMap {
+		params = append(params, *p)
+	}
+	sort.SliceStable(params, func(i, j int) bool {
+		a := params[i]
+		b := params[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Required != b.Required {
+			return a.Required
+		}
+		return a.Key < b.Key
+	})
+
+	if envFileErr != nil {
+		warnings = append(warnings, fmt.Sprintf("解析 env_file 失败：%v", envFileErr))
+	}
+	if secretErr != nil {
+		warnings = append(warnings, fmt.Sprintf("解析 secrets 失败：%v", secretErr))
+	}
+	warnings = append(warnings, detectCrossFileExtends(composeText)...)
+
 	c.JSON(http.StatusOK, AppVarsResponse{
 		App:       app,
 		Dotenv:    dotenvText,
 		Variables: variables,
+		Params:    params,
 		Warnings:  warnings,
 	})
 }
@@ -644,6 +927,7 @@ type DeployRequest struct {
 	Env         map[string]string `json:"env"`
 	Dotenv      string            `json:"dotenv"`
 	Config      []Variable        `json:"config"`
+	Secrets     map[string]string `json:"secrets"`
 	ProjectName string            `json:"projectName"`
 }
 
@@ -1045,6 +1329,29 @@ func renderDotenvFromMap(env map[string]string) string {
 	return b.String()
 }
 
+func renderDotenvFromMapStable(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(env[k])
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // collectComposeEnvironmentDefaults 从 Compose 的 environment 字段提取默认值，辅助变量插值（不修改容器环境）
 func collectComposeEnvironmentDefaults(composeContent string) map[string]string {
 	out := make(map[string]string)
@@ -1170,6 +1477,228 @@ func extractEnvFileRefs(composeContent string) ([]envFileRef, error) {
 		out = append(out, envFileRef{Path: p, Required: required})
 	}
 	return out, nil
+}
+
+func extractServiceEnvFileRefs(composeContent string) (map[string][]envFileRef, error) {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil, err
+	}
+	services, ok := data["services"].(map[string]interface{})
+	if !ok {
+		return map[string][]envFileRef{}, nil
+	}
+
+	out := make(map[string][]envFileRef)
+	for svcName, serviceRaw := range services {
+		svc, ok := serviceRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		envFileRaw, ok := svc["env_file"]
+		if !ok {
+			continue
+		}
+
+		merged := make(map[string]bool)
+		addRef := func(p string, required bool) {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				return
+			}
+			if prev, ok := merged[p]; ok {
+				merged[p] = prev || required
+				return
+			}
+			merged[p] = required
+		}
+
+		switch v := envFileRaw.(type) {
+		case string:
+			addRef(v, true)
+		case []interface{}:
+			for _, item := range v {
+				switch it := item.(type) {
+				case string:
+					addRef(it, true)
+				case map[string]interface{}:
+					pathVal, _ := it["path"]
+					reqVal, hasReq := it["required"]
+					pathStr := strings.TrimSpace(fmt.Sprintf("%v", pathVal))
+					required := true
+					if hasReq {
+						if b, ok := reqVal.(bool); ok {
+							required = b
+						} else {
+							s := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", reqVal)))
+							if s == "false" || s == "0" || s == "no" {
+								required = false
+							}
+						}
+					}
+					addRef(pathStr, required)
+				default:
+					addRef(fmt.Sprintf("%v", it), true)
+				}
+			}
+		default:
+			addRef(fmt.Sprintf("%v", v), true)
+		}
+
+		list := make([]envFileRef, 0, len(merged))
+		for p, required := range merged {
+			list = append(list, envFileRef{Path: p, Required: required})
+		}
+		sort.SliceStable(list, func(i, j int) bool { return list[i].Path < list[j].Path })
+		name := strings.TrimSpace(svcName)
+		if name == "" {
+			name = "Global"
+		}
+		out[name] = list
+	}
+
+	return out, nil
+}
+
+type composeSecretDef struct {
+	Name     string
+	File     string
+	External bool
+}
+
+type composeSecretUse struct {
+	Service string
+	Name    string
+	Target  string
+}
+
+func extractComposeSecrets(composeContent string) (map[string]composeSecretDef, []composeSecretUse, error) {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil, nil, err
+	}
+
+	defs := make(map[string]composeSecretDef)
+	if secretsAny, ok := data["secrets"]; ok {
+		if secretsMap, ok := secretsAny.(map[string]interface{}); ok {
+			for nameAny, defAny := range secretsMap {
+				name := strings.TrimSpace(fmt.Sprintf("%v", nameAny))
+				if name == "" {
+					continue
+				}
+				def := composeSecretDef{Name: name}
+				if m, ok := defAny.(map[string]interface{}); ok {
+					if f, ok := m["file"]; ok {
+						def.File = strings.TrimSpace(fmt.Sprintf("%v", f))
+					}
+					if ex, ok := m["external"]; ok {
+						switch v := ex.(type) {
+						case bool:
+							def.External = v
+						default:
+							s := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", v)))
+							def.External = s == "true" || s == "1" || s == "yes"
+						}
+					}
+				}
+				defs[name] = def
+			}
+		}
+	}
+
+	uses := make([]composeSecretUse, 0)
+	servicesAny, ok := data["services"]
+	if !ok {
+		return defs, uses, nil
+	}
+	services, ok := servicesAny.(map[string]interface{})
+	if !ok {
+		return defs, uses, nil
+	}
+	for svcNameAny, svcAny := range services {
+		svcName := strings.TrimSpace(fmt.Sprintf("%v", svcNameAny))
+		if svcName == "" {
+			continue
+		}
+		svc, ok := svcAny.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		secAny, ok := svc["secrets"]
+		if !ok {
+			continue
+		}
+
+		addUse := func(name string, target string) {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return
+			}
+			uses = append(uses, composeSecretUse{Service: svcName, Name: name, Target: strings.TrimSpace(target)})
+		}
+
+		switch v := secAny.(type) {
+		case []interface{}:
+			for _, it := range v {
+				switch item := it.(type) {
+				case string:
+					addUse(item, "")
+				case map[string]interface{}:
+					source := strings.TrimSpace(fmt.Sprintf("%v", item["source"]))
+					if source == "" {
+						source = strings.TrimSpace(fmt.Sprintf("%v", item["secret"]))
+					}
+					target := strings.TrimSpace(fmt.Sprintf("%v", item["target"]))
+					addUse(source, target)
+				default:
+					addUse(fmt.Sprintf("%v", item), "")
+				}
+			}
+		case string:
+			addUse(v, "")
+		default:
+			addUse(fmt.Sprintf("%v", v), "")
+		}
+	}
+
+	return defs, uses, nil
+}
+
+func detectCrossFileExtends(composeContent string) []string {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil
+	}
+	servicesAny, ok := data["services"]
+	if !ok {
+		return nil
+	}
+	services, ok := servicesAny.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	var errs []string
+	for svcNameAny, svcAny := range services {
+		svcName := strings.TrimSpace(fmt.Sprintf("%v", svcNameAny))
+		if svcName == "" {
+			continue
+		}
+		svc, ok := svcAny.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		extAny, ok := svc["extends"]
+		if !ok {
+			continue
+		}
+		if m, ok := extAny.(map[string]interface{}); ok {
+			fileVal := strings.TrimSpace(fmt.Sprintf("%v", m["file"]))
+			if fileVal != "" {
+				errs = append(errs, fmt.Sprintf("检测到跨文件 extends：service=%s extends.file=%s（当前仅支持单文件模板）", svcName, fileVal))
+			}
+		}
+	}
+	return errs
 }
 
 func removeDotenvEnvFileRefs(composeContent string) (string, error) {
@@ -1541,6 +2070,199 @@ func ensureEnvFiles(composeDir string, composeContent string, dotenvText string,
 	return nil
 }
 
+const (
+	fixedAssetsDir   = ".tradis"
+	fixedEnvFilesDir = ".tradis/env-files"
+	fixedSecretsDir  = ".tradis/secrets"
+)
+
+func safeWriteFileRelative(baseDir string, relPath string, content []byte, perm os.FileMode) error {
+	clean := filepath.Clean(relPath)
+	if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		return fmt.Errorf("路径不安全: %s", relPath)
+	}
+	full := filepath.Join(baseDir, clean)
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(full, content, perm)
+}
+
+func appendDotenvMissing(dotenvText string, kv map[string]string) string {
+	existing := parseDotenvToMap(dotenvText)
+	lines := make([]string, 0, len(kv))
+	for k, v := range kv {
+		key := strings.TrimSpace(k)
+		if key == "" || !isLikelyEnvKey(key) || strings.EqualFold(key, "PATH") {
+			continue
+		}
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%s=%s", key, v))
+	}
+	if len(lines) == 0 {
+		return dotenvText
+	}
+	sort.Strings(lines)
+	out := strings.TrimRight(dotenvText, "\n")
+	if out != "" {
+		out += "\n"
+	}
+	out += strings.Join(lines, "\n") + "\n"
+	return out
+}
+
+func buildFixedEnvFilePathMap(envFiles []envFileRef) (map[string]string, error) {
+	m := make(map[string]string)
+	for _, ref := range envFiles {
+		orig := strings.TrimSpace(ref.Path)
+		if orig == "" {
+			continue
+		}
+		clean := filepath.Clean(orig)
+		if clean == ".env" || strings.HasSuffix(clean, string(filepath.Separator)+".env") {
+			m[clean] = ".env"
+			continue
+		}
+		if filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+			return nil, fmt.Errorf("env_file 路径不安全: %s", orig)
+		}
+		base := filepath.Base(clean)
+		if base == "" || base == "." || base == string(filepath.Separator) {
+			return nil, fmt.Errorf("env_file 路径无效: %s", orig)
+		}
+		sum := crc32.ChecksumIEEE([]byte(clean))
+		target := fmt.Sprintf("%s/%s-%08x.env", fixedEnvFilesDir, base, sum)
+		m[clean] = target
+	}
+	return m, nil
+}
+
+func buildFixedSecretFilePathMap(defs map[string]composeSecretDef) map[string]string {
+	m := make(map[string]string)
+	for name, def := range defs {
+		if def.External {
+			continue
+		}
+		if strings.TrimSpace(def.File) == "" {
+			continue
+		}
+		n := strings.TrimSpace(name)
+		if n == "" {
+			continue
+		}
+		m[n] = fmt.Sprintf("%s/%s", fixedSecretsDir, n)
+	}
+	return m
+}
+
+func rewriteComposeFixedAssetPaths(composeContent string, envFilePathMap map[string]string, secretFilePathMap map[string]string) (string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(composeContent), &doc); err != nil {
+		return "", err
+	}
+	if len(doc.Content) == 0 {
+		return composeContent, nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return composeContent, nil
+	}
+
+	findMapValue := func(m *yaml.Node, key string) *yaml.Node {
+		if m == nil || m.Kind != yaml.MappingNode {
+			return nil
+		}
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			k := m.Content[i]
+			v := m.Content[i+1]
+			if k != nil && k.Kind == yaml.ScalarNode && k.Value == key {
+				return v
+			}
+		}
+		return nil
+	}
+
+	services := findMapValue(root, "services")
+	if services != nil && services.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(services.Content); i += 2 {
+			svcVal := services.Content[i+1]
+			if svcVal == nil || svcVal.Kind != yaml.MappingNode {
+				continue
+			}
+			envFile := findMapValue(svcVal, "env_file")
+			if envFile == nil {
+				continue
+			}
+			switch envFile.Kind {
+			case yaml.ScalarNode:
+				orig := strings.TrimSpace(envFile.Value)
+				clean := filepath.Clean(orig)
+				if mapped, ok := envFilePathMap[clean]; ok && mapped != "" {
+					envFile.Value = mapped
+				}
+			case yaml.SequenceNode:
+				for _, it := range envFile.Content {
+					if it == nil {
+						continue
+					}
+					if it.Kind == yaml.ScalarNode {
+						orig := strings.TrimSpace(it.Value)
+						clean := filepath.Clean(orig)
+						if mapped, ok := envFilePathMap[clean]; ok && mapped != "" {
+							it.Value = mapped
+						}
+						continue
+					}
+					if it.Kind == yaml.MappingNode {
+						pathNode := findMapValue(it, "path")
+						if pathNode != nil && pathNode.Kind == yaml.ScalarNode {
+							orig := strings.TrimSpace(pathNode.Value)
+							clean := filepath.Clean(orig)
+							if mapped, ok := envFilePathMap[clean]; ok && mapped != "" {
+								pathNode.Value = mapped
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	secrets := findMapValue(root, "secrets")
+	if secrets != nil && secrets.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(secrets.Content); i += 2 {
+			nameNode := secrets.Content[i]
+			defNode := secrets.Content[i+1]
+			if nameNode == nil || nameNode.Kind != yaml.ScalarNode || defNode == nil {
+				continue
+			}
+			name := strings.TrimSpace(nameNode.Value)
+			target := strings.TrimSpace(secretFilePathMap[name])
+			if target == "" {
+				continue
+			}
+			if defNode.Kind == yaml.MappingNode {
+				fileNode := findMapValue(defNode, "file")
+				if fileNode != nil && fileNode.Kind == yaml.ScalarNode {
+					fileNode.Value = target
+				}
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	_ = enc.Close()
+	return buf.String(), nil
+}
+
 // 部署应用
 func deployApp(c *gin.Context) {
 	id := c.Param("id")
@@ -1659,14 +2381,8 @@ func deployApp(c *gin.Context) {
 			composeContent = deployReq.Compose
 		}
 
-		// 新逻辑：使用 Config 数组重构 YAML
 		if len(deployReq.Config) > 0 {
-			// 1. 更新本地缓存文件 (User Request: 复写缓存文件里的 json)
-			// 将当前的配置保存回 app.Schema，以便下次加载时保留用户的修改
 			app.Schema = deployReq.Config
-			// 注意：这里我们假设 deployReq.Config 包含了完整的配置列表
-			// 如果是部分更新，可能需要更复杂的合并逻辑
-
 			if appData, err := json.MarshalIndent(app, "", "  "); err == nil {
 				appPath := filepath.Join(getAppCacheDir(), fmt.Sprintf("%s.json", app.Name))
 				if err := os.WriteFile(appPath, appData, 0644); err != nil {
@@ -1675,20 +2391,7 @@ func deployApp(c *gin.Context) {
 					t.AddLog("info", "应用配置已更新到本地缓存")
 				}
 			}
-
-			t.AddLog("info", "正在应用配置参数...")
-			modified, err := applyConfigToYaml(composeContent, deployReq.Config)
-			if err != nil {
-				t.AddLog("error", fmt.Sprintf("应用配置失败: %v", err))
-				t.Finish(task.StatusFailed, nil, err.Error())
-				return
-			}
-			composeContent = modified
-		} else if len(deployReq.Env) > 0 {
-			// 兼容旧逻辑：仅传递 env map
-			// 说明：不再将变量注入 Compose 的 environment 字段，避免将本地变量强行写入容器环境
-			// Compose 的变量替换由 docker compose 在执行时根据 .env 与进程环境变量完成
-		} else {
+		} else if len(deployReq.Env) == 0 {
 			t.AddLog("warning", "未接收到任何配置参数，将使用默认模板部署")
 		}
 
@@ -1712,6 +2415,45 @@ func deployApp(c *gin.Context) {
 			}
 		}
 
+		if errs := detectCrossFileExtends(composeContent); len(errs) > 0 {
+			errMsg := strings.Join(errs, "; ")
+			t.AddLog("error", errMsg)
+			t.Finish(task.StatusFailed, nil, errMsg)
+			os.RemoveAll(composeDir)
+			return
+		}
+
+		envFilesByService, envFileErr := extractServiceEnvFileRefs(composeContent)
+		if envFileErr != nil {
+			t.AddLog("error", fmt.Sprintf("解析 env_file 失败: %v", envFileErr))
+			t.Finish(task.StatusFailed, nil, envFileErr.Error())
+			os.RemoveAll(composeDir)
+			return
+		}
+
+		secretDefs, secretUses, secretErr := extractComposeSecrets(composeContent)
+		if secretErr != nil {
+			t.AddLog("error", fmt.Sprintf("解析 secrets 失败: %v", secretErr))
+			t.Finish(task.StatusFailed, nil, secretErr.Error())
+			os.RemoveAll(composeDir)
+			return
+		}
+
+		runtimeEnvCfgByService := make(map[string][]Variable)
+		configForYaml := make([]Variable, 0, len(deployReq.Config))
+		for _, item := range deployReq.Config {
+			pt := strings.ToLower(strings.TrimSpace(item.ParamType))
+			svc := strings.TrimSpace(item.ServiceName)
+			if svc == "" {
+				svc = "Global"
+			}
+			if (pt == "env" || pt == "environment") && svc != "Global" && len(envFilesByService[svc]) > 0 {
+				runtimeEnvCfgByService[svc] = append(runtimeEnvCfgByService[svc], item)
+				continue
+			}
+			configForYaml = append(configForYaml, item)
+		}
+
 		dotenvText := deployReq.Dotenv
 		if strings.TrimSpace(dotenvText) == "" {
 			if len(deployReq.Config) == 0 && strings.TrimSpace(app.Dotenv) != "" {
@@ -1722,40 +2464,190 @@ func deployApp(c *gin.Context) {
 			dotenvText = sanitizeDotenvText(dotenvText, app.Dotenv)
 		}
 
-		allowedKeys := extractComposeInterpolationKeys(composeContent)
-		dotenvText = filterDotenvByAllowedKeys(dotenvText, allowedKeys)
+		extraDotenv := make(map[string]string)
+		for k, v := range deployReq.Env {
+			k = strings.TrimSpace(k)
+			if k == "" || strings.EqualFold(k, "PATH") || !isLikelyEnvKey(k) {
+				continue
+			}
+			if isSelfEnvPlaceholder(k, v) {
+				continue
+			}
+			extraDotenv[k] = v
+		}
+		for _, item := range deployReq.Config {
+			key := strings.TrimSpace(item.Name)
+			if key == "" || strings.EqualFold(key, "PATH") || !isLikelyEnvKey(key) {
+				continue
+			}
+			if !isSchemaEnvVariable(item) {
+				continue
+			}
+			val := strings.TrimSpace(item.Default)
+			if val == "" || isSelfEnvPlaceholder(key, val) {
+				continue
+			}
+			extraDotenv[key] = val
+		}
+		dotenvText = appendDotenvMissing(dotenvText, extraDotenv)
 
-		knownDotenvKeys := make(map[string]struct{})
-		for k := range parseDotenvToMap(app.Dotenv) {
-			knownDotenvKeys[k] = struct{}{}
-		}
-		for k := range parseDotenvToMap(deployReq.Dotenv) {
-			knownDotenvKeys[k] = struct{}{}
-		}
-		keepDotenvKeys := make(map[string]struct{})
-		for k := range parseDotenvToMap(dotenvText) {
-			keepDotenvKeys[k] = struct{}{}
-		}
-		if len(knownDotenvKeys) > 0 {
-			if modified, err := removePlaceholderEnvVars(composeContent, knownDotenvKeys, keepDotenvKeys); err == nil {
-				composeContent = modified
-			} else {
-				t.AddLog("warning", fmt.Sprintf("清理未启用的环境变量占位符失败，将保持原样: %v", err))
+		envFileVarMap := make(map[string]map[string]string)
+		envBindingMap := make(map[string]map[string]string)
+		for svc, items := range runtimeEnvCfgByService {
+			if _, ok := envBindingMap[svc]; !ok {
+				envBindingMap[svc] = make(map[string]string)
+			}
+			files := envFilesByService[svc]
+			for _, item := range items {
+				key := strings.TrimSpace(item.Name)
+				if key == "" || !isLikelyEnvKey(key) || strings.EqualFold(key, "PATH") {
+					continue
+				}
+				val := strings.TrimSpace(item.Default)
+				if val == "" || isSelfEnvPlaceholder(key, val) {
+					continue
+				}
+				target := strings.TrimSpace(item.EnvFile)
+				if target == "" {
+					if len(files) == 1 {
+						target = strings.TrimSpace(files[0].Path)
+					} else {
+						errMsg := fmt.Sprintf("服务 %s 存在多个 env_file，但变量 %s 未指定 envFile 绑定", svc, key)
+						t.AddLog("error", errMsg)
+						t.Finish(task.StatusFailed, nil, errMsg)
+						os.RemoveAll(composeDir)
+						return
+					}
+				}
+				if prev, ok := envBindingMap[svc][key]; ok && prev != target {
+					errMsg := fmt.Sprintf("服务 %s 变量 %s 同时绑定到多个 env_file：%s, %s", svc, key, prev, target)
+					t.AddLog("error", errMsg)
+					t.Finish(task.StatusFailed, nil, errMsg)
+					os.RemoveAll(composeDir)
+					return
+				}
+				envBindingMap[svc][key] = target
+				if _, ok := envFileVarMap[target]; !ok {
+					envFileVarMap[target] = make(map[string]string)
+				}
+				envFileVarMap[target][key] = val
 			}
 		}
 
-		if strings.TrimSpace(dotenvText) == "" {
-			if modified, err := removeDotenvEnvFileRefs(composeContent); err == nil {
-				composeContent = modified
-			} else {
-				t.AddLog("warning", fmt.Sprintf("移除 env_file .env 引用失败，将保持原样: %v", err))
-			}
+		if vars, ok := envFileVarMap[".env"]; ok && len(vars) > 0 {
+			dotenvText = appendDotenvMissing(dotenvText, vars)
 		}
 
-		if writeErr := os.WriteFile(composeFile, []byte(composeContent), 0644); writeErr != nil {
+		composeContentToWrite := composeContent
+		if len(configForYaml) > 0 {
+			t.AddLog("info", "正在应用配置参数...")
+			modified, err := applyConfigToYaml(composeContentToWrite, configForYaml)
+			if err != nil {
+				t.AddLog("error", fmt.Sprintf("应用配置失败: %v", err))
+				t.Finish(task.StatusFailed, nil, err.Error())
+				return
+			}
+			composeContentToWrite = modified
+		}
+
+		envFileRefs, efErr := extractEnvFileRefs(composeContentToWrite)
+		if efErr != nil {
+			t.AddLog("error", fmt.Sprintf("解析 env_file 失败: %v", efErr))
+			t.Finish(task.StatusFailed, nil, efErr.Error())
+			os.RemoveAll(composeDir)
+			return
+		}
+		envFilePathMap, mapErr := buildFixedEnvFilePathMap(envFileRefs)
+		if mapErr != nil {
+			t.AddLog("error", fmt.Sprintf("处理 env_file 路径失败: %v", mapErr))
+			t.Finish(task.StatusFailed, nil, mapErr.Error())
+			os.RemoveAll(composeDir)
+			return
+		}
+
+		secretFilePathMap := buildFixedSecretFilePathMap(secretDefs)
+		composeContentToWrite, rewriteErr := rewriteComposeFixedAssetPaths(composeContentToWrite, envFilePathMap, secretFilePathMap)
+		if rewriteErr != nil {
+			t.AddLog("error", fmt.Sprintf("重写 compose 路径失败: %v", rewriteErr))
+			t.Finish(task.StatusFailed, nil, rewriteErr.Error())
+			os.RemoveAll(composeDir)
+			return
+		}
+
+		if writeErr := os.WriteFile(composeFile, []byte(composeContentToWrite), 0644); writeErr != nil {
 			t.AddLog("error", fmt.Sprintf("保存Compose文件失败: %v", writeErr))
 			t.Finish(task.StatusFailed, nil, writeErr.Error())
 			return
+		}
+
+		requiredDotenv := false
+		for _, ref := range envFileRefs {
+			clean := filepath.Clean(strings.TrimSpace(ref.Path))
+			if clean == ".env" || strings.HasSuffix(clean, string(filepath.Separator)+".env") {
+				requiredDotenv = requiredDotenv || ref.Required
+			}
+		}
+		if strings.TrimSpace(dotenvText) != "" || requiredDotenv || len(extractComposeInterpolationKeys(composeContentToWrite)) > 0 {
+			if err := safeWriteFileRelative(composeDir, ".env", []byte(strings.TrimRight(dotenvText, "\n")+"\n"), 0644); err != nil {
+				t.AddLog("error", fmt.Sprintf("写入 .env 失败: %v", err))
+				t.Finish(task.StatusFailed, nil, err.Error())
+				os.RemoveAll(composeDir)
+				return
+			}
+		}
+
+		envFilesToWrite := make(map[string]string)
+		for _, ref := range envFileRefs {
+			orig := strings.TrimSpace(ref.Path)
+			if orig == "" {
+				continue
+			}
+			mapped := strings.TrimSpace(envFilePathMap[orig])
+			if mapped == "" || mapped == ".env" {
+				continue
+			}
+			content := ""
+			if vars, ok := envFileVarMap[orig]; ok && len(vars) > 0 {
+				content = renderDotenvFromMapStable(vars)
+			}
+			envFilesToWrite[mapped] = content
+		}
+		for rel, content := range envFilesToWrite {
+			if err := safeWriteFileRelative(composeDir, rel, []byte(strings.TrimRight(content, "\n")+"\n"), 0644); err != nil {
+				t.AddLog("error", fmt.Sprintf("写入 env_file 失败: %v", err))
+				t.Finish(task.StatusFailed, nil, err.Error())
+				os.RemoveAll(composeDir)
+				return
+			}
+		}
+
+		requiredSecrets := make(map[string]struct{})
+		for _, u := range secretUses {
+			if strings.TrimSpace(u.Name) != "" {
+				requiredSecrets[strings.TrimSpace(u.Name)] = struct{}{}
+			}
+		}
+		for name, rel := range secretFilePathMap {
+			if _, ok := requiredSecrets[name]; !ok {
+				continue
+			}
+			val := ""
+			if deployReq.Secrets != nil {
+				val = deployReq.Secrets[name]
+			}
+			if strings.TrimSpace(val) == "" {
+				errMsg := fmt.Sprintf("缺少必填 secret：%s", name)
+				t.AddLog("error", errMsg)
+				t.Finish(task.StatusFailed, nil, errMsg)
+				os.RemoveAll(composeDir)
+				return
+			}
+			if err := safeWriteFileRelative(composeDir, rel, []byte(val), 0600); err != nil {
+				t.AddLog("error", fmt.Sprintf("写入 secret 文件失败: %v", err))
+				t.Finish(task.StatusFailed, nil, err.Error())
+				os.RemoveAll(composeDir)
+				return
+			}
 		}
 
 		if len(deployReq.Config) > 0 {
@@ -1768,18 +2660,7 @@ func deployApp(c *gin.Context) {
 			}
 		}
 
-		envFileRefs, efErr := extractEnvFileRefs(composeContent)
-		if efErr != nil {
-			t.AddLog("warning", fmt.Sprintf("解析 env_file 失败，将仅保存 .env: %v", efErr))
-		}
-		if err := ensureEnvFiles(composeDir, composeContent, dotenvText, envFileRefs, t); err != nil {
-			t.AddLog("error", fmt.Sprintf("保存 .env/env_file 文件失败: %v", err))
-			t.Finish(task.StatusFailed, nil, err.Error())
-			os.RemoveAll(composeDir)
-			return
-		}
-
-		composeEnvDefaults := collectComposeEnvironmentDefaults(composeContent)
+		composeEnvDefaults := collectComposeEnvironmentDefaults(composeContentToWrite)
 		interpolationEnv := make(map[string]string)
 		for k, v := range composeEnvDefaults {
 			interpolationEnv[k] = v

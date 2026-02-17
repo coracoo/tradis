@@ -7,13 +7,13 @@
           placeholder="搜索容器名称、ID、镜像或端口"
           clearable
           class="search-input"
-          size="medium"
+          size="default"
         >
           <template #prefix>
             <IconEpSearch />
           </template>
         </el-input>
-        <el-select v-model="statusFilter" placeholder="状态" clearable class="status-select" size="medium">
+        <el-select v-model="statusFilter" placeholder="状态" clearable class="status-select" size="default">
           <el-option label="所有" value="" />
           <el-option label="运行中" value="running" />
           <el-option label="已停止" value="stopped" />
@@ -24,18 +24,18 @@
       
       <div class="filter-right">
         <el-button-group>
-          <el-button @click="fetchContainers" plain size="medium">
+          <el-button @click="fetchContainers" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
-          <el-button type="primary" @click="createContainer" size="medium">
+          <el-button type="primary" @click="createContainer" size="default">
             <template #icon><IconEpPlus /></template>
             新建容器
           </el-button>
         </el-button-group>
 
         <el-dropdown trigger="click" @command="handleGlobalCommand">
-          <el-button plain class="more-btn" size="medium">
+          <el-button plain class="more-btn" size="default">
              更多<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>

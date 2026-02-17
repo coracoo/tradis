@@ -8,7 +8,7 @@
         <span class="page-title">部署应用 - {{ project?.name }}</span>
       </div>
       <div class="filter-right">
-        <el-button @click="fetchProject" plain size="medium">
+        <el-button @click="fetchProject" plain size="default">
           <template #icon><IconEpRefresh /></template>
           刷新
         </el-button>
@@ -34,7 +34,7 @@
 
           <!-- 配置表单 -->
           <el-tabs v-model="activeTab" class="deploy-tabs">
-        <el-tab-pane label="部署" name="deploy">
+        <el-tab-pane label="新手部署" name="deploy">
         <el-form
           ref="formRef"
           :model="formData"
@@ -77,70 +77,6 @@
           <div class="deploy-grid">
             <div class="deploy-left">
               <el-collapse v-model="activeServiceNames" class="service-collapse-container">
-            <el-collapse-item
-              name="__dotenv__"
-              class="service-collapse-item global-env-collapse-item"
-            >
-              <template #title>
-                <div class="service-title-header">
-                  <div class="service-header-left">
-                    <span class="service-name-text">全局变量（.env）</span>
-                    <el-button size="small" link type="primary" class="add-param-btn" @click.stop="handleAddGlobalDotenvKey">
-                      <IconEpPlus class="el-icon--left" /> 添加参数
-                    </el-button>
-                  </div>
-                  <div class="service-header-right">
-                    <el-tag size="small" effect="plain" type="success" class="service-count-tag">{{ dotenvRows.length }} 项配置</el-tag>
-                    <el-tag v-if="dotenvRows.length === 0" size="small" effect="plain" type="info" class="service-count-tag">暂无，默认收起，可添加参数</el-tag>
-                  </div>
-                </div>
-              </template>
-
-              <div class="service-content">
-                <div v-if="dotenvRows.length === 0">
-                  <el-empty description="暂无全局变量" />
-                </div>
-                <div v-else class="config-section global-env-section">
-                  <div v-for="(row, idx) in dotenvRows" :key="row.key || idx" class="form-row-custom">
-                    <el-row :gutter="8" align="middle">
-                      <el-col :span="6">
-                        <div class="param-type-wrapper">
-                          <el-tag effect="plain" type="success">全局变量（.env）</el-tag>
-                        </div>
-                      </el-col>
-
-                      <el-col :span="6">
-                        <div class="left-input-wrapper">
-                          <el-input
-                            :model-value="getDotenvKeyDraft(row.key)"
-                            class="label-input mono-input"
-                            @update:model-value="(val) => setDotenvKeyDraft(row.key, val)"
-                            @keyup.enter="commitDotenvKeyRename(row.key)"
-                            @blur="commitDotenvKeyRename(row.key)"
-                          />
-                        </div>
-                      </el-col>
-
-                      <el-col :span="10">
-                        <el-form-item label-width="0" style="margin-bottom: 0">
-                          <el-input
-                            :model-value="row.value"
-                            :placeholder="String(row.value || '')"
-                            @update:model-value="(val) => handleSetDotenvValue(row.key, val)"
-                          />
-                        </el-form-item>
-                      </el-col>
-
-                      <el-col :span="1" style="text-align: center;">
-                        <el-button link type="danger" @click="handleRemoveDotenvKey(row.key)">
-                          <IconEpMinus />
-                        </el-button>
-                      </el-col>
-                    </el-row>
-                  </div>
-                </div>
-              </div>
-            </el-collapse-item>
             <el-collapse-item 
               v-for="(group, serviceName) in groupedSchema" 
               :key="serviceName" 
@@ -361,45 +297,137 @@
               </el-collapse>
             </div>
             <div class="deploy-right">
-              <div class="var-panel">
-                <div class="var-panel-header">
-                  <div class="var-panel-title">变量</div>
-                  <div class="var-panel-tags">
-                    <el-tag v-if="requiredVarsMissingCount > 0" size="small" effect="plain" type="warning">缺 {{ requiredVarsMissingCount }}</el-tag>
-                    <el-tag size="small" effect="plain" type="info">{{ filteredCatalogVariables.length }}/{{ catalogVariables.length }}</el-tag>
-                  </div>
-                </div>
-                <el-input v-model="varSearch" placeholder="搜索变量/来源/示例/值" clearable size="small" />
-                <div class="var-panel-actions">
-                  <el-switch v-model="varOnlyReferenced" size="small" active-text="仅被引用" inactive-text="全部变量" />
-                </div>
-                <div v-if="catalogVariables.length === 0" class="var-empty">
-                  <el-empty description="暂无变量" />
-                </div>
-                <div v-else class="var-list">
-                  <div v-for="v in filteredCatalogVariables" :key="v.name" class="var-row">
-                    <div class="var-row-top">
-                      <div class="var-name mono-text">{{ v.name }}</div>
-                      <div class="var-tags">
-                        <el-tag v-if="v.required" size="small" type="danger" effect="plain">必填</el-tag>
-                        <el-tag v-if="v.sources.includes('compose')" size="small" type="info" effect="plain">引用</el-tag>
-                        <el-tag v-if="v.sources.includes('dotenv')" size="small" type="success" effect="plain">已定义</el-tag>
-                        <el-tag v-else size="small" type="warning" effect="plain">未定义</el-tag>
+              <el-collapse v-model="activeServiceNames" class="service-collapse-container">
+                <el-collapse-item
+                  name="__dotenv__"
+                  class="service-collapse-item global-env-collapse-item"
+                >
+                  <template #title>
+                    <div class="service-title-header">
+                      <div class="service-header-left">
+                        <span class="service-name-text">环境变量（.env）</span>
+                        <el-button size="small" link type="primary" class="add-param-btn" @click.stop="handleAddGlobalDotenvKey">
+                          <IconEpPlus class="el-icon--left" /> 添加参数
+                        </el-button>
+                      </div>
+                      <div class="service-header-right">
+                        <el-tag size="small" effect="plain" type="success" class="service-count-tag">已定义 {{ dotenvRows.length }}</el-tag>
                       </div>
                     </div>
-                    <el-input
-                      :model-value="getCatalogVarValue(v.name, v.defaultValue)"
-                      size="small"
-                      class="mono-input"
-                      :placeholder="String(v.defaultValue || '')"
-                      @update:model-value="(val) => handleSetDotenvValue(v.name, val)"
-                    />
-                    <div v-if="v.examples && v.examples.length" class="var-examples mono-text">
-                      {{ v.examples[0] }}
+                  </template>
+
+                  <div class="service-content">
+                    <div v-if="dotenvRows.length === 0">
+                      <el-empty description="暂无环境变量" />
+                    </div>
+                    <div v-else class="envfile-groups">
+                      <div v-for="(grp, gidx) in dotenvGroupedRows" :key="grp.path || gidx" class="envfile-group">
+                        <div class="service-title-header envfile-group-header">
+                          <div class="service-header-left">
+                            <span class="service-name-text">{{ grp.name }}</span>
+                            <el-tag size="small" effect="plain" type="info" class="service-count-tag">{{ grp.path }}</el-tag>
+                          </div>
+                          <div class="service-header-right">
+                            <el-tag size="small" effect="plain" type="success" class="service-count-tag">{{ grp.rows.length }} 项</el-tag>
+                          </div>
+                        </div>
+
+                        <div class="config-section global-env-section">
+                          <div v-for="(row, idx) in grp.rows" :key="row.key || idx" class="form-row-custom">
+                            <el-row :gutter="8" align="middle">
+                              <el-col :span="6">
+                                <div class="param-type-wrapper">
+                                  <el-tag effect="plain" type="success">{{ grp.badge }}</el-tag>
+                                </div>
+                              </el-col>
+
+                              <el-col :span="6">
+                                <div class="left-input-wrapper">
+                                  <el-input
+                                    :model-value="getDotenvKeyDraft(row.key)"
+                                    class="label-input mono-input"
+                                    @update:model-value="(val) => setDotenvKeyDraft(row.key, val)"
+                                    @keyup.enter="commitDotenvKeyRename(row.key)"
+                                    @blur="commitDotenvKeyRename(row.key)"
+                                  />
+                                </div>
+                              </el-col>
+
+                              <el-col :span="10">
+                                <el-form-item label-width="0" style="margin-bottom: 0">
+                                  <el-input
+                                    :model-value="row.value"
+                                    :placeholder="String(row.value || '')"
+                                    @update:model-value="(val) => handleSetDotenvValue(row.key, val)"
+                                  />
+                                </el-form-item>
+                              </el-col>
+
+                              <el-col :span="1" style="text-align: center;">
+                                <el-button link type="danger" @click="handleRemoveDotenvKey(row.key)">
+                                  <IconEpMinus />
+                                </el-button>
+                              </el-col>
+                            </el-row>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                </el-collapse-item>
+
+                <el-collapse-item
+                  v-if="secretParams.length > 0"
+                  name="__secrets__"
+                  class="service-collapse-item global-env-collapse-item"
+                >
+                  <template #title>
+                    <div class="service-title-header">
+                      <div class="service-header-left">
+                        <span class="service-name-text">敏感参数（secrets）</span>
+                      </div>
+                      <div class="service-header-right">
+                        <el-tag size="small" effect="plain" type="warning" class="service-count-tag">{{ secretParams.length }} 项</el-tag>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="service-content">
+                    <div class="config-section global-env-section">
+                      <div v-for="(row, idx) in secretParams" :key="row.key || idx" class="form-row-custom">
+                        <el-row :gutter="8" align="middle">
+                          <el-col :span="6">
+                            <div class="param-type-wrapper">
+                              <el-tag effect="plain" type="warning">secret</el-tag>
+                            </div>
+                          </el-col>
+
+                          <el-col :span="6">
+                            <div class="left-input-wrapper">
+                              <el-input :model-value="row.key" class="label-input mono-input" readonly />
+                            </div>
+                          </el-col>
+
+                          <el-col :span="10">
+                            <el-form-item label-width="0" style="margin-bottom: 0">
+                              <el-input
+                                v-model="secretValues[row.key]"
+                                type="password"
+                                show-password
+                                :placeholder="row.required ? '必填' : ''"
+                              />
+                            </el-form-item>
+                          </el-col>
+
+                          <el-col :span="1" style="text-align: center;">
+                            <el-tag v-if="row.required" size="small" type="danger" effect="plain">必填</el-tag>
+                          </el-col>
+                        </el-row>
+                      </div>
+                    </div>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
             </div>
           </div>
 
@@ -411,6 +439,22 @@
             </el-button>
           </div>
         </el-form>
+        </el-tab-pane>
+        <el-tab-pane v-if="advancedMode" label="高级部署" name="advanced">
+          <div class="advanced-deploy-grid">
+            <div class="advanced-left service-collapse-item">
+              <div class="advanced-header">docker-compose.yml</div>
+              <div ref="advancedComposeEditorContainer" class="monaco-editor-wrapper"></div>
+            </div>
+            <div class="advanced-right service-collapse-item global-env-collapse-item">
+              <div class="advanced-header">.env</div>
+              <div ref="advancedEnvEditorContainer" class="monaco-editor-wrapper"></div>
+            </div>
+          </div>
+          <div class="form-actions">
+            <el-button @click="goBack">取消</el-button>
+            <el-button type="primary" :loading="deploying" @click="submitAdvancedDeploy">确认部署</el-button>
+          </div>
         </el-tab-pane>
         <el-tab-pane label="使用教程" name="tutorial">
           <div class="tutorial-wrapper">
@@ -482,10 +526,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, reactive, nextTick, shallowRef, triggerRef } from 'vue'
+import { ref, computed, onMounted, reactive, nextTick, shallowRef, triggerRef, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElImageViewer } from 'element-plus'
 import { parseDocument, isMap } from 'yaml'
+import * as monaco from 'monaco-editor'
 import api from '../api'
 import request from '../utils/request'
 import { useSseLogStream } from '../utils/sseLogStream'
@@ -509,6 +554,13 @@ const showLogs = ref(false)
 const logsContent = ref(null)
 const deploySuccess = ref(false)
 const activeTab = ref('deploy')
+const advancedMode = ref(localStorage.getItem('advancedMode') === '1')
+const advancedComposeText = ref('')
+const advancedEnvText = ref('')
+const advancedComposeEditor = shallowRef(null)
+const advancedEnvEditor = shallowRef(null)
+const advancedComposeEditorContainer = ref(null)
+const advancedEnvEditorContainer = ref(null)
 const allocating = ref(false)
 const appStoreBase = ref('')
 const deployAutoScroll = ref(true)
@@ -627,9 +679,8 @@ const tutorialHtml = computed(() => renderMarkdown(project.value?.tutorial || ''
 const formData = ref({})
 const rules = reactive({})
 const dotenvText = ref('')
-const appVarCatalog = ref({ variables: [], warnings: [] })
-const varSearch = ref('')
-const varOnlyReferenced = ref(true)
+const appVarCatalog = ref({ variables: [], params: [], warnings: [] })
+const secretValues = reactive({})
 const dotenvKeyDraftMap = reactive({})
 const getDotenvKeyDraft = (key) => {
   const k = String(key || '').trim()
@@ -901,6 +952,53 @@ const dotenvRows = computed(() => {
     .map((k) => ({ key: k, value: map[k] }))
 })
 
+const dotenvGroupedRows = computed(() => {
+  const params = appVarCatalog.value && Array.isArray(appVarCatalog.value.params) ? appVarCatalog.value.params : []
+  const envParams = params.filter(p => p && p.kind === 'env' && String(p.key || '').trim())
+  const keyToFiles = new Map()
+  for (const p of envParams) {
+    const key = String(p.key || '').trim()
+    if (!key) continue
+    const bindings = Array.isArray(p.bindings) ? p.bindings : []
+    const files = bindings
+      .map(b => String(b?.file || '').trim())
+      .filter(Boolean)
+    if (files.length > 0) {
+      keyToFiles.set(key, files)
+    }
+  }
+
+  const groups = new Map()
+  const getBaseName = (p) => {
+    const s = String(p || '').trim()
+    if (!s) return ''
+    const parts = s.split('/')
+    return parts[parts.length - 1] || s
+  }
+  for (const row of dotenvRows.value) {
+    const key = String(row?.key || '').trim()
+    const files = keyToFiles.get(key) || []
+    const file = files.length > 0 ? files[0] : '.env'
+    if (!groups.has(file)) {
+      groups.set(file, {
+        name: getBaseName(file),
+        path: file,
+        badge: getBaseName(file),
+        rows: []
+      })
+    }
+    groups.get(file).rows.push(row)
+  }
+
+  const items = Array.from(groups.values())
+  items.sort((a, b) => {
+    if (a.path === '.env' && b.path !== '.env') return 1
+    if (b.path === '.env' && a.path !== '.env') return -1
+    return String(a.path).localeCompare(String(b.path))
+  })
+  return items
+})
+
 const dotenvMapForVars = computed(() => {
   return parseDotenvTextToOrderedMap(dotenvText.value).map || {}
 })
@@ -918,6 +1016,25 @@ const shouldShowDotenvInheritanceHint = (config) => {
 }
 
 const catalogVariables = computed(() => {
+  const params = appVarCatalog.value && Array.isArray(appVarCatalog.value.params) ? appVarCatalog.value.params : []
+  const envParams = params.filter(p => p && p.kind === 'env' && String(p.key || '').trim())
+  if (envParams.length > 0) {
+    return envParams.map(p => {
+      const rawSources = Array.isArray(p.sources) ? p.sources.map(s => String(s || '').trim()).filter(Boolean) : []
+      const normalizedSources = rawSources.map(s => {
+        if (s === 'compose_ref' || s === 'compose_default') return 'compose'
+        return s
+      })
+      return {
+        name: String(p.key || '').trim(),
+        required: !!p.required,
+        defaultValue: String(p.defaultValue ?? ''),
+        sources: normalizedSources,
+        usages: Array.isArray(p.usages) ? p.usages.map(s => String(s || '').trim()).filter(Boolean) : [],
+        examples: Array.isArray(p.examples) ? p.examples.map(s => String(s || '').trim()).filter(Boolean) : []
+      }
+    })
+  }
   const list = appVarCatalog.value && Array.isArray(appVarCatalog.value.variables) ? appVarCatalog.value.variables : []
   return list
     .filter(v => v && typeof v === 'object' && String(v.name || '').trim())
@@ -926,6 +1043,7 @@ const catalogVariables = computed(() => {
       required: !!v.required,
       defaultValue: String(v.defaultValue ?? v.value ?? ''),
       sources: Array.isArray(v.sources) ? v.sources.map(s => String(s || '').trim()).filter(Boolean) : [],
+      usages: [],
       examples: Array.isArray(v.examples) ? v.examples.map(s => String(s || '').trim()).filter(Boolean) : []
     }))
 })
@@ -935,35 +1053,16 @@ const requiredVarsMissingCount = computed(() => {
   return catalogVariables.value.filter(v => v.required && !Object.prototype.hasOwnProperty.call(map, v.name)).length
 })
 
-const filteredCatalogVariables = computed(() => {
-  const q = String(varSearch.value || '').trim().toLowerCase()
-  const onlyRef = !!varOnlyReferenced.value
-  const map = dotenvMapForVars.value || {}
-
-  return catalogVariables.value.filter(v => {
-    if (!v || !v.name) return false
-    if (onlyRef && !v.sources.includes('compose')) return false
-    if (!q) return true
-
-    const ex = (v.examples || []).join(' ')
-    const src = (v.sources || []).join(' ')
-    const val = Object.prototype.hasOwnProperty.call(map, v.name) ? String(map[v.name] ?? '') : ''
-    return (
-      v.name.toLowerCase().includes(q) ||
-      src.toLowerCase().includes(q) ||
-      ex.toLowerCase().includes(q) ||
-      val.toLowerCase().includes(q)
-    )
-  })
+const secretParams = computed(() => {
+  const params = appVarCatalog.value && Array.isArray(appVarCatalog.value.params) ? appVarCatalog.value.params : []
+  return params
+    .filter(p => p && p.kind === 'secret' && String(p.key || '').trim())
+    .map(p => ({
+      key: String(p.key || '').trim(),
+      required: !!p.required,
+      bindings: Array.isArray(p.bindings) ? p.bindings : []
+    }))
 })
-
-const getCatalogVarValue = (name, fallback) => {
-  const k = String(name || '').trim()
-  if (!k) return ''
-  const map = dotenvMapForVars.value || {}
-  if (Object.prototype.hasOwnProperty.call(map, k)) return String(map[k] ?? '')
-  return String(fallback ?? '')
-}
 
 /**
  * handleSetDotenvValue 在表单里修改全局变量时，同步写回 .env 文本
@@ -1168,10 +1267,21 @@ const fetchProject = async () => {
       if (typeof data.dotenv === 'string') {
         project.value.dotenv = data.dotenv
       }
+      advancedComposeText.value = String(project.value?.compose || '')
+      advancedEnvText.value = String(project.value?.dotenv || '')
       appVarCatalog.value = {
         variables: Array.isArray(data.variables) ? data.variables : [],
+        params: Array.isArray(data.params) ? data.params : [],
         warnings: Array.isArray(data.warnings) ? data.warnings : []
       }
+      const params = Array.isArray(appVarCatalog.value.params) ? appVarCatalog.value.params : []
+      params
+        .filter(p => p && p.kind === 'secret' && String(p.key || '').trim())
+        .forEach((p) => {
+          const k = String(p.key || '').trim()
+          if (!k) return
+          if (typeof secretValues[k] !== 'string') secretValues[k] = ''
+        })
       autoAllocTriggered.value = false
       initForm()
       ensureDotenvContainsRequiredVars()
@@ -1591,12 +1701,6 @@ const submitDeploy = async () => {
        console.warn('No compose or services found in project definition')
     }
     const hasDotenv = String(dotenvText.value || '').trim().length > 0
-    if (hasDotenv) {
-      const servicesNeedEnvFileFromYaml = collectServicesNeedEnvFileFromCompose(yamlContent, { config: effectiveConfig, dotenvMap })
-      yamlContent = injectEnvFileForServicesAst(yamlContent, servicesNeedEnvFileFromYaml)
-    } else {
-      yamlContent = removeDotenvEnvFileRefsAst(yamlContent)
-    }
 
     const rawName = project.value.name || ''
     let projectName = normalizeComposeProjectName(rawName)
@@ -1669,6 +1773,15 @@ const submitDeploy = async () => {
       dotenv: hasDotenv ? String(dotenvText.value || '') : '',
       config: effectiveConfig // 新逻辑：传递完整配置数组
     }
+    const secretsPayload = {}
+    secretParams.value.forEach((p) => {
+      const k = String(p?.key || '').trim()
+      if (!k) return
+      const v = String(secretValues[k] ?? '')
+      if (v.trim() === '') return
+      secretsPayload[k] = v
+    })
+    deployData.secrets = secretsPayload
 
     try {
       const res = await api.appstore.deployProject(deployData)
@@ -1819,8 +1932,192 @@ const autoAllocatePortsIfNeeded = async () => {
   ElMessage.success('已按设置自动分配端口')
 }
 
+const syncAdvancedMode = () => {
+  advancedMode.value = localStorage.getItem('advancedMode') === '1'
+  if (advancedComposeEditor.value) {
+    advancedComposeEditor.value.updateOptions({ readOnly: !advancedMode.value })
+  }
+  if (advancedEnvEditor.value) {
+    advancedEnvEditor.value.updateOptions({ readOnly: !advancedMode.value })
+  }
+}
+
+const initAdvancedEditors = () => {
+  if (!advancedComposeEditorContainer.value || !advancedEnvEditorContainer.value) return
+
+  if (!advancedComposeEditor.value) {
+    advancedComposeEditor.value = monaco.editor.create(advancedComposeEditorContainer.value, {
+      value: String(advancedComposeText.value || ''),
+      language: 'yaml',
+      theme: 'vs',
+      automaticLayout: true,
+      minimap: { enabled: false },
+      lineNumbers: 'on',
+      scrollBeyondLastLine: false,
+      fontSize: 14,
+      tabSize: 2,
+      wordWrap: 'on',
+      readOnly: !advancedMode.value
+    })
+    advancedComposeEditor.value.onDidChangeModelContent(() => {
+      advancedComposeText.value = advancedComposeEditor.value.getValue()
+    })
+  } else {
+    advancedComposeEditor.value.setValue(String(advancedComposeText.value || ''))
+    advancedComposeEditor.value.updateOptions({ readOnly: !advancedMode.value })
+  }
+
+  if (!advancedEnvEditor.value) {
+    advancedEnvEditor.value = monaco.editor.create(advancedEnvEditorContainer.value, {
+      value: String(advancedEnvText.value || ''),
+      language: 'ini',
+      theme: 'vs',
+      automaticLayout: true,
+      minimap: { enabled: false },
+      lineNumbers: 'on',
+      scrollBeyondLastLine: false,
+      fontSize: 14,
+      tabSize: 2,
+      wordWrap: 'on',
+      readOnly: !advancedMode.value
+    })
+    advancedEnvEditor.value.onDidChangeModelContent(() => {
+      advancedEnvText.value = advancedEnvEditor.value.getValue()
+    })
+  } else {
+    advancedEnvEditor.value.setValue(String(advancedEnvText.value || ''))
+    advancedEnvEditor.value.updateOptions({ readOnly: !advancedMode.value })
+  }
+}
+
+watch(activeTab, async (v) => {
+  if (v !== 'advanced') return
+  await nextTick()
+  initAdvancedEditors()
+})
+
+const submitAdvancedDeploy = async () => {
+  if (!advancedMode.value) {
+    ElMessage.warning('未开启高级模式')
+    return
+  }
+
+  const yamlContent = String(advancedComposeEditor.value ? advancedComposeEditor.value.getValue() : advancedComposeText.value || '').trim()
+  const dotenvContent = String(advancedEnvEditor.value ? advancedEnvEditor.value.getValue() : advancedEnvText.value || '')
+  if (!yamlContent) {
+    ElMessage.error('docker-compose.yml 不能为空')
+    return
+  }
+
+  try {
+    const rawName = project.value?.name || ''
+    let projectName = normalizeComposeProjectName(rawName)
+
+    if (projectName !== rawName) {
+      try {
+        await ElMessageBox.confirm(
+          `当前应用名称 "${rawName}" 包含 Docker Compose 不支持的字符，将使用规范化名称 "${projectName}" 作为项目名进行部署（目录及项目列表将以该名称显示）。是否继续？`,
+          '项目名称规范化',
+          { confirmButtonText: '继续部署', cancelButtonText: '取消', type: 'warning' }
+        )
+      } catch (e) {
+        return
+      }
+    }
+
+    try {
+      const installedRes = await api.compose.list()
+      const installedList = installedRes.data || installedRes
+      const exists = (name) => installedList.some(p => p.name === name)
+      while (exists(projectName)) {
+        try {
+          const { value } = await ElMessageBox.prompt(
+            `项目${projectName}已存在，请输入新的项目名（文件名）以继续安装`,
+            '项目已存在',
+            {
+              confirmButtonText: '继续安装',
+              cancelButtonText: '取消',
+              inputValue: `${projectName}-2`,
+              inputPattern: composeProjectNamePattern,
+              inputErrorMessage: '仅支持小写字母/数字，且可包含 _ -，并以字母或数字开头'
+            }
+          )
+          const nextName = String(value || '').toLowerCase().trim()
+          if (!isValidComposeProjectName(nextName)) continue
+          projectName = nextName
+        } catch (e) {
+          return
+        }
+      }
+    } catch (error) {
+      console.warn('Check installed projects failed', error)
+    }
+
+    showLogs.value = true
+    deploying.value = true
+    deploySuccess.value = false
+    deployLogs.value = []
+    taskLogSetRef.value = new Set()
+    if (taskTimeoutRef.value) {
+      clearTimeout(taskTimeoutRef.value)
+      taskTimeoutRef.value = null
+    }
+    stopDeployTaskStream()
+
+    const deployData = {
+      projectId: String(projectId),
+      projectName,
+      compose: yamlContent,
+      env: {},
+      dotenv: String(dotenvContent || ''),
+      config: []
+    }
+    const secretsPayload = {}
+    secretParams.value.forEach((p) => {
+      const k = String(p?.key || '').trim()
+      if (!k) return
+      const v = String(secretValues[k] ?? '')
+      if (v.trim() === '') return
+      secretsPayload[k] = v
+    })
+    deployData.secrets = secretsPayload
+
+    const res = await api.appstore.deployProject(deployData)
+    const responseData = res.data || res
+    const taskId = responseData.taskId
+    if (!taskId) throw new Error('未获取到任务ID')
+    lastDeployTaskId.value = String(taskId)
+    localStorage.setItem('appstore:lastDeployTaskId', String(taskId))
+
+    ElMessage.success('部署任务已提交，正在执行...')
+    const token = localStorage.getItem('token') || ''
+    const url = `/api/appstore/tasks/${taskId}/events?token=${encodeURIComponent(token)}`
+    taskTimeoutRef.value = setTimeout(() => {
+      pushDeployLine({ type: 'warning', message: '日志连接超时，请稍后在容器列表查看状态', time: new Date().toISOString() })
+      stopDeployTaskStream()
+      deploying.value = false
+    }, 600000)
+    startDeployTaskStream(url, { reset: true })
+  } catch (error) {
+    console.error(error)
+    deploying.value = false
+    stopDeployTaskStream()
+    if (taskTimeoutRef.value) {
+      clearTimeout(taskTimeoutRef.value)
+      taskTimeoutRef.value = null
+    }
+    ElMessage.error('部署失败: ' + (error.response?.data?.error || error.message))
+  }
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('advanced-mode-change', syncAdvancedMode)
+  if (advancedComposeEditor.value) advancedComposeEditor.value.dispose()
+  if (advancedEnvEditor.value) advancedEnvEditor.value.dispose()
+})
 
 onMounted(() => {
+  window.addEventListener('advanced-mode-change', syncAdvancedMode)
   initAppStoreBase().then(() => {
     if (projectId) {
       fetchProject()
@@ -2045,6 +2342,30 @@ onMounted(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   background: var(--tag-bg-success);
+}
+
+.envfile-group {
+  margin-bottom: 16px;
+  border: 1px solid var(--clay-border);
+  border-radius: var(--radius-5xl);
+  overflow: hidden;
+  background: var(--clay-card);
+  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
+}
+
+.envfile-group:last-child {
+  margin-bottom: 0;
+}
+
+.envfile-group-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
+}
+
+.envfile-group :deep(.service-count-tag) {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mono-input :deep(.el-input__inner) {
@@ -2286,96 +2607,36 @@ onMounted(() => {
 }
 
 .deploy-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
-  align-items: flex-start;
+  align-items: start;
 }
 
 .deploy-left {
-  flex: 1;
   min-width: 0;
 }
 
 .deploy-right {
-  flex: 0 0 360px;
-  width: 360px;
-  min-width: 320px;
+  min-width: 0;
 }
 
-.var-panel {
-  border: 1px solid var(--clay-border);
-  border-radius: var(--radius-5xl);
-  background: var(--clay-card);
-  box-shadow: var(--shadow-clay-card), var(--shadow-clay-inner);
-  padding: 12px;
+.advanced-deploy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
 }
 
-.var-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.var-panel-title {
+.advanced-header {
+  padding: 14px 16px;
   font-weight: 900;
-  color: var(--clay-ink);
+  border-bottom: 1px solid rgba(55, 65, 81, 0.12);
+  background: transparent;
 }
 
-.var-panel-tags {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.var-panel-actions {
-  margin-top: 10px;
-  margin-bottom: 10px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.var-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 680px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.var-row {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 14px;
-  padding: 10px;
-  background: var(--el-bg-color);
-}
-
-.var-row-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.var-name {
-  font-weight: 700;
-  color: var(--el-text-color-primary);
-}
-
-.var-tags {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.var-examples {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  word-break: break-word;
+.monaco-editor-wrapper {
+  height: 560px;
 }
 
 .mono-text {
@@ -2384,15 +2645,10 @@ onMounted(() => {
 
 @media (max-width: 1100px) {
   .deploy-grid {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
-  .deploy-right {
-    width: 100%;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-  .var-list {
-    max-height: none;
+  .advanced-deploy-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -15,7 +15,7 @@
           placeholder="搜索应用..."
           clearable
           class="search-input"
-          size="medium"
+          size="default"
           @keyup.enter="refreshApps"
         >
           <template #prefix>
@@ -23,7 +23,7 @@
           </template>
         </el-input>
         
-        <el-radio-group v-model="activeCategory" class="category-filter" size="medium">
+        <el-radio-group v-model="activeCategory" class="category-filter" size="default">
           <el-radio-button label="all">全部</el-radio-button>
           <el-radio-button label="entertainment">影音</el-radio-button>
           <el-radio-button label="photos">图像</el-radio-button>
@@ -41,11 +41,11 @@
       </div>
 
       <div class="filter-right">
-         <el-button @click="openApplyDialog" plain size="medium">
+         <el-button @click="openApplyDialog" plain size="default">
            <template #icon><IconEpPlus /></template>
            申请应用
          </el-button>
-         <el-button @click="refreshApps" :loading="loading" plain size="medium">
+         <el-button @click="refreshApps" :loading="loading" plain size="default">
            <template #icon><IconEpRefresh /></template>
            刷新
          </el-button>
@@ -206,6 +206,7 @@ import { useRouter } from 'vue-router'
 import { ElImageViewer, ElMessage } from 'element-plus'
 import api from '../api'
 import request from '../utils/request'
+import { readJsonFromStorage } from '../utils/json'
 
 const router = useRouter()
 const activeCategory = ref('all')
@@ -320,14 +321,14 @@ const fetchApps = async (force = false) => {
   try {
     // 检查缓存
     if (!force) {
-      const cachedData = localStorage.getItem(CACHE_KEY)
+      const cachedData = readJsonFromStorage(CACHE_KEY, null)
       const cachedTime = localStorage.getItem(CACHE_TIME_KEY)
       
       if (cachedData && cachedTime) {
         const now = Date.now()
         if (now - parseInt(cachedTime) < CACHE_DURATION) {
           console.log('Using cached apps data')
-          apps.value = JSON.parse(cachedData)
+          apps.value = cachedData
           loading.value = false
           // 不 return，继续后台拉取更新 (SWR)
         }

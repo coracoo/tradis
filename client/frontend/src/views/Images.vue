@@ -7,7 +7,7 @@
           placeholder="搜索镜像名称、标签 or ID..."
           clearable
           class="search-input"
-          size="medium"
+          size="default"
         >
           <template #prefix>
             <IconEpSearch />
@@ -17,26 +17,26 @@
 
       <div class="filter-right">
         <el-button-group class="main-actions">
-          <el-button @click="fetchImages" :loading="loading" plain size="medium">
+          <el-button @click="fetchImages" :loading="loading" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
-          <el-button @click="manualCheckUpdates" :loading="checkingUpdates" plain size="medium">
+          <el-button @click="manualCheckUpdates" :loading="checkingUpdates" plain size="default">
             <template #icon><IconEpRefresh /></template>
             检测更新
           </el-button>
-          <el-button @click="importImage" plain size="medium">
+          <el-button @click="importImage" plain size="default">
             <template #icon><IconEpUpload /></template>
             导入
           </el-button>
-          <el-button type="primary" @click="pullImage" size="medium">
+          <el-button type="primary" @click="pullImage" size="default">
             <template #icon><IconEpDownload /></template>
             拉取镜像
           </el-button>
         </el-button-group>
 
         <el-dropdown trigger="click" @command="handleGlobalAction">
-          <el-button plain class="more-btn" size="medium">
+          <el-button plain class="more-btn" size="default">
             更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
@@ -676,7 +676,9 @@ const {
   onMessage: async (event, { stop }) => {
     let data = null
     try {
-      data = JSON.parse(event.data)
+      const raw = String(event?.data || '').trim()
+      if (!raw) return
+      data = JSON.parse(raw)
     } catch (e) {
       return
     }

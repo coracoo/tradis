@@ -17,7 +17,7 @@
       </div>
       <div class="filter-right">
         <el-button-group class="main-actions">
-          <el-button @click="handleRefresh" plain size="medium">
+          <el-button @click="handleRefresh" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
@@ -25,7 +25,7 @@
             type="primary"
             :disabled="containerStatus === '运行中' || isSelfContainer"
             @click="handleStart"
-            size="medium"
+            size="default"
           >
             <template #icon><IconEpVideoPlay /></template>
             启动
@@ -34,12 +34,12 @@
             type="warning"
             :disabled="containerStatus !== '运行中' || isSelfContainer"
             @click="handleStop"
-            size="medium"
+            size="default"
           >
             <template #icon><IconEpVideoPause /></template>
             停止
           </el-button>
-          <el-button type="primary" :disabled="isSelfContainer" @click="handleRestart" size="medium">
+          <el-button type="primary" :disabled="isSelfContainer" @click="handleRestart" size="default">
             <template #icon><IconEpRefresh /></template>
             重启
           </el-button>
@@ -120,13 +120,13 @@
               <div class="logs-header">
                 <div class="logs-options">
                   <el-switch v-model="autoScroll" active-text="自动滚动" />
-                  <el-input v-model="logFilter" placeholder="检索日志" style="width: 200px" size="medium">
+                  <el-input v-model="logFilter" placeholder="检索日志" style="width: 200px" size="default">
                     <template #prefix>
                       <IconEpSearch />
                     </template>
                   </el-input>
                 </div>
-                <el-button @click="handleClearLogs" size="medium">清空日志</el-button>
+                <el-button @click="handleClearLogs" size="default">清空日志</el-button>
               </div>
               <div class="logs-content" ref="logsRef">
                 <pre
@@ -150,6 +150,7 @@ import { ElMessage } from 'element-plus'
 import api from '../api'
 import { formatTimeTwoLines, formatBytes } from '../utils/format'
 import { useSseLogStream, buildSseUrl, getLogClass } from '../utils/sseLogStream'
+import { getSuggestedIntervalMs } from '../shared/loadShedding'
 
 const route = useRoute()
 const router = useRouter()
@@ -189,7 +190,9 @@ const {
   scrollElRef: logsRef
 })
 let refreshTimer = null
+let refreshSeq = 0
 let statsTimer = null
+let statsSeq = 0
 let statsEventSource = null
 let prevRxBytes = null
 let prevTxBytes = null
@@ -445,8 +448,9 @@ watch(activeTab, (tab) => {
 })
 
 const stopStatsStream = () => {
+  statsSeq += 1
   if (statsTimer) {
-    clearInterval(statsTimer)
+    clearTimeout(statsTimer)
     statsTimer = null
   }
   if (statsEventSource) {
@@ -461,11 +465,24 @@ const startStatsStream = () => {
   stopStatsStream()
   if (!containerId.value) return
   const url = buildSseUrl(`/api/containers/${containerId.value}/stats/stream`)
+  const scheduleStatsPoll = (seq) => {
+    if (seq !== statsSeq) return
+    statsTimer = setTimeout(async () => {
+      if (seq !== statsSeq) return
+      if (document.visibilityState === 'visible') {
+        await fetchContainerStats()
+      }
+      if (seq !== statsSeq) return
+      scheduleStatsPoll(seq)
+    }, getSuggestedIntervalMs(5000))
+  }
   try {
     statsEventSource = new EventSource(url)
     statsEventSource.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data)
+        const raw = String(event?.data || '').trim()
+        if (!raw) return
+        const data = JSON.parse(raw)
         const ts = data.timestamp || Math.floor(Date.now() / 1000)
         cpuUsage.value = Math.max(0, Math.min(100, Number(data.cpu_percent || 0)))
         memoryUsage.value = Number(((data.memory_usage || 0) / (1024 * 1024)).toFixed(2))
@@ -496,21 +513,20 @@ const startStatsStream = () => {
       // 流错误时，回退为轮询模式
       try { statsEventSource.close() } catch {}
       statsEventSource = null
-      if (!statsTimer) {
-        statsTimer = setInterval(fetchContainerStats, 5000)
-      }
+      statsSeq += 1
+      scheduleStatsPoll(statsSeq)
     }
   } catch (e) {
     // 创建流失败时，回退轮询
-    if (!statsTimer) {
-      statsTimer = setInterval(fetchContainerStats, 5000)
-    }
+    statsSeq += 1
+    scheduleStatsPoll(statsSeq)
   }
 }
 
 const stopRefresh = () => {
+  refreshSeq += 1
   if (refreshTimer) {
-    clearInterval(refreshTimer)
+    clearTimeout(refreshTimer)
     refreshTimer = null
   }
 }
@@ -518,10 +534,16 @@ const stopRefresh = () => {
 const startRefresh = () => {
   stopRefresh()
   fetchContainerDetail()
-  refreshTimer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return
-    fetchContainerDetail()
-  }, refreshInterval)
+  const seq = refreshSeq
+  const tick = async () => {
+    if (seq !== refreshSeq) return
+    if (document.visibilityState === 'visible') {
+      await fetchContainerDetail()
+    }
+    if (seq !== refreshSeq) return
+    refreshTimer = setTimeout(tick, getSuggestedIntervalMs(refreshInterval))
+  }
+  tick()
 }
 
 const handleVisibilityChange = () => {

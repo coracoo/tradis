@@ -34,6 +34,7 @@ func RegisterSystemRoutes(r *gin.RouterGroup) {
 		group.DELETE("/notifications/:id", deleteNotification)
 		group.POST("/notifications/read", markNotificationsRead)
 		group.POST("/navigation/rebuild", rebuildNavigation)
+		group.POST("/volume-backup/rebuild", rebuildVolumeBackup)
 	}
 }
 
@@ -53,6 +54,16 @@ func rebuildNavigation(c *gin.Context) {
 	}
 
 	system.RebuildAutoNavigationAll()
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func rebuildVolumeBackup(c *gin.Context) {
+	s, err := settings.GetSettings()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "Failed to get settings", err)
+		return
+	}
+	go system.RebuildVolumeBackupContainer(s)
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
@@ -112,6 +123,10 @@ func shouldApplyMinAPIVersionFix(engineVersion string, apiVersion string) bool {
 
 // 获取系统信息
 func getSystemInfo(c *gin.Context) {
+	level := system.CurrentLoadLevel()
+	c.Header("X-Tradis-Load-Level", string(level))
+	c.Header("X-Tradis-Suggested-Refresh-Seconds", strconv.Itoa(system.SuggestedRefreshSeconds(level)))
+
 	// 创建Docker客户端
 	cli, ok := getDockerClient(c)
 	if !ok {

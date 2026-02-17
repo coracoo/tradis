@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -71,6 +72,7 @@ type Variable struct {
 	Category    string `json:"category"`
 	ServiceName string `json:"serviceName"`
 	ParamType   string `json:"paramType"` // port, path, env, hardware, other
+	EnvFile     string `json:"envFile,omitempty"`
 }
 
 type Variables []Variable
@@ -580,6 +582,10 @@ func GetTemplateVars(db *gorm.DB) gin.HandlerFunc {
 			return a.Name < b.Name
 		})
 
+		params, paramWarnings, paramErrors := buildTemplateParams(merged, refs, dotenvJSON, template.Compose)
+		warnings = append(warnings, paramWarnings...)
+		parseErrors = append(parseErrors, paramErrors...)
+
 		c.JSON(http.StatusOK, gin.H{
 			"template": gin.H{
 				"id":   template.ID,
@@ -589,6 +595,7 @@ func GetTemplateVars(db *gorm.DB) gin.HandlerFunc {
 			"refs":            refs,
 			"warnings":        warnings,
 			"errors":          parseErrors,
+			"params":          params,
 			"dotenv":          template.Dotenv,
 			"dotenv_json":     dotenvJSON,
 			"dotenv_warnings": dotenvWarns,
@@ -611,6 +618,52 @@ type composeVarRef struct {
 	HasDefault bool   `json:"hasDefault"`
 	Default    string `json:"defaultValue"`
 	Raw        string `json:"raw"`
+}
+
+type TemplateParamKind string
+
+const (
+	TemplateParamKindEnv    TemplateParamKind = "env"
+	TemplateParamKindSecret TemplateParamKind = "secret"
+)
+
+type TemplateParamUsage string
+
+const (
+	TemplateParamUsageInterpolation TemplateParamUsage = "interpolation"
+	TemplateParamUsageRuntimeEnv    TemplateParamUsage = "runtime_env"
+	TemplateParamUsageSecretMount   TemplateParamUsage = "secret_mount"
+)
+
+type TemplateParamSource string
+
+const (
+	TemplateParamSourceUserInput      TemplateParamSource = "user_input"
+	TemplateParamSourceSchema         TemplateParamSource = "schema"
+	TemplateParamSourceDotenv         TemplateParamSource = "dotenv"
+	TemplateParamSourceComposeRef     TemplateParamSource = "compose_ref"
+	TemplateParamSourceComposeDefault TemplateParamSource = "compose_default"
+	TemplateParamSourceEnvFile        TemplateParamSource = "env_file"
+	TemplateParamSourceComposeSecret  TemplateParamSource = "compose_secret"
+)
+
+type TemplateParamBinding struct {
+	ServiceName string `json:"serviceName"`
+	Target      string `json:"target"`
+	File        string `json:"file,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type TemplateParam struct {
+	Key          string                 `json:"key"`
+	Kind         TemplateParamKind      `json:"kind"`
+	Value        string                 `json:"value,omitempty"`
+	DefaultValue string                 `json:"defaultValue,omitempty"`
+	Required     bool                   `json:"required"`
+	Usages       []TemplateParamUsage   `json:"usages,omitempty"`
+	Sources      []TemplateParamSource  `json:"sources,omitempty"`
+	Examples     []string               `json:"examples,omitempty"`
+	Bindings     []TemplateParamBinding `json:"bindings,omitempty"`
 }
 
 func isPlainMap(v interface{}) (map[string]interface{}, bool) {
@@ -1039,6 +1092,446 @@ func parseComposeToSchemaAndRefs(compose string) (Variables, []string, []string,
 	return schema, warnings, errorsOut, refs
 }
 
+type envFileRef struct {
+	Path     string
+	Required bool
+}
+
+type composeSecretDef struct {
+	Name     string
+	File     string
+	External bool
+}
+
+type composeSecretUse struct {
+	Service string
+	Name    string
+	Target  string
+}
+
+func extractServiceEnvFileRefs(composeContent string) (map[string][]envFileRef, error) {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil, err
+	}
+	services, ok := data["services"].(map[string]interface{})
+	if !ok {
+		return map[string][]envFileRef{}, nil
+	}
+	out := make(map[string][]envFileRef)
+	for svcName, serviceRaw := range services {
+		svc, ok := serviceRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		envFileRaw, ok := svc["env_file"]
+		if !ok {
+			continue
+		}
+		merged := make(map[string]bool)
+		addRef := func(p string, required bool) {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				return
+			}
+			clean := filepath.Clean(p)
+			if prev, ok := merged[clean]; ok {
+				merged[clean] = prev || required
+				return
+			}
+			merged[clean] = required
+		}
+		switch v := envFileRaw.(type) {
+		case string:
+			addRef(v, true)
+		case []interface{}:
+			for _, item := range v {
+				switch it := item.(type) {
+				case string:
+					addRef(it, true)
+				case map[string]interface{}:
+					pathVal, _ := it["path"]
+					reqVal, hasReq := it["required"]
+					pathStr := strings.TrimSpace(fmt.Sprintf("%v", pathVal))
+					required := true
+					if hasReq {
+						if b, ok := reqVal.(bool); ok {
+							required = b
+						} else {
+							s := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", reqVal)))
+							if s == "false" || s == "0" || s == "no" {
+								required = false
+							}
+						}
+					}
+					addRef(pathStr, required)
+				default:
+					addRef(fmt.Sprintf("%v", it), true)
+				}
+			}
+		default:
+			addRef(fmt.Sprintf("%v", v), true)
+		}
+		list := make([]envFileRef, 0, len(merged))
+		for p, required := range merged {
+			list = append(list, envFileRef{Path: p, Required: required})
+		}
+		sort.SliceStable(list, func(i, j int) bool { return list[i].Path < list[j].Path })
+		name := strings.TrimSpace(svcName)
+		if name == "" {
+			name = "Global"
+		}
+		out[name] = list
+	}
+	return out, nil
+}
+
+func extractComposeSecrets(composeContent string) (map[string]composeSecretDef, []composeSecretUse, error) {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil, nil, err
+	}
+	defs := make(map[string]composeSecretDef)
+	if secretsAny, ok := data["secrets"]; ok {
+		if secretsMap, ok := secretsAny.(map[string]interface{}); ok {
+			for nameAny, defAny := range secretsMap {
+				name := strings.TrimSpace(fmt.Sprintf("%v", nameAny))
+				if name == "" {
+					continue
+				}
+				def := composeSecretDef{Name: name}
+				if m, ok := defAny.(map[string]interface{}); ok {
+					if f, ok := m["file"]; ok {
+						def.File = strings.TrimSpace(fmt.Sprintf("%v", f))
+					}
+					if ex, ok := m["external"]; ok {
+						switch v := ex.(type) {
+						case bool:
+							def.External = v
+						default:
+							s := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", v)))
+							def.External = s == "true" || s == "1" || s == "yes"
+						}
+					}
+				}
+				defs[name] = def
+			}
+		}
+	}
+
+	uses := make([]composeSecretUse, 0)
+	servicesAny, ok := data["services"]
+	if !ok {
+		return defs, uses, nil
+	}
+	services, ok := servicesAny.(map[string]interface{})
+	if !ok {
+		return defs, uses, nil
+	}
+	for svcNameAny, svcAny := range services {
+		svcName := strings.TrimSpace(fmt.Sprintf("%v", svcNameAny))
+		if svcName == "" {
+			continue
+		}
+		svc, ok := svcAny.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		secAny, ok := svc["secrets"]
+		if !ok {
+			continue
+		}
+		addUse := func(name string, target string) {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return
+			}
+			uses = append(uses, composeSecretUse{Service: svcName, Name: name, Target: strings.TrimSpace(target)})
+		}
+		switch v := secAny.(type) {
+		case []interface{}:
+			for _, it := range v {
+				switch item := it.(type) {
+				case string:
+					addUse(item, "")
+				case map[string]interface{}:
+					source := strings.TrimSpace(fmt.Sprintf("%v", item["source"]))
+					if source == "" {
+						source = strings.TrimSpace(fmt.Sprintf("%v", item["secret"]))
+					}
+					target := strings.TrimSpace(fmt.Sprintf("%v", item["target"]))
+					addUse(source, target)
+				default:
+					addUse(fmt.Sprintf("%v", item), "")
+				}
+			}
+		case string:
+			addUse(v, "")
+		default:
+			addUse(fmt.Sprintf("%v", v), "")
+		}
+	}
+	return defs, uses, nil
+}
+
+func detectCrossFileExtends(composeContent string) []string {
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(composeContent), &data); err != nil {
+		return nil
+	}
+	servicesAny, ok := data["services"]
+	if !ok {
+		return nil
+	}
+	services, ok := servicesAny.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	var errs []string
+	for svcNameAny, svcAny := range services {
+		svcName := strings.TrimSpace(fmt.Sprintf("%v", svcNameAny))
+		if svcName == "" {
+			continue
+		}
+		svc, ok := svcAny.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		extAny, ok := svc["extends"]
+		if !ok {
+			continue
+		}
+		if m, ok := extAny.(map[string]interface{}); ok {
+			fileVal := strings.TrimSpace(fmt.Sprintf("%v", m["file"]))
+			if fileVal != "" {
+				errs = append(errs, fmt.Sprintf("检测到跨文件 extends：service=%s extends.file=%s（当前仅支持单文件模板）", svcName, fileVal))
+			}
+		}
+	}
+	return errs
+}
+
+func buildTemplateParams(schema Variables, refs []composeVarRef, dotenv map[string]string, composeContent string) ([]TemplateParam, []string, []string) {
+	warnings := make([]string, 0)
+	errorsOut := make([]string, 0)
+	errorsOut = append(errorsOut, detectCrossFileExtends(composeContent)...)
+
+	envFilesByService, err := extractServiceEnvFileRefs(composeContent)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("解析 env_file 失败：%v", err))
+		envFilesByService = map[string][]envFileRef{}
+	}
+	secretDefs, secretUses, err := extractComposeSecrets(composeContent)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("解析 secrets 失败：%v", err))
+		secretDefs = map[string]composeSecretDef{}
+		secretUses = nil
+	}
+
+	schemaDefault := make(map[string]string)
+	for _, it := range schema {
+		if strings.ToLower(strings.TrimSpace(it.ParamType)) != "env" {
+			continue
+		}
+		key := strings.TrimSpace(it.Name)
+		if key == "" || strings.EqualFold(key, "PATH") || !isLikelyEnvKey(key) {
+			continue
+		}
+		if strings.TrimSpace(it.Default) == "" {
+			continue
+		}
+		if _, ok := schemaDefault[key]; !ok {
+			schemaDefault[key] = strings.TrimSpace(it.Default)
+		}
+	}
+
+	refMap := make(map[string]composeVarRef)
+	for _, r := range refs {
+		refMap[r.Name] = r
+	}
+
+	paramsMap := make(map[string]*TemplateParam)
+	ensureEnv := func(key string) *TemplateParam {
+		key = strings.TrimSpace(key)
+		if key == "" || !isLikelyEnvKey(key) || strings.EqualFold(key, "PATH") {
+			return nil
+		}
+		if p, ok := paramsMap[key]; ok {
+			return p
+		}
+		p := &TemplateParam{Key: key, Kind: TemplateParamKindEnv}
+		paramsMap[key] = p
+		return p
+	}
+	addSource := func(p *TemplateParam, s TemplateParamSource) {
+		for _, it := range p.Sources {
+			if it == s {
+				return
+			}
+		}
+		p.Sources = append(p.Sources, s)
+	}
+	addUsage := func(p *TemplateParam, u TemplateParamUsage) {
+		for _, it := range p.Usages {
+			if it == u {
+				return
+			}
+		}
+		p.Usages = append(p.Usages, u)
+	}
+	addExample := func(p *TemplateParam, ex string) {
+		ex = strings.TrimSpace(ex)
+		if ex == "" {
+			return
+		}
+		for _, it := range p.Examples {
+			if it == ex {
+				return
+			}
+		}
+		if len(p.Examples) >= 3 {
+			return
+		}
+		p.Examples = append(p.Examples, ex)
+	}
+	addBinding := func(p *TemplateParam, b TemplateParamBinding) {
+		b.ServiceName = strings.TrimSpace(b.ServiceName)
+		b.Target = strings.TrimSpace(b.Target)
+		b.File = strings.TrimSpace(b.File)
+		if b.ServiceName == "" || b.Target == "" {
+			return
+		}
+		for _, it := range p.Bindings {
+			if it.ServiceName == b.ServiceName && it.Target == b.Target && it.File == b.File {
+				return
+			}
+		}
+		p.Bindings = append(p.Bindings, b)
+	}
+
+	for _, r := range refs {
+		p := ensureEnv(r.Name)
+		if p == nil {
+			continue
+		}
+		addUsage(p, TemplateParamUsageInterpolation)
+		addSource(p, TemplateParamSourceComposeRef)
+		addExample(p, r.Raw)
+		if r.HasDefault && strings.TrimSpace(p.DefaultValue) == "" {
+			p.DefaultValue = strings.TrimSpace(r.Default)
+			addSource(p, TemplateParamSourceComposeDefault)
+		}
+	}
+
+	for k := range dotenv {
+		p := ensureEnv(k)
+		if p == nil {
+			continue
+		}
+		addSource(p, TemplateParamSourceDotenv)
+	}
+
+	for _, it := range schema {
+		if strings.ToLower(strings.TrimSpace(it.ParamType)) != "env" {
+			continue
+		}
+		key := strings.TrimSpace(it.Name)
+		p := ensureEnv(key)
+		if p == nil {
+			continue
+		}
+		addSource(p, TemplateParamSourceSchema)
+		if strings.TrimSpace(p.DefaultValue) == "" && strings.TrimSpace(it.Default) != "" {
+			p.DefaultValue = strings.TrimSpace(it.Default)
+		}
+		svc := strings.TrimSpace(it.ServiceName)
+		if svc == "" {
+			svc = "Global"
+		}
+		if svc != "Global" {
+			addUsage(p, TemplateParamUsageRuntimeEnv)
+			files := envFilesByService[svc]
+			if len(files) > 0 {
+				targetFile := strings.TrimSpace(it.EnvFile)
+				if targetFile == "" {
+					if len(files) == 1 {
+						targetFile = strings.TrimSpace(files[0].Path)
+					} else {
+						warnings = append(warnings, fmt.Sprintf("服务 %s 存在多个 env_file，但变量 %s 未指定 envFile 绑定", svc, key))
+					}
+				}
+				if targetFile != "" {
+					addBinding(p, TemplateParamBinding{ServiceName: svc, Target: "env_file", File: targetFile})
+				}
+			} else {
+				addBinding(p, TemplateParamBinding{ServiceName: svc, Target: "environment"})
+			}
+		}
+	}
+
+	for key, p := range paramsMap {
+		r, inCompose := refMap[key]
+		finalDefault := ""
+		if v, ok := dotenv[key]; ok && strings.TrimSpace(v) != "" {
+			finalDefault = v
+		} else if v := strings.TrimSpace(schemaDefault[key]); v != "" {
+			finalDefault = v
+		} else if inCompose && r.HasDefault {
+			finalDefault = strings.TrimSpace(r.Default)
+		}
+		p.Required = inCompose && !r.HasDefault && strings.TrimSpace(finalDefault) == ""
+	}
+
+	for _, u := range secretUses {
+		name := strings.TrimSpace(u.Name)
+		if name == "" {
+			continue
+		}
+		p, ok := paramsMap[name]
+		if ok && p.Kind != TemplateParamKindSecret {
+			continue
+		}
+		var sp *TemplateParam
+		if !ok {
+			sp = &TemplateParam{Key: name, Kind: TemplateParamKindSecret, Required: true}
+			paramsMap[name] = sp
+		} else {
+			sp = p
+			sp.Kind = TemplateParamKindSecret
+			sp.Required = true
+		}
+		addUsage(sp, TemplateParamUsageSecretMount)
+		addSource(sp, TemplateParamSourceComposeSecret)
+		def, hasDef := secretDefs[name]
+		if hasDef {
+			if def.External {
+				addBinding(sp, TemplateParamBinding{ServiceName: u.Service, Target: "secret_external", File: name, Required: true})
+			} else {
+				addBinding(sp, TemplateParamBinding{ServiceName: u.Service, Target: "secret_file", File: def.File, Required: true})
+			}
+		} else {
+			addBinding(sp, TemplateParamBinding{ServiceName: u.Service, Target: "secret", File: "", Required: true})
+		}
+	}
+
+	params := make([]TemplateParam, 0, len(paramsMap))
+	for _, p := range paramsMap {
+		params = append(params, *p)
+	}
+	sort.SliceStable(params, func(i, j int) bool {
+		a := params[i]
+		b := params[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Required != b.Required {
+			return a.Required
+		}
+		return a.Key < b.Key
+	})
+	return params, warnings, errorsOut
+}
+
 func ParseTemplateVars() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
@@ -1049,12 +1542,16 @@ func ParseTemplateVars() gin.HandlerFunc {
 			return
 		}
 		schema, warnings, errorsOut, refs := parseComposeToSchemaAndRefs(req.Compose)
+		params, paramWarnings, paramErrors := buildTemplateParams(schema, refs, map[string]string{}, req.Compose)
+		warnings = append(warnings, paramWarnings...)
+		errorsOut = append(errorsOut, paramErrors...)
 
 		c.JSON(http.StatusOK, gin.H{
 			"schema":   schema,
 			"warnings": warnings,
 			"errors":   errorsOut,
 			"refs":     refs,
+			"params":   params,
 		})
 	}
 }

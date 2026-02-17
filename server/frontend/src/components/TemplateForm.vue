@@ -337,6 +337,23 @@
               </div>
               <div class="config-value">
                 <el-input v-model="item.default" placeholder="Value" />
+                <el-select
+                  v-if="needsEnvFileBinding(item, serviceName)"
+                  v-model="item.envFile"
+                  size="small"
+                  style="width: 100%; margin-top: 6px"
+                  placeholder="选择 env_file 绑定"
+                >
+                  <el-option
+                    v-for="p in envFilesForService(serviceName)"
+                    :key="p"
+                    :label="p"
+                    :value="p"
+                  />
+                </el-select>
+                <div v-if="needsEnvFileBinding(item, serviceName) && !item.envFile" class="envfile-hint">
+                  该服务存在多个 env_file，请为此变量指定 envFile 绑定
+                </div>
               </div>
                 <div class="config-meta">
                   <el-select v-model="item.category" size="small" style="width: 100px">
@@ -450,6 +467,7 @@ import { ref, computed, watch, defineProps, defineEmits } from 'vue'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
+import yaml from 'js-yaml'
 import { parseDotenvText } from '../utils/composeTemplateParser'
 import { templateApi } from '../api/template'
 
@@ -481,6 +499,64 @@ const newScreenshotUrl = ref('')
 const activeServices = ref([])
 const parseReport = ref({ warnings: [], errors: [] })
 const dotenvKeySetRef = ref(new Set())
+
+const envFilesByService = computed(() => {
+  const compose = String(form.value.compose || '')
+  if (!compose.trim()) return {}
+  try {
+    const doc = yaml.load(compose)
+    const services = doc && typeof doc === 'object' ? doc.services : null
+    if (!services || typeof services !== 'object') return {}
+
+    const out = {}
+    const add = (svc, p) => {
+      const s = String(svc || '').trim()
+      const v = String(p || '').trim()
+      if (!s || !v) return
+      if (!out[s]) out[s] = []
+      if (!out[s].includes(v)) out[s].push(v)
+    }
+
+    Object.entries(services).forEach(([svcName, svcVal]) => {
+      if (!svcVal || typeof svcVal !== 'object') return
+      const envFile = svcVal.env_file
+      if (!envFile) return
+      if (typeof envFile === 'string') {
+        add(svcName, envFile)
+        return
+      }
+      if (Array.isArray(envFile)) {
+        envFile.forEach((it) => {
+          if (typeof it === 'string') {
+            add(svcName, it)
+            return
+          }
+          if (it && typeof it === 'object') {
+            if (it.path) add(svcName, it.path)
+          }
+        })
+      }
+    })
+
+    return out
+  } catch (e) {
+    return {}
+  }
+})
+
+const envFilesForService = (serviceName) => {
+  const s = String(serviceName || '').trim()
+  if (!s) return []
+  const m = envFilesByService.value || {}
+  return Array.isArray(m[s]) ? m[s] : []
+}
+
+const needsEnvFileBinding = (item, serviceName) => {
+  const svc = String(serviceName || '').trim()
+  if (!svc || svc === 'Global') return false
+  if (String(item?.paramType || '').trim() !== 'env') return false
+  return envFilesForService(svc).length > 1
+}
 
 // 定义 handleReset 为普通函数，确保提升
 function handleReset() {
@@ -929,6 +1005,7 @@ const parseRegexVariables = (content) => {
         type: 'string',
         paramType: 'env',
         serviceName: 'Global', // 正则解析无法确定服务，归为全局
+        envFile: '',
         description: ''
       })
       newCount++
@@ -950,6 +1027,7 @@ const handleAddVariable = () => {
     type: 'string',
     paramType: 'env',
     serviceName: 'Global',
+    envFile: '',
     description: ''
   })
   if (!activeServices.value.includes('Global')) {
@@ -972,6 +1050,28 @@ const handleSubmit = async () => {
   if (!form.value.name || !form.value.category || !form.value.compose) {
     ElMessage.warning('请填写必要信息（名称、分类、Compose文件）')
     return
+  }
+  const schema = Array.isArray(form.value.schema) ? form.value.schema : []
+  for (const item of schema) {
+    if (!item || String(item.paramType || '').trim() !== 'env') continue
+    const svc = String(item.serviceName || 'Global').trim() || 'Global'
+    if (svc === 'Global') continue
+    const files = envFilesForService(svc)
+    if (files.length === 1 && !String(item.envFile || '').trim()) {
+      item.envFile = files[0]
+      continue
+    }
+    if (files.length > 1) {
+      const bound = String(item.envFile || '').trim()
+      if (!bound) {
+        ElMessage.error(`服务 ${svc} 的变量 ${String(item.name || '').trim() || '(未命名)'} 需要选择 env_file 绑定`)
+        return
+      }
+      if (!files.includes(bound)) {
+        ElMessage.error(`服务 ${svc} 的变量 ${String(item.name || '').trim() || '(未命名)'} envFile 必须来自 env_file 列表`)
+        return
+      }
+    }
   }
   emit('submit', form.value)
 }
@@ -1234,6 +1334,12 @@ const handleSubmit = async () => {
     font-size: 12px;
     color: #909399;
     font-family: monospace;
+}
+
+.envfile-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #e6a23c;
 }
 
 .config-value {

@@ -186,7 +186,7 @@ func updateNavigationItem(c *gin.Context) {
 	// 注意：这里我们更新所有字段，如果前端传空字符串，也会被更新进去。
 	// 根据需求，用户可能想清空某个 URL，所以这是合理的。
 	_, err := db.Exec(
-		"UPDATE navigation_items SET title = ?, url = ?, lan_url = ?, wan_url = ?, icon = ?, icon_path = ?, category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		"UPDATE navigation_items SET title = ?, url = ?, lan_url = ?, wan_url = ?, icon = ?, icon_path = ?, category = ?, ai_generated = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		req.Title, req.URL, req.LanUrl, req.WanUrl, req.IconUrl, req.IconPath, req.Category, id,
 	)
 	if err != nil {
@@ -231,6 +231,27 @@ func deleteNavigationItem(c *gin.Context) {
 	id := c.Param("id")
 	db := database.GetDB()
 
+	permanent := false
+	switch strings.ToLower(strings.TrimSpace(c.Query("permanent"))) {
+	case "1", "true", "yes":
+		permanent = true
+	}
+
+	if permanent {
+		result, err := db.Exec("DELETE FROM navigation_items WHERE id = ?", id)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "永久删除导航项失败", err)
+			return
+		}
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			respondError(c, http.StatusNotFound, "导航项不存在", nil)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "导航项已永久删除"})
+		return
+	}
+
 	result, err := db.Exec("UPDATE navigation_items SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "删除导航项失败", err)
@@ -243,7 +264,7 @@ func deleteNavigationItem(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "导航项已移至回收站"})
+	c.JSON(http.StatusOK, gin.H{"message": "导航项已隐藏"})
 }
 
 // @Summary 恢复导航项
@@ -322,7 +343,7 @@ func uploadNavigationIcon(c *gin.Context) {
 	// 更新数据库 icon 与 icon_path（相对 data 目录路径）
 	publicPath := filepath.ToSlash(filepath.Join("/data/pic", filename))
 	relativePath := filepath.ToSlash(filepath.Join("pic", filename))
-	if _, err := db.Exec("UPDATE navigation_items SET icon = ?, icon_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", publicPath, relativePath, id); err != nil {
+	if _, err := db.Exec("UPDATE navigation_items SET icon = ?, icon_path = ?, ai_generated = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", publicPath, relativePath, id); err != nil {
 		respondError(c, http.StatusInternalServerError, "更新导航项图标失败", err)
 		return
 	}

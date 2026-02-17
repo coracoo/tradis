@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # 设置颜色
 GREEN='\033[0;32m'
@@ -7,6 +8,40 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}=== 自动上传代码脚本 (SSH模式) ===${NC}"
+
+commit_msg=""
+repo_url=""
+branch="main"
+ssh_key=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m|--message)
+            commit_msg="$2"
+            shift 2
+            ;;
+        -r|--repo)
+            repo_url="$2"
+            shift 2
+            ;;
+        -b|--branch)
+            branch="$2"
+            shift 2
+            ;;
+        -k|--key)
+            ssh_key="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "用法: $0 [-m 提交信息] [-r 仓库地址] [-b 分支] [-k SSH私钥路径]"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}未知参数: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
 
 # 1. 检查 git 环境
 if ! command -v git &> /dev/null; then
@@ -18,22 +53,29 @@ fi
 if [ ! -d ".git" ]; then
     echo -e "${YELLOW}正在初始化 git 仓库...${NC}"
     git init
-    git branch -M main
+    git branch -M "$branch"
 else
     echo -e "${GREEN}Git 仓库已存在。${NC}"
 fi
 
-# 3. 检查 .gitignore
 if [ ! -f ".gitignore" ]; then
-    echo -e "${RED}警告: 未找到 .gitignore 文件！建议先创建以避免上传垃圾文件。${NC}"
-    echo -e "${YELLOW}正在尝试创建默认 .gitignore...${NC}"
-    echo "node_modules/" >> .gitignore
-    echo "dist/" >> .gitignore
-    echo "*.log" >> .gitignore
-    echo "docker-manager-backend" >> .gitignore
+    echo -e "${RED}警告: 未找到 .gitignore 文件，可能会上传无关文件。${NC}"
 fi
 
-# 4. 添加文件并提交
+git_name=$(git config user.name || true)
+git_email=$(git config user.email || true)
+if [ -z "${git_name}" ] || [ -z "${git_email}" ]; then
+    echo -e "${YELLOW}未检测到 Git 用户信息，将仅在本仓库内设置。${NC}"
+    read -p "请输入 user.name: " git_name
+    read -p "请输入 user.email: " git_email
+    if [ -z "${git_name}" ] || [ -z "${git_email}" ]; then
+        echo -e "${RED}用户信息不能为空，已终止。${NC}"
+        exit 1
+    fi
+    git config user.name "${git_name}"
+    git config user.email "${git_email}"
+fi
+
 echo -e "${YELLOW}正在添加文件到暂存区...${NC}"
 git add .
 
@@ -42,29 +84,47 @@ if [ -z "$status" ]; then
     echo -e "${GREEN}没有检测到新的更改，无需提交。${NC}"
 else
     echo -e "${YELLOW}正在提交更改...${NC}"
-    timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    git commit -m "Auto backup: $timestamp"
+    if [ -z "${commit_msg}" ]; then
+        timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        commit_msg="Auto backup: ${timestamp}"
+    fi
+    git commit -m "${commit_msg}"
     echo -e "${GREEN}本地提交完成。${NC}"
 fi
 
-# 5. 配置远程仓库 (自动转换为 SSH)
 current_remote=$(git remote get-url origin 2>/dev/null)
 
-# 定义 SSH Key 路径
-SSH_KEY_PATH="$HOME/.ssh/github/id_rsa"
+if [ -z "${ssh_key}" ]; then
+    if [ -f "$HOME/.ssh/github/id_rsa" ]; then
+        ssh_key="$HOME/.ssh/github/id_rsa"
+    elif [ -f "$HOME/.ssh/id_rsa" ]; then
+        ssh_key="$HOME/.ssh/id_rsa"
+    fi
+fi
 
-if [ -f "$SSH_KEY_PATH" ]; then
-    echo -e "${GREEN}检测到 SSH Key: $SSH_KEY_PATH${NC}"
-    # 设置 GIT_SSH_COMMAND 环境变量，指定 key 文件
-    export GIT_SSH_COMMAND="ssh -i $SSH_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
+if [ -n "${ssh_key}" ] && [ -f "${ssh_key}" ]; then
+    echo -e "${GREEN}检测到 SSH Key: ${ssh_key}${NC}"
+    key_perm=$(stat -c "%a" "${ssh_key}")
+    if [ "${key_perm}" != "600" ]; then
+        chmod 600 "${ssh_key}"
+    fi
+    known_hosts_path="$HOME/.ssh/known_hosts"
+    if [ -e "${known_hosts_path}" ] && [ ! -w "${known_hosts_path}" ]; then
+        echo -e "${YELLOW}known_hosts 不可写，将临时跳过主机指纹写入。${NC}"
+        export GIT_SSH_COMMAND="ssh -i ${ssh_key} -o IdentitiesOnly=yes -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+    else
+        export GIT_SSH_COMMAND="ssh -i ${ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    fi
 else
-    echo -e "${RED}警告: 未找到 SSH Key ($SSH_KEY_PATH)，将使用默认 SSH 配置。${NC}"
+    echo -e "${RED}警告: 未找到 SSH Key，将使用默认 SSH 配置。${NC}"
 fi
 
 if [ -z "$current_remote" ]; then
     echo -e "${YELLOW}未配置远程仓库 (origin)。${NC}"
-    echo -e "请输入您的 GitHub 仓库地址 (建议格式: git@github.com:user/repo.git)"
-    read -p "地址: " repo_url
+    if [ -z "${repo_url}" ]; then
+        echo -e "请输入您的 GitHub 仓库地址 (建议格式: git@github.com:user/repo.git)"
+        read -p "地址: " repo_url
+    fi
     
     if [ -n "$repo_url" ]; then
         git remote add origin "$repo_url"
@@ -75,16 +135,9 @@ if [ -z "$current_remote" ]; then
     fi
 else
     echo -e "${GREEN}当前远程仓库: $current_remote${NC}"
-    # 检查是否为 HTTPS，如果是则尝试转换为 SSH
     if [[ "$current_remote" == https://* ]]; then
         echo -e "${YELLOW}检测到 HTTPS 协议，正在转换为 SSH 协议...${NC}"
-        # 提取域名和路径
-        # https://github.com/user/repo.git -> git@github.com:user/repo.git
-        # 处理带有 token 的情况 https://user:token@github.com/...
         clean_url=$(echo "$current_remote" | sed -E 's/https?:\/\/(.*@)?//')
-        
-        # 假设是 github.com/user/repo.git 格式
-        # 替换第一个 / 为 :
         ssh_url="git@${clean_url/\//:}"
         
         git remote set-url origin "$ssh_url"
@@ -92,21 +145,19 @@ else
     fi
 fi
 
-# 6. 推送代码
 echo -e "${YELLOW}正在尝试通过 SSH 推送代码...${NC}"
 
-if git push -u origin main; then
+if git push -u origin "$branch"; then
     echo -e "${GREEN}✅ 代码上传成功！${NC}"
     exit 0
 else
     echo -e "${RED}❌ 推送失败。${NC}"
     echo -e "${YELLOW}=== 故障排查 ===${NC}"
     
-    # 检查是否因为远程有更新
     echo -e "${YELLOW}尝试拉取远程更改并变基 (git pull --rebase)...${NC}"
-    if git pull origin main --rebase; then
+    if git pull origin "$branch" --rebase; then
         echo -e "${GREEN}合并成功，正在重试推送...${NC}"
-        if git push -u origin main; then
+        if git push -u origin "$branch"; then
             echo -e "${GREEN}✅ 代码上传成功！${NC}"
             exit 0
         fi

@@ -7,7 +7,7 @@
           placeholder="搜索存储卷名称..."
           clearable
           class="search-input"
-          size="medium"
+          size="default"
           @keyup.enter="fetchVolumes"
         >
           <template #prefix>
@@ -18,18 +18,18 @@
 
       <div class="filter-right">
         <el-button-group class="main-actions">
-          <el-button @click="fetchVolumes" :loading="loading" plain size="medium">
+          <el-button @click="fetchVolumes" :loading="loading" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
-          <el-button type="primary" @click="dialogVisible = true" size="medium">
+          <el-button type="primary" @click="dialogVisible = true" size="default">
             <template #icon><IconEpPlus /></template>
             新建卷
           </el-button>
         </el-button-group>
 
         <el-dropdown trigger="click" @command="handleGlobalAction">
-          <el-button plain class="more-btn" size="medium">
+          <el-button plain class="more-btn" size="default">
             更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>

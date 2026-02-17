@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"hash/crc32"
 	"strconv"
 	"strings"
 	"testing"
@@ -70,5 +72,104 @@ func TestExtractComposeVarRefsMaxVars(t *testing.T) {
 	refs := extractComposeVarRefs(b.String())
 	if len(refs) > 500 {
 		t.Fatalf("expected refs size <= 500, got %d", len(refs))
+	}
+}
+
+func TestExtractServiceEnvFileRefs(t *testing.T) {
+	compose := `
+services:
+  web:
+    image: nginx
+    env_file:
+      - .env
+      - path: .env.web
+        required: true
+      - path: .env.optional
+        required: false
+  api:
+    env_file: .env.api
+`
+	m, err := extractServiceEnvFileRefs(compose)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	web := m["web"]
+	if len(web) != 3 {
+		t.Fatalf("expected web env_file size 3, got %d", len(web))
+	}
+	api := m["api"]
+	if len(api) != 1 || strings.TrimSpace(api[0].Path) != ".env.api" {
+		t.Fatalf("expected api env_file .env.api, got %+v", api)
+	}
+}
+
+func TestExtractComposeSecrets(t *testing.T) {
+	compose := `
+services:
+  web:
+    image: nginx
+    secrets:
+      - db_pass
+      - source: api_key
+        target: api_key.txt
+secrets:
+  db_pass:
+    file: ./secrets/db_pass.txt
+  api_key:
+    external: true
+`
+	defs, uses, err := extractComposeSecrets(compose)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if defs["db_pass"].File == "" || defs["db_pass"].External {
+		t.Fatalf("expected db_pass file secret, got %+v", defs["db_pass"])
+	}
+	if !defs["api_key"].External {
+		t.Fatalf("expected api_key external secret, got %+v", defs["api_key"])
+	}
+	if len(uses) != 2 {
+		t.Fatalf("expected 2 secret uses, got %d", len(uses))
+	}
+}
+
+func TestRewriteComposeFixedAssetPaths(t *testing.T) {
+	compose := `
+services:
+  web:
+    image: nginx
+    env_file:
+      - .env
+      - .env.web
+    secrets:
+      - db_pass
+secrets:
+  db_pass:
+    file: ./secrets/db_pass.txt
+`
+	envRefs, err := extractEnvFileRefs(compose)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	envMap, err := buildFixedEnvFilePathMap(envRefs)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	defs, _, err := extractComposeSecrets(compose)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	secMap := buildFixedSecretFilePathMap(defs)
+	out, err := rewriteComposeFixedAssetPaths(compose, envMap, secMap)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	sum := crc32.ChecksumIEEE([]byte(".env.web"))
+	expectEnv := fmt.Sprintf("%s/.env.web-%08x.env", fixedEnvFilesDir, sum)
+	if !strings.Contains(out, expectEnv) {
+		t.Fatalf("expected rewritten env_file %s, got:\n%s", expectEnv, out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("%s/db_pass", fixedSecretsDir)) {
+		t.Fatalf("expected rewritten secret path, got:\n%s", out)
 	}
 }

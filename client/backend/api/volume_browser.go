@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	volumeBrowseImage = "filebrowser/filebrowser:latest"
+	volumeBrowseImage = "filebrowser/filebrowser:v2.59.0"
 	volumeBrowseTTL   = 2 * time.Minute
 )
 
@@ -76,7 +76,7 @@ func startVolumeBrowse(c *gin.Context) {
 	sid := newSessionID()
 	containerName := "tradis-volume-browser-" + sid
 
-	baseURL := "/api/volumes/browse/" + sid + "/fb"
+	baseURL := "/api/volumes/browse/" + sid + "/fb/"
 	env := []string{
 		"FB_NOAUTH=true",
 		"FB_BASEURL=" + baseURL,
@@ -189,6 +189,7 @@ func volumeBrowseUI(c *gin.Context) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0f19'/%3E%3Ctext x='16' y='21' font-size='14' text-anchor='middle' fill='%23e5e7eb'%3EFB%3C/text%3E%3C/svg%3E" />
   <title>卷文件浏览器</title>
   <style>
     html, body { height: 100%; margin: 0; background: #0b0f19; }
@@ -282,7 +283,8 @@ func volumeBrowseProxy(c *gin.Context) {
 	if strings.TrimSpace(subPath) == "" {
 		subPath = "/"
 	}
-	basePrefix := "/api/volumes/browse/" + sid + "/fb"
+	basePrefix := "/api/volumes/browse/" + sid + "/fb/"
+	basePrefixNoSlash := strings.TrimSuffix(basePrefix, "/")
 
 	target := &url.URL{Scheme: "http", Host: s.TargetHost}
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -290,7 +292,7 @@ func volumeBrowseProxy(c *gin.Context) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.URL.Path = subPath
-		req.URL.RawPath = subPath
+		req.URL.RawPath = req.URL.Path
 		q := req.URL.Query()
 		q.Del("token")
 		req.URL.RawQuery = q.Encode()
@@ -302,10 +304,32 @@ func volumeBrowseProxy(c *gin.Context) {
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
 		isHTML := strings.Contains(ct, "text/html")
-		isJS := strings.Contains(ct, "application/javascript") || strings.Contains(ct, "text/javascript") || strings.Contains(ct, "application/x-javascript")
-		if !isHTML && !isJS {
+		if !isHTML {
 			return nil
 		}
+
+		p := ""
+		if resp.Request != nil && resp.Request.URL != nil {
+			p = strings.ToLower(strings.TrimSpace(resp.Request.URL.Path))
+		}
+		if strings.HasSuffix(p, ".js") || strings.HasSuffix(p, ".mjs") || strings.HasSuffix(p, ".css") {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+			_ = resp.Body.Close()
+
+			msg := fmt.Sprintf("unexpected html response for asset path: %s (upstream=%s, status=%d)", p, s.TargetHost, resp.StatusCode)
+			if len(body) > 0 {
+				msg += "\n\n" + string(body)
+			}
+
+			resp.StatusCode = http.StatusBadGateway
+			resp.Status = http.StatusText(resp.StatusCode)
+			resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
+			resp.Body = io.NopCloser(strings.NewReader(msg))
+			resp.ContentLength = int64(len(msg))
+			resp.Header.Del("Content-Length")
+			return nil
+		}
+
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 		if err != nil {
 			return err
@@ -313,18 +337,21 @@ func volumeBrowseProxy(c *gin.Context) {
 		_ = resp.Body.Close()
 
 		s := string(body)
-		if isHTML {
-			s = strings.ReplaceAll(s, "\"/static/", "\""+basePrefix+"/static/")
-			s = strings.ReplaceAll(s, "'/static/", "'"+basePrefix+"/static/")
-			s = strings.ReplaceAll(s, "src=/static/", "src="+basePrefix+"/static/")
-			s = strings.ReplaceAll(s, "href=/static/", "href="+basePrefix+"/static/")
-			s = strings.ReplaceAll(s, "\"/favicon", "\""+basePrefix+"/favicon")
-			s = strings.ReplaceAll(s, "'/favicon", "'"+basePrefix+"/favicon")
-		}
-		if isHTML || isJS {
-			s = strings.ReplaceAll(s, "\"/api/", "\""+basePrefix+"/api/")
-			s = strings.ReplaceAll(s, "'/api/", "'"+basePrefix+"/api/")
-		}
+		s = strings.ReplaceAll(s, "\"BaseURL\":\"\"", "\"BaseURL\":\""+basePrefixNoSlash+"\"")
+		s = strings.ReplaceAll(s, "\"StaticURL\":\"/static\"", "\"StaticURL\":\""+basePrefixNoSlash+"/static\"")
+		s = strings.ReplaceAll(s, "\"LogoutPage\":\"/login\"", "\"LogoutPage\":\""+basePrefixNoSlash+"/login\"")
+		s = strings.ReplaceAll(s, "\"/static/", "\""+basePrefixNoSlash+"/static/")
+		s = strings.ReplaceAll(s, "'/static/", "'"+basePrefixNoSlash+"/static/")
+		s = strings.ReplaceAll(s, "src=/static/", "src="+basePrefixNoSlash+"/static/")
+		s = strings.ReplaceAll(s, "href=/static/", "href="+basePrefixNoSlash+"/static/")
+
+		s = strings.ReplaceAll(s, "\"/assets/", "\""+basePrefixNoSlash+"/assets/")
+		s = strings.ReplaceAll(s, "'/assets/", "'"+basePrefixNoSlash+"/assets/")
+		s = strings.ReplaceAll(s, "src=/assets/", "src="+basePrefixNoSlash+"/assets/")
+		s = strings.ReplaceAll(s, "href=/assets/", "href="+basePrefixNoSlash+"/assets/")
+
+		s = strings.ReplaceAll(s, "\"/favicon", "\""+basePrefixNoSlash+"/favicon")
+		s = strings.ReplaceAll(s, "'/favicon", "'"+basePrefixNoSlash+"/favicon")
 
 		resp.Body = io.NopCloser(strings.NewReader(s))
 		resp.ContentLength = int64(len(s))

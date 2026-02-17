@@ -168,6 +168,7 @@ filter_frontend_pids() {
 
 start_backend() {
     local pid_file="$PID_DIR/backend.pid"
+    local port_file="$PID_DIR/backend.port"
 
     echo "🚀 正在启动后端..."
     init_dirs
@@ -177,17 +178,45 @@ start_backend() {
 
     local pids="$(get_listen_pids "$BACKEND_PORT")"
     pids="$(filter_backend_pids "$pids")"
+    if [ -z "$pids" ] && is_port_listening "$BACKEND_PORT" && ! is_running "$pid_file"; then
+        local fallback_ports=("$BACKEND_PORT" "18080" "18081" "18082" "18083")
+        for p in "${fallback_ports[@]}"; do
+            if ! is_port_listening "$p"; then
+                if [ "$p" != "$BACKEND_PORT" ]; then
+                    echo "⚠️  端口 $BACKEND_PORT 已被占用且无法解析 PID，自动切换到端口 $p"
+                    BACKEND_PORT="$p"
+                fi
+                break
+            fi
+        done
+    fi
+
     if [ -n "$pids" ]; then
         kill_pids "$pids" "后端(端口:$BACKEND_PORT)" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         sleep 1
     elif is_running "$pid_file"; then
         kill_pids "$(cat "$pid_file")" "后端" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         sleep 1
     elif is_port_listening "$BACKEND_PORT"; then
         echo "❌ 端口 $BACKEND_PORT 已被占用，但无法解析 PID（请使用 root 执行 stop 或手动释放端口）"
         exit 1
+    fi
+
+    if is_port_listening "$BACKEND_PORT"; then
+        local fallback_ports=("$BACKEND_PORT" "18080" "18081" "18082" "18083")
+        for p in "${fallback_ports[@]}"; do
+            if ! is_port_listening "$p"; then
+                if [ "$p" != "$BACKEND_PORT" ]; then
+                    echo "⚠️  端口 $BACKEND_PORT 已被占用，自动切换到端口 $p"
+                    BACKEND_PORT="$p"
+                fi
+                break
+            fi
+        done
     fi
 
     # 定义日志文件
@@ -227,6 +256,7 @@ start_backend() {
         pids_now="$(filter_backend_pids "$(get_listen_pids "$BACKEND_PORT")")"
         if [ -n "$pids_now" ]; then
             echo "$pids_now" | awk '{print $1}' > "$pid_file"
+            echo "$BACKEND_PORT" > "$port_file"
             ok=1
             echo "✅ 后端启动成功! PID: $(cat "$pid_file")"
             echo "📝 日志路径: $log_file"
@@ -242,23 +272,33 @@ start_backend() {
 
 stop_backend() {
     local pid_file="$PID_DIR/backend.pid"
+    local port_file="$PID_DIR/backend.port"
+    local port="$BACKEND_PORT"
+    if [ -f "$port_file" ]; then
+        port="$(cat "$port_file" 2>/dev/null | tr -d ' \n\r\t')"
+        if [ -z "$port" ]; then
+            port="$BACKEND_PORT"
+        fi
+    fi
 
-    local pids="$(get_listen_pids "$BACKEND_PORT")"
+    local pids="$(get_listen_pids "$port")"
     pids="$(filter_backend_pids "$pids")"
     if [ -n "$pids" ]; then
-        kill_pids "$pids" "后端(端口:$BACKEND_PORT)" 12
+        kill_pids "$pids" "后端(端口:$port)" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         echo "✅ 后端已停止"
         return
     fi
-    if is_port_listening "$BACKEND_PORT"; then
-        echo "⚠️  后端端口 $BACKEND_PORT 正在监听，但无法解析 PID（请使用 root 执行）"
+    if is_port_listening "$port"; then
+        echo "⚠️  后端端口 $port 正在监听，但无法解析 PID（请使用 root 执行）"
         return
     fi
 
     if is_running "$pid_file"; then
         kill_pids "$(cat "$pid_file")" "后端" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         echo "✅ 后端已停止"
         return
     fi
@@ -270,21 +310,45 @@ stop_backend() {
 
 start_frontend() {
     local pid_file="$PID_DIR/frontend.pid"
+    local port_file="$PID_DIR/frontend.port"
+    local backend_port_file="$PID_DIR/backend.port"
 
     echo "🚀 正在启动前端..."
     init_dirs
 
     cd "$FRONTEND_DIR" || exit
 
+    if [ -f "$backend_port_file" ]; then
+        local bp
+        bp="$(cat "$backend_port_file" 2>/dev/null | tr -d ' \n\r\t')"
+        if [ -n "$bp" ]; then
+            BACKEND_PORT="$bp"
+        fi
+    fi
+
     local pids="$(get_listen_pids "$FRONTEND_PORT")"
     pids="$(filter_frontend_pids "$pids")"
+    if [ -z "$pids" ] && is_port_listening "$FRONTEND_PORT" && ! is_running "$pid_file"; then
+        local fallback_ports=("$FRONTEND_PORT" "33340" "33341" "33342" "33343" "33344" "33345")
+        for p in "${fallback_ports[@]}"; do
+            if ! is_port_listening "$p"; then
+                if [ "$p" != "$FRONTEND_PORT" ]; then
+                    echo "⚠️  端口 $FRONTEND_PORT 已被占用且无法解析 PID，自动切换到端口 $p"
+                    FRONTEND_PORT="$p"
+                fi
+                break
+            fi
+        done
+    fi
     if [ -n "$pids" ]; then
         kill_pids "$pids" "前端(端口:$FRONTEND_PORT)" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         sleep 1
     elif is_running "$pid_file"; then
         kill_pids "$(cat "$pid_file")" "前端" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         sleep 1
     elif is_port_listening "$FRONTEND_PORT"; then
         echo "❌ 端口 $FRONTEND_PORT 已被占用，但无法解析 PID（请使用 root 执行 stop 或手动释放端口）"
@@ -292,8 +356,8 @@ start_frontend() {
     fi
 
     local log_file="$LOG_DIR/frontend_$(get_timestamp).log"
-    
-    nohup $FRONTEND_CMD > "$log_file" 2>&1 &
+
+    FRONTEND_PORT="$FRONTEND_PORT" BACKEND_PORT="$BACKEND_PORT" nohup $FRONTEND_CMD -- --host 0.0.0.0 --port "$FRONTEND_PORT" --strictPort > "$log_file" 2>&1 &
 
     local ok=0
     for i in $(seq 1 30); do
@@ -302,6 +366,7 @@ start_frontend() {
         pids_now="$(filter_frontend_pids "$(get_listen_pids "$FRONTEND_PORT")")"
         if [ -n "$pids_now" ]; then
             echo "$pids_now" | awk '{print $1}' > "$pid_file"
+            echo "$FRONTEND_PORT" > "$port_file"
             ok=1
             echo "✅ 前端启动成功! PID: $(cat "$pid_file")"
             echo "📝 日志路径: $log_file"
@@ -317,23 +382,33 @@ start_frontend() {
 
 stop_frontend() {
     local pid_file="$PID_DIR/frontend.pid"
+    local port_file="$PID_DIR/frontend.port"
+    local port="$FRONTEND_PORT"
+    if [ -f "$port_file" ]; then
+        port="$(cat "$port_file" 2>/dev/null | tr -d ' \n\r\t')"
+        if [ -z "$port" ]; then
+            port="$FRONTEND_PORT"
+        fi
+    fi
 
-    local pids="$(get_listen_pids "$FRONTEND_PORT")"
+    local pids="$(get_listen_pids "$port")"
     pids="$(filter_frontend_pids "$pids")"
     if [ -n "$pids" ]; then
-        kill_pids "$pids" "前端(端口:$FRONTEND_PORT)" 12
+        kill_pids "$pids" "前端(端口:$port)" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         echo "✅ 前端已停止"
         return
     fi
-    if is_port_listening "$FRONTEND_PORT"; then
-        echo "⚠️  前端端口 $FRONTEND_PORT 正在监听，但无法解析 PID（请使用 root 执行）"
+    if is_port_listening "$port"; then
+        echo "⚠️  前端端口 $port 正在监听，但无法解析 PID（请使用 root 执行）"
         return
     fi
 
     if is_running "$pid_file"; then
         kill_pids "$(cat "$pid_file")" "前端" 12
         rm -f "$pid_file"
+        rm -f "$port_file"
         echo "✅ 前端已停止"
         return
     fi

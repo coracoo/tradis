@@ -4,6 +4,11 @@
 - 模板服务端（server/backend）：`http(s)://<host>:3002`
 - 所有 API 均以 `/api` 为前缀
 
+## MCP 能力总览
+本项目里 “MCP” 一词有两类能力：
+- 模板服务端（server/backend）：对外提供 `templates/import` 批量导入，受 IP 白名单与可选 MCP Token 保护
+- 面板后端（client/backend）：仅提供受限能力（Clay 图标清单、写入导航 icon），受面板自身登录鉴权保护
+
 ## 鉴权与安全
 ### IP 白名单
 - 管理写接口（模板增删改、上传、同步、白名单维护等）受 **模板写接口白名单** 限制
@@ -99,3 +104,23 @@
 ## AI 工具定义（建议）
 如果你的 MCP 网关/工作流系统支持“HTTP Tool 封装”，可以按以下工具定义封装：\n- `templates_import` -> `POST /api/mcp/templates/import`\n- `templates_list` -> `GET /api/templates`\n- `templates_get` -> `GET /api/templates/:id`\n- `templates_get_vars` -> `GET /api/templates/:id/vars`\n
 建议在网关侧把 `baseUrl`、`X-MCP-Token`、以及 IP 白名单策略作为环境配置注入。\n
+
+## 面板后端（client/backend）受限 MCP 能力
+### Clay 图标清单
+- `GET /api/mcp/icons/clay`
+- 返回：
+```json
+{ "items": [ { "name": "xxx.png", "value": "/icons/clay/xxx.png" } ] }
+```
+
+### 写入导航图标
+- `POST /api/mcp/navigation/:id/icon`
+- 请求体：
+```json
+{ "icon": "mdi-docker" }
+```
+- `icon` 允许值：
+  - `mdi-xxx`
+  - `/icons/clay/<filename>`
+  - `http(s)://...`
+  - `/data/pic/...` 或 `/uploads/icons/...`

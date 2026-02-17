@@ -7,7 +7,7 @@
           placeholder="搜索端口 (例: 80)"
           class="search-input"
           clearable
-          size="medium"
+          size="default"
           @clear="fetchPorts"
           @keyup.enter="fetchPorts"
         >
@@ -16,13 +16,13 @@
           </template>
         </el-input>
 
-        <el-radio-group v-model="filters.used" size="medium" @change="fetchPorts">
+        <el-radio-group v-model="filters.used" size="default" @change="fetchPorts">
           <el-radio-button label="all">全部状态</el-radio-button>
           <el-radio-button label="used">已用</el-radio-button>
           <el-radio-button label="unused">空闲</el-radio-button>
         </el-radio-group>
 
-        <el-radio-group v-model="filters.type" size="medium" @change="fetchPorts">
+        <el-radio-group v-model="filters.type" size="default" @change="fetchPorts">
           <el-radio-button label="all">全部类型</el-radio-button>
           <el-radio-button label="host">Host</el-radio-button>
           <el-radio-button label="container">Container</el-radio-button>
@@ -31,14 +31,14 @@
 
       <div class="filter-right">
         <div class="stats-group">
-           <el-tag type="info" effect="light" size="medium">总: {{ summary.total }}</el-tag>
-           <el-tag type="success" effect="light" size="medium">闲: {{ summary.available }}</el-tag>
-           <el-tag type="danger" effect="light" size="medium">用: {{ summary.used }}</el-tag>
+           <el-tag type="info" effect="light" size="default">总: {{ summary.total }}</el-tag>
+           <el-tag type="success" effect="light" size="default">闲: {{ summary.available }}</el-tag>
+           <el-tag type="danger" effect="light" size="default">用: {{ summary.used }}</el-tag>
         </div>
         
         <el-popover placement="bottom" title="扫描范围设置" :width="340" trigger="click">
           <template #reference>
-            <el-button plain size="medium">
+            <el-button plain size="default">
                <IconEpSetting style="margin-right: 4px" /> 端口可视范围
             </el-button>
           </template>
@@ -55,7 +55,7 @@
           </div>
         </el-popover>
 
-        <el-button @click="fetchPorts" :loading="loading" plain size="medium">
+        <el-button @click="fetchPorts" :loading="loading" plain size="default">
           <template #icon><IconEpRefresh /></template>
           刷新
         </el-button>
@@ -166,6 +166,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { getSuggestedIntervalMs } from '../shared/loadShedding'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -175,6 +176,7 @@ const tcpItems = ref([])
 const udpItems = ref([])
 const summary = ref({ total: 0, used: 0, available: 0 })
 let timer = null
+let refreshSeq = 0
 
 const fetchRange = async () => {
   try {
@@ -288,11 +290,23 @@ watch(filters, () => {
 onMounted(async () => {
   await fetchRange()
   await fetchPorts()
-  timer = setInterval(fetchPorts, 10000)
+  refreshSeq += 1
+  const seq = refreshSeq
+  const tick = async () => {
+    if (seq !== refreshSeq) return
+    if (document.visibilityState === 'visible') {
+      await fetchPorts()
+    }
+    if (seq !== refreshSeq) return
+    const delay = getSuggestedIntervalMs(10000)
+    timer = setTimeout(tick, delay)
+  }
+  tick()
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
+  refreshSeq += 1
+  if (timer) clearTimeout(timer)
 })
 </script>
 

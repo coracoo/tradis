@@ -2,25 +2,25 @@
   <div class="nav-view">
     <div class="filter-bar clay-surface">
       <div class="filter-left">
-        <el-button type="primary" @click="handleAdd" size="medium">
+        <el-button type="primary" @click="handleAdd" size="default">
           <template #icon><IconEpPlus /></template>
           添加应用
         </el-button>
-        <el-button @click="handleManageCategories" size="medium">
+        <el-button @click="handleManageCategories" size="default">
           <template #icon><IconEpOperation /></template>
           分类管理
         </el-button>
       </div>
       <div class="filter-right">
-        <el-button :type="showDeleted ? 'warning' : 'default'" @click="toggleShowDeleted" plain size="medium">
+        <el-button :type="showDeleted ? 'warning' : 'default'" @click="toggleShowDeleted" plain size="default">
           <template #icon><IconEpDelete /></template>
-          {{ showDeleted ? '显示正常' : '回收站' }}
+          {{ showDeleted ? '隐藏导航' : '展示隐藏导航' }}
         </el-button>
-        <el-button type="danger" @click="handleRebuild" plain size="medium">
+        <el-button type="danger" @click="handleRebuild" plain size="default">
           <template #icon><IconEpRefresh /></template>
           重新识别
         </el-button>
-        <el-button @click="handleRefresh" plain size="medium">
+        <el-button @click="handleRefresh" plain size="default">
           <template #icon><IconEpRefresh /></template>
           刷新
         </el-button>
@@ -63,13 +63,22 @@
                   <el-button size="small" type="primary" circle @click.stop="handleEdit(app)">
                     <IconEpEdit />
                   </el-button>
-                  <el-button size="small" type="danger" circle @click.stop="handleDelete(app)">
+                  <el-button size="small" type="success" circle @click.stop="handleAiRebuild(app)">
+                    <IconEpMagicStick />
+                  </el-button>
+                  <el-button size="small" type="warning" circle @click.stop="handleDelete(app)">
+                    <IconEpHide />
+                  </el-button>
+                  <el-button size="small" type="danger" circle @click.stop="handlePurge(app)">
                     <IconEpDelete />
                   </el-button>
                 </el-button-group>
                 <el-button-group v-else>
                   <el-button size="small" type="success" @click.stop="handleRestore(app)">
                     <IconEpRefreshLeft class="el-icon--left" /> 恢复
+                  </el-button>
+                  <el-button size="small" type="danger" @click.stop="handlePurge(app)">
+                    <IconEpDelete class="el-icon--left" /> 彻底删除
                   </el-button>
                 </el-button-group>
               </div>
@@ -203,6 +212,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
+import { readJsonFromStorage } from '../utils/json'
 
 const apps = ref([])
 const showDeleted = ref(false)
@@ -253,14 +263,8 @@ const resolveIconUrl = (u) => {
 }
 
 onMounted(() => {
-  const saved = localStorage.getItem('custom_navigation_categories')
-  if (saved) {
-    try {
-      customCategories.value = JSON.parse(saved)
-    } catch (e) {
-      console.error('Failed to load custom categories', e)
-    }
-  }
+  const saved = readJsonFromStorage('custom_navigation_categories', [])
+  if (Array.isArray(saved)) customCategories.value = saved
   fetchApps()
 })
 
@@ -406,6 +410,9 @@ const fetchApps = async () => {
     } else {
       apps.value = []
     }
+    if (showDeleted.value) {
+      apps.value = apps.value.filter((it) => it && it.is_deleted)
+    }
   } catch (error) {
     console.error('获取导航失败', error)
     ElMessage.error('获取导航列表失败')
@@ -527,9 +534,43 @@ const handleSave = async () => {
 
 const handleDelete = async (app) => {
   try {
-    await ElMessageBox.confirm('确定要删除这个导航项吗？', '提示', { type: 'warning' })
+    await ElMessageBox.confirm('确定要隐藏这个导航项吗？', '提示', { type: 'warning' })
     await api.navigation.delete(app.id)
-    ElMessage.success('已移至回收站')
+    ElMessage.success('已隐藏')
+    fetchApps()
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+const handleAiRebuild = async (app) => {
+  try {
+    await ElMessageBox.confirm('确定要对这个导航项重新进行 AI 识别吗？', '提示', { type: 'warning' })
+    const res = await api.ai.enrichNavigationById({ navId: app.id, force: true })
+    const attempted = res?.attempted ?? res?.data?.attempted ?? 0
+    if (attempted > 0) {
+      ElMessage.success('AI 识别已触发')
+    } else {
+      ElMessage.warning('AI 未匹配到可处理项')
+    }
+    fetchApps()
+  } catch (error) {
+    if (error !== 'cancel') {
+      const status = error?.response?.status
+      if (status === 404) {
+        ElMessage.error('AI 识别接口不存在，请重启后端或更新到最新版本')
+      } else {
+        ElMessage.error('AI 识别失败')
+      }
+    }
+  }
+}
+
+const handlePurge = async (app) => {
+  try {
+    await ElMessageBox.confirm('确定要彻底删除这个导航项吗？此操作不可恢复。', '提示', { type: 'warning' })
+    await api.navigation.purge(app.id)
+    ElMessage.success('已彻底删除')
     fetchApps()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error('删除失败')

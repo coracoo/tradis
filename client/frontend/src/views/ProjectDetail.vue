@@ -13,23 +13,23 @@
       </div>
       <div class="filter-right">
         <el-button-group class="main-actions">
-          <el-button @click="handleRefresh" plain size="medium">
+          <el-button @click="handleRefresh" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
-          <el-button type="primary" :loading="isBuilding" :disabled="isSelfProject" @click="handleBuild" size="medium">
+          <el-button type="primary" :loading="isBuilding" :disabled="isSelfProject" @click="handleBuild" size="default">
             <template #icon><IconEpRefreshRight /></template>
             重新构建
           </el-button>
-          <el-button type="success" :loading="isStarting" :disabled="isRunning || isSelfProject" @click="handleStart" size="medium">
+          <el-button type="success" :loading="isStarting" :disabled="isRunning || isSelfProject" @click="handleStart" size="default">
             <template #icon><IconEpVideoPlay /></template>
             启动
           </el-button>
-          <el-button type="danger" :loading="isStopping" :disabled="!isRunning || isSelfProject" @click="handleStop" size="medium">
+          <el-button type="danger" :loading="isStopping" :disabled="!isRunning || isSelfProject" @click="handleStop" size="default">
             <template #icon><IconEpVideoPause /></template>
             停止
           </el-button>
-          <el-button type="warning" :loading="isRestarting" :disabled="isSelfProject" @click="handleRestart" size="medium">
+          <el-button type="warning" :loading="isRestarting" :disabled="isSelfProject" @click="handleRestart" size="default">
             <template #icon><IconEpRefresh /></template>
             重启
           </el-button>
@@ -100,7 +100,7 @@
               <div class="editor-header">
                 <span>Compose 配置（自动识别 *.yml / *.yaml）</span>
                 <div class="editor-actions">
-                  <el-button type="primary" size="small" :loading="isSaving" @click="handleSaveYaml">
+                  <el-button type="primary" size="small" :loading="isSaving" :disabled="!advancedMode || isSelfProject" @click="handleSaveYaml">
                     保存
                   </el-button>
                 </div>
@@ -111,6 +111,7 @@
                 :rows="20"
                 class="yaml-textarea"
                 :spellcheck="false"
+                :readonly="!advancedMode || isSelfProject"
               />
             </div>
           </el-tab-pane>
@@ -202,9 +203,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { useSseLogStream } from '../utils/sseLogStream'
+import { getSuggestedIntervalMs } from '../shared/loadShedding'
 
 const route = useRoute()
 const router = useRouter()
+const advancedMode = ref(localStorage.getItem('advancedMode') === '1')
+const syncAdvancedMode = () => {
+  advancedMode.value = localStorage.getItem('advancedMode') === '1'
+}
 const projectName = ref(route.params.name || '')
 const projectRoot = ref('')
 const displayProjectPath = computed(() => {
@@ -668,6 +674,10 @@ const handleSaveYaml = async () => {
     ElMessage.warning('容器化部署模式下，不支持操作自身项目')
     return
   }
+  if (!advancedMode.value) {
+    ElMessage.warning('请先在系统设置中开启“高级模式”')
+    return
+  }
   isSaving.value = true
   ElMessage.info('正在保存配置...')
   try {
@@ -682,6 +692,8 @@ const handleSaveYaml = async () => {
 }
 
 onMounted(async () => {
+  window.addEventListener('advanced-mode-change', syncAdvancedMode)
+  syncAdvancedMode()
   isLoading.value = true
   try {
     // 并行获取项目信息和YAML配置
@@ -690,8 +702,17 @@ onMounted(async () => {
     await fetchYamlContent()
     await fetchEnvContent()
 
-    // 设置定时刷新
-    refreshTimer = setInterval(fetchContainers, 5000)
+    const tick = async (seq) => {
+      if (seq !== refreshSeq) return
+      if (document.visibilityState === 'visible') {
+        await fetchContainers()
+      }
+      if (seq !== refreshSeq) return
+      const delay = getSuggestedIntervalMs(5000)
+      refreshTimer = setTimeout(() => tick(seq), delay)
+    }
+    refreshSeq += 1
+    tick(refreshSeq)
   } catch (error) {
     console.error('初始化失败:', error)
   } finally {
@@ -701,6 +722,7 @@ onMounted(async () => {
 
 // 添加定时刷新
 let refreshTimer = null
+let refreshSeq = 0
 
 const stopLogsStream = () => {
   stopLogStream()
@@ -728,8 +750,10 @@ const handleClearLogs = () => {
 }
 
 onUnmounted(() => {
+  window.removeEventListener('advanced-mode-change', syncAdvancedMode)
+  refreshSeq += 1
   if (refreshTimer) {
-    clearInterval(refreshTimer)
+    clearTimeout(refreshTimer)
     refreshTimer = null
   }
   stopLogsStream()

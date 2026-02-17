@@ -7,7 +7,7 @@
           placeholder="搜索网络名称..."
           clearable
           class="search-input"
-          size="medium"
+          size="default"
           @keyup.enter="fetchNetworks"
         >
           <template #prefix>
@@ -18,18 +18,18 @@
 
       <div class="filter-right">
         <el-button-group class="main-actions">
-          <el-button @click="fetchNetworks" :loading="loading" plain size="medium">
+          <el-button @click="fetchNetworks" :loading="loading" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
-          <el-button type="primary" @click="dialogVisible = true" size="medium">
+          <el-button type="primary" @click="dialogVisible = true" size="default">
             <template #icon><IconEpPlus /></template>
             新建网络
           </el-button>
         </el-button-group>
         
         <el-dropdown trigger="click" @command="handleGlobalAction">
-          <el-button plain class="more-btn" size="medium">
+          <el-button plain class="more-btn" size="default">
             更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
@@ -80,7 +80,7 @@
               <div class="container-list">
                 <template v-for="(container, id, index) in scope.row.Containers" :key="id">
                   <el-tooltip :content="container.Name.substring(0)" placement="top" v-if="index < 3">
-                     <el-tag size="medium" class="container-tag" effect="plain">
+                     <el-tag size="default" class="container-tag" effect="plain">
                       {{ container.Name.substring(0) }}
                     </el-tag>
                   </el-tooltip>
@@ -92,7 +92,7 @@
                   trigger="hover"
                 >
                   <template #reference>
-                    <el-tag size="medium" type="info" class="container-tag cursor-pointer">
+                    <el-tag size="default" type="info" class="container-tag cursor-pointer">
                       +{{ Object.keys(scope.row.Containers).length - 3 }}
                     </el-tag>
                   </template>

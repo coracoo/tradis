@@ -31,6 +31,26 @@
         <el-card class="settings-card">
           <template #header>
             <div class="card-header">
+              <span>高级选项</span>
+            </div>
+          </template>
+          <el-form :model="settingsForm" label-position="top" class="settings-form">
+            <el-form-item label="高级模式（允许编辑 YAML）">
+              <div class="switch-row">
+                <el-switch v-model="settingsForm.advancedMode" />
+                <el-button type="warning" plain @click="handleAdvancedSettingsClick" :loading="urlLoading">
+                  {{ settingsForm.advancedMode ? '关闭高级设置' : '开启高级设置' }}
+                </el-button>
+                <el-button type="primary" @click="saveServerSettings" :loading="urlLoading">保存</el-button>
+              </div>
+              <div class="help-text">关闭后将禁用高风险的 YAML 编辑与保存入口，减少误操作。</div>
+            </el-form-item>
+          </el-form>
+        </el-card>
+
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
               <span>安全设置</span>
             </div>
           </template>
@@ -218,6 +238,17 @@
             <el-form-item label="本地归档目录（可选）">
               <el-input v-model="settingsForm.volumeBackupArchiveDir" placeholder="例如：/data/backups" />
               <div class="help-text">配置后会将该目录挂载到容器 /archive，用于保存本地备份副本。</div>
+              <el-alert
+                type="warning"
+                :closable="false"
+                class="archive-dir-alert"
+                title="请提前在宿主机创建该目录，否则容器挂载/写入可能失败。"
+              />
+            </el-form-item>
+
+            <el-form-item label="每日备份（Cron 表达式）">
+              <el-input v-model="settingsForm.volumeBackupCronExpression" placeholder="@daily" />
+              <div class="help-text">默认 @daily。更多配置参考：https://offen.github.io/docker-volume-backup/reference/</div>
             </el-form-item>
 
             <el-form-item label="挂载 Docker Socket">
@@ -234,12 +265,19 @@
                 :rows="6"
                 placeholder="例如：&#10;BACKUP_CRON_EXPRESSION=0 3 * * *&#10;BACKUP_FILENAME=backup-%Y-%m-%dT%H-%M-%S.tar.gz&#10;AWS_S3_BUCKET_NAME=xxx"
               />
-              <div class="help-text">仅支持 KEY=VALUE 格式；不会在界面日志中回显敏感值。</div>
+              <div class="help-text">仅支持 KEY=VALUE 格式；不会在界面日志中回显敏感值。参考：https://offen.github.io/docker-volume-backup/reference/</div>
             </el-form-item>
 
             <el-form-item>
               <div class="ai-actions">
                 <el-button type="primary" @click="saveVolumeBackupSettings" :loading="volumeBackupSaving">保存卷备份配置</el-button>
+                <el-button
+                  type="warning"
+                  plain
+                  :disabled="!settingsForm.volumeBackupEnabled"
+                  :loading="volumeBackupRebuilding"
+                  @click="rebuildVolumeBackup"
+                >重建备份容器</el-button>
                 <el-button @click="refreshVolumeOptions" plain>刷新卷列表</el-button>
               </div>
             </el-form-item>
@@ -252,7 +290,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../utils/request'
 import api from '../api'
 
@@ -263,6 +301,7 @@ const settingsForm = ref({
   lanUrl: '',
   wanUrl: '',
   appStoreServerUrl: '',
+  advancedMode: false,
   socketProxyEnabled: false,
   imageUpdateIntervalMinutes: 120,
   aiEnabled: false,
@@ -275,12 +314,38 @@ const settingsForm = ref({
   volumeBackupEnabled: false,
   volumeBackupImage: 'offen/docker-volume-backup:latest',
   volumeBackupEnv: '',
+  volumeBackupCronExpression: '@daily',
   volumeBackupVolumes: [],
   volumeBackupArchiveDir: '',
   volumeBackupMountDockerSock: true
 })
 
 const uiTheme = ref(localStorage.getItem('ui-theme') || 'clay')
+
+const syncAdvancedModeLocal = () => {
+  localStorage.setItem('advancedMode', settingsForm.value.advancedMode ? '1' : '0')
+  window.dispatchEvent(new Event('advanced-mode-change'))
+}
+
+const handleAdvancedSettingsClick = async () => {
+  if (urlLoading.value) return
+  const next = !settingsForm.value.advancedMode
+  const title = next ? '开启高级设置' : '关闭高级设置'
+  const tip = next
+    ? '开启后将允许修改并保存高风险的 YAML 配置入口，建议仅在明确知道修改内容时使用。是否继续？'
+    : '关闭后将禁用高风险的 YAML 编辑与保存入口。是否继续？'
+  try {
+    await ElMessageBox.confirm(tip, title, {
+      confirmButtonText: '继续',
+      cancelButtonText: '取消',
+      type: next ? 'warning' : 'info'
+    })
+  } catch (e) {
+    return
+  }
+  settingsForm.value.advancedMode = next
+  await saveServerSettings()
+}
 
 const handleThemeChange = (val) => {
   localStorage.setItem('ui-theme', val)
@@ -293,6 +358,7 @@ const urlLoading = ref(false)
 const aiSaving = ref(false)
 const aiTesting = ref(false)
 const volumeBackupSaving = ref(false)
+const volumeBackupRebuilding = ref(false)
 const portRange = ref({ start: 0, end: 65535, protocol: 'TCP+UDP' })
 const allocSettings = ref({ start: 50000, end: 51000, allowAutoAllocPort: false })
 const allocSaving = ref(false)
@@ -314,6 +380,7 @@ onMounted(async () => {
       settingsForm.value.lanUrl = res.lanUrl || ''
       settingsForm.value.wanUrl = res.wanUrl || ''
       settingsForm.value.appStoreServerUrl = res.appStoreServerUrl || ''
+      if (typeof res.advancedMode === 'boolean') settingsForm.value.advancedMode = res.advancedMode
       if (typeof res.aiEnabled === 'boolean') settingsForm.value.aiEnabled = res.aiEnabled
       settingsForm.value.aiBaseUrl = res.aiBaseUrl || ''
       settingsForm.value.aiApiKey = ''
@@ -330,9 +397,11 @@ onMounted(async () => {
       if (typeof res.volumeBackupEnabled === 'boolean') settingsForm.value.volumeBackupEnabled = res.volumeBackupEnabled
       settingsForm.value.volumeBackupImage = res.volumeBackupImage || 'offen/docker-volume-backup:latest'
       settingsForm.value.volumeBackupEnv = res.volumeBackupEnv || ''
+      settingsForm.value.volumeBackupCronExpression = res.volumeBackupCronExpression || '@daily'
       settingsForm.value.volumeBackupVolumes = Array.isArray(res.volumeBackupVolumes) ? res.volumeBackupVolumes : []
       settingsForm.value.volumeBackupArchiveDir = res.volumeBackupArchiveDir || ''
       if (typeof res.volumeBackupMountDockerSock === 'boolean') settingsForm.value.volumeBackupMountDockerSock = res.volumeBackupMountDockerSock
+      syncAdvancedModeLocal()
     }
   } catch (error) {
     console.error('Failed to load settings:', error)
@@ -356,6 +425,7 @@ const handleRefresh = async () => {
       settingsForm.value.lanUrl = res.lanUrl || ''
       settingsForm.value.wanUrl = res.wanUrl || ''
       settingsForm.value.appStoreServerUrl = res.appStoreServerUrl || ''
+      if (typeof res.advancedMode === 'boolean') settingsForm.value.advancedMode = res.advancedMode
       if (typeof res.aiEnabled === 'boolean') settingsForm.value.aiEnabled = res.aiEnabled
       settingsForm.value.aiBaseUrl = res.aiBaseUrl || ''
       settingsForm.value.aiApiKey = ''
@@ -372,9 +442,11 @@ const handleRefresh = async () => {
       if (typeof res.volumeBackupEnabled === 'boolean') settingsForm.value.volumeBackupEnabled = res.volumeBackupEnabled
       settingsForm.value.volumeBackupImage = res.volumeBackupImage || 'offen/docker-volume-backup:latest'
       settingsForm.value.volumeBackupEnv = res.volumeBackupEnv || ''
+      settingsForm.value.volumeBackupCronExpression = res.volumeBackupCronExpression || '@daily'
       settingsForm.value.volumeBackupVolumes = Array.isArray(res.volumeBackupVolumes) ? res.volumeBackupVolumes : []
       settingsForm.value.volumeBackupArchiveDir = res.volumeBackupArchiveDir || ''
       if (typeof res.volumeBackupMountDockerSock === 'boolean') settingsForm.value.volumeBackupMountDockerSock = res.volumeBackupMountDockerSock
+      syncAdvancedModeLocal()
     }
     
     const pr = await api.ports.getRange()
@@ -408,11 +480,13 @@ const saveServerSettings = async () => {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
+      advancedMode: !!settingsForm.value.advancedMode,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
       allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
       imageUpdateIntervalMinutes: settingsForm.value.imageUpdateIntervalMinutes
     })
+    syncAdvancedModeLocal()
     ElMessage.success('配置已保存')
   } catch (error) {
     ElMessage.error('保存失败: ' + (error.response?.data?.error || error.message))
@@ -428,6 +502,7 @@ const saveVolumeBackupSettings = async () => {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
+      advancedMode: !!settingsForm.value.advancedMode,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
       allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
@@ -435,15 +510,38 @@ const saveVolumeBackupSettings = async () => {
       volumeBackupEnabled: !!settingsForm.value.volumeBackupEnabled,
       volumeBackupImage: settingsForm.value.volumeBackupImage,
       volumeBackupEnv: settingsForm.value.volumeBackupEnv,
+      volumeBackupCronExpression: settingsForm.value.volumeBackupCronExpression,
       volumeBackupVolumes: settingsForm.value.volumeBackupVolumes,
       volumeBackupArchiveDir: settingsForm.value.volumeBackupArchiveDir,
       volumeBackupMountDockerSock: !!settingsForm.value.volumeBackupMountDockerSock
     })
+    syncAdvancedModeLocal()
     ElMessage.success('卷备份配置已保存')
   } catch (error) {
     ElMessage.error('保存失败: ' + (error.response?.data?.error || error.message))
   } finally {
     volumeBackupSaving.value = false
+  }
+}
+
+const rebuildVolumeBackup = async () => {
+  if (!settingsForm.value.volumeBackupEnabled) {
+    ElMessage.warning('请先启用卷备份')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('确定要重建卷备份容器吗？', '提示', { type: 'warning' })
+  } catch (e) {
+    return
+  }
+  volumeBackupRebuilding.value = true
+  try {
+    await api.system.volumeBackupRebuild()
+    ElMessage.success('已触发重建')
+  } catch (error) {
+    ElMessage.error('重建失败: ' + (error.response?.data?.error || error.message))
+  } finally {
+    volumeBackupRebuilding.value = false
   }
 }
 
@@ -454,6 +552,7 @@ const saveAiSettings = async () => {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
+      advancedMode: !!settingsForm.value.advancedMode,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
       allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
@@ -471,6 +570,8 @@ const saveAiSettings = async () => {
     settingsForm.value.aiApiKey = ''
     const res = await request.get('/settings/global')
     settingsForm.value.aiApiKeySet = !!res?.aiApiKeySet
+    if (typeof res?.advancedMode === 'boolean') settingsForm.value.advancedMode = res.advancedMode
+    syncAdvancedModeLocal()
     ElMessage.success('AI 配置已保存')
   } catch (error) {
     ElMessage.error('保存失败: ' + (error.response?.data?.error || error.message))
@@ -486,6 +587,7 @@ const clearAiApiKey = async () => {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
+      advancedMode: !!settingsForm.value.advancedMode,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
       allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
@@ -499,6 +601,7 @@ const clearAiApiKey = async () => {
     })
     settingsForm.value.aiApiKey = ''
     settingsForm.value.aiApiKeySet = false
+    syncAdvancedModeLocal()
     ElMessage.success('Key 已清空')
   } catch (error) {
     ElMessage.error('清空失败: ' + (error.response?.data?.error || error.message))
@@ -588,11 +691,13 @@ const saveAllocSettings = async () => {
       lanUrl: settingsForm.value.lanUrl,
       wanUrl: settingsForm.value.wanUrl,
       appStoreServerUrl: settingsForm.value.appStoreServerUrl,
+      advancedMode: !!settingsForm.value.advancedMode,
       allocPortStart: allocSettings.value.start,
       allocPortEnd: allocSettings.value.end,
       allowAutoAllocPort: !!allocSettings.value.allowAutoAllocPort,
       imageUpdateIntervalMinutes: settingsForm.value.imageUpdateIntervalMinutes
     })
+    syncAdvancedModeLocal()
     ElMessage.success('端口分配范围已保存')
   } catch (error) {
     ElMessage.error('保存失败: ' + (error.response?.data?.error || error.message))
@@ -655,6 +760,12 @@ const testAllocate = async () => {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .settings-card {

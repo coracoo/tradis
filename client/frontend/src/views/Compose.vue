@@ -7,7 +7,7 @@
           placeholder="搜索项目或容器名称..."
           clearable
           class="search-input"
-          size="medium"
+          size="default"
           @keyup.enter="refreshAll"
         >
           <template #prefix>
@@ -15,7 +15,7 @@
           </template>
         </el-input>
         
-        <el-radio-group v-model="statusFilter" class="status-filter" size="medium">
+        <el-radio-group v-model="statusFilter" class="status-filter" size="default">
           <el-radio-button label="">全部</el-radio-button>
           <el-radio-button label="运行中">运行中</el-radio-button>
           <el-radio-button label="已停止">已停止</el-radio-button>
@@ -24,21 +24,21 @@
 
       <div class="filter-right">
         <el-button-group class="main-actions">
-          <el-button @click="refreshAll" :loading="loading" plain size="medium">
+          <el-button @click="refreshAll" :loading="loading" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
           <!--<el-button plain size="medium" @click="handleOpenDeployProgress">
             进度查询
           </el-button>-->
-          <el-button type="primary" @click="goCreateProject" size="medium">
+          <el-button type="primary" @click="goCreateProject" size="default">
             <template #icon><IconEpPlus /></template>
             新建项目
           </el-button>
         </el-button-group>
         
         <el-dropdown trigger="click" @command="handleGlobalAction">
-          <el-button plain class="more-btn" size="medium">
+          <el-button plain class="more-btn" size="default">
             更多操作<IconEpArrowDown class="el-icon--right" />
           </el-button>
           <template #dropdown>
@@ -323,7 +323,7 @@
             </div>
             <div class="row-ops" v-else>
                <!-- Single Container Ops - Same as inner table for consistency, or simplified -->
-               <el-button link type="primary" @click="goContainerDetail(scope.row.containers[0])" size="medium">详情</el-button>
+               <el-button link type="primary" @click="goContainerDetail(scope.row.containers[0])" size="default">详情</el-button>
             </div>
           </template>
         </el-table-column>
@@ -383,6 +383,7 @@
               <div class="compose-editor-container">
                 <div class="editor-toolbar">
                   <span class="file-name">docker-compose.yml</span>
+                  <el-button size="small" link type="primary" @click="openAiComposeDialog">AI 生成</el-button>
                   <el-dropdown trigger="click">
                     <el-button size="small" link type="primary">
                       插入模板<IconEpArrowDown class="el-icon--right" />
@@ -446,6 +447,40 @@
           <el-button v-if="deploying" type="warning" @click="handleDeployInBackground">后台运行</el-button>
           <el-button @click="dialogVisible = false">取消</el-button>
           <el-button type="primary" @click="handleSaveProject">立即部署</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      title="AI 生成 Compose"
+      v-model="aiComposeDialogVisible"
+      width="720px"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <el-form label-position="top">
+        <el-form-item label="需求描述">
+          <el-input v-model="aiComposePrompt" type="textarea" :rows="8" placeholder="例如：部署 n8n + postgres，持久化数据到 ./data，映射 5678 端口，设置 TZ=Asia/Shanghai" />
+        </el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="aiComposeUseExistingCompose">参考当前 Compose</el-checkbox>
+          <el-checkbox v-model="aiComposeUseExistingDotenv" style="margin-left: 12px">参考当前 .env</el-checkbox>
+        </el-form-item>
+        <el-form-item v-if="aiComposeWarnings.length">
+          <el-alert type="warning" :closable="false" :title="`Warnings（${aiComposeWarnings.length}）`">
+            <div v-for="(w, i) in aiComposeWarnings" :key="i">{{ w }}</div>
+          </el-alert>
+        </el-form-item>
+        <el-form-item v-if="aiComposeNotes.length">
+          <el-alert type="info" :closable="false" :title="`Notes（${aiComposeNotes.length}）`">
+            <div v-for="(n, i) in aiComposeNotes" :key="i">{{ n }}</div>
+          </el-alert>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="aiComposeDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="aiComposeGenerating" @click="runAiComposeGenerate">生成并填充</el-button>
         </span>
       </template>
     </el-dialog>
@@ -526,6 +561,7 @@ import ContainerTerminal from '../components/ContainerTerminal.vue'
 import ContainerLogs from '../components/ContainerLogs.vue'
 import request from '../utils/request'
 import { useSseLogStream } from '../utils/sseLogStream'
+import { getSuggestedOperationDelayMs } from '../shared/loadShedding'
 let monaco = null
 const copyTextToClipboard = async (text) => {
   const writeText = navigator?.clipboard?.writeText
@@ -596,6 +632,57 @@ const handleExtractDotenvFromCompose = async () => {
 
   projectForm.value.dotenv = appendDotenvLines(String(projectForm.value.dotenv || ''), toAdd.map((k) => `${k}=`))
   ElMessage.success(`已补齐 ${toAdd.length} 个变量`)
+}
+
+const openAiComposeDialog = () => {
+  aiComposePrompt.value = ''
+  aiComposeNotes.value = []
+  aiComposeWarnings.value = []
+  aiComposeUseExistingCompose.value = true
+  aiComposeUseExistingDotenv.value = true
+  aiComposeDialogVisible.value = true
+}
+
+const runAiComposeGenerate = async () => {
+  const prompt = String(aiComposePrompt.value || '').trim()
+  if (!prompt) {
+    ElMessage.warning('请先输入需求描述')
+    return
+  }
+  aiComposeGenerating.value = true
+  try {
+    const payload = {
+      prompt,
+      existingCompose: aiComposeUseExistingCompose.value ? String(projectForm.value.compose || '') : '',
+      existingDotenv: aiComposeUseExistingDotenv.value ? String(projectForm.value.dotenv || '') : ''
+    }
+    const res = await api.ai.generateCompose(payload)
+    const data = res?.data || res
+    const yaml = String(data?.composeYaml || '').trim()
+    const dotenv = String(data?.dotenvText || '')
+    const notes = Array.isArray(data?.notes) ? data.notes : []
+    const warnings = Array.isArray(data?.warnings) ? data.warnings : []
+    aiComposeNotes.value = notes.map(v => String(v || '').trim()).filter(Boolean)
+    aiComposeWarnings.value = warnings.map(v => String(v || '').trim()).filter(Boolean)
+    if (!yaml) {
+      ElMessage.error('AI 未返回 composeYaml')
+      return
+    }
+    projectForm.value.compose = yaml.endsWith('\n') ? yaml : `${yaml}\n`
+    if (editorInstance.value) {
+      editorInstance.value.setValue(projectForm.value.compose)
+    }
+    if (dotenv.trim() !== '') {
+      projectForm.value.dotenv = dotenv.endsWith('\n') ? dotenv : `${dotenv}\n`
+    }
+    await handleExtractDotenvFromCompose()
+    ElMessage.success('已填充 Compose')
+    aiComposeDialogVisible.value = false
+  } catch (e) {
+    ElMessage.error('生成失败: ' + (e?.response?.data?.error || e?.message || '未知错误'))
+  } finally {
+    aiComposeGenerating.value = false
+  }
 }
 
 // parseDotenvKeys 解析 .env 文本中已定义的 key（忽略注释/空行）
@@ -726,6 +813,13 @@ const dialogTitle = ref('新建项目')
 const deployAutoScroll = ref(true)
 const logsContent = ref(null)
 const deploying = ref(false)
+const aiComposeDialogVisible = ref(false)
+const aiComposePrompt = ref('')
+const aiComposeGenerating = ref(false)
+const aiComposeUseExistingCompose = ref(true)
+const aiComposeUseExistingDotenv = ref(true)
+const aiComposeNotes = ref([])
+const aiComposeWarnings = ref([])
 const deployTaskTimeoutRef = ref(null)
 const deployStreamWatcherStopRef = ref(null)
 const lastDeployTaskId = ref(localStorage.getItem('compose:lastDeployTaskId') || '')
@@ -1308,7 +1402,7 @@ const startProject = async (row) => {
   try {
     await api.compose.start(row.name)
     ElMessage.success('项目启动成功')
-    setTimeout(refreshAll, 2000)
+    setTimeout(refreshAll, getSuggestedOperationDelayMs(2000))
   } catch (e) {
     ElMessage.error('启动失败')
   }
@@ -1321,7 +1415,7 @@ const stopProject = async (row) => {
   try {
     await api.compose.stop(row.name)
     ElMessage.success('项目已停止')
-    setTimeout(refreshAll, 2000)
+    setTimeout(refreshAll, getSuggestedOperationDelayMs(2000))
   } catch (e) {
     ElMessage.error('停止失败')
   }
@@ -1694,7 +1788,7 @@ const handleSaveProject = async () => {
       deploying.value = false
       stopWatcher()
       deployStreamWatcherStopRef.value = null
-      setTimeout(() => refreshAll(), 500)
+      setTimeout(() => refreshAll(), getSuggestedOperationDelayMs(500))
     })
     deployStreamWatcherStopRef.value = stopWatcher
   } catch (error) {

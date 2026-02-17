@@ -7,7 +7,7 @@
           placeholder="搜索项目名称..."
           clearable
           class="search-input"
-          size="medium"
+          size="default"
         >
           <template #prefix>
             <IconEpSearch />
@@ -16,11 +16,11 @@
       </div>
       <div class="filter-right">
         <el-button-group>
-          <el-button @click="handleRefresh" plain size="medium">
+          <el-button @click="handleRefresh" plain size="default">
             <template #icon><IconEpRefresh /></template>
             刷新
           </el-button>
-          <el-button type="primary" @click="handleCreate" size="medium">
+          <el-button type="primary" @click="handleCreate" size="default">
             <template #icon><IconEpPlus /></template>
             新建项目
           </el-button>
@@ -241,6 +241,15 @@ import * as monaco from 'monaco-editor'
 import api from '../api'
 import request from '../utils/request'
 import { useSseLogStream } from '../utils/sseLogStream'
+import { getSuggestedOperationDelayMs } from '../shared/loadShedding'
+
+const advancedMode = ref(localStorage.getItem('advancedMode') === '1')
+const syncAdvancedMode = () => {
+  advancedMode.value = localStorage.getItem('advancedMode') === '1'
+  if (editorInstance.value) {
+    editorInstance.value.updateOptions({ readOnly: !advancedMode.value })
+  }
+}
 
 // 判断是否为本项目管理的项目
 const isManagedProject = (path) => {
@@ -270,7 +279,7 @@ const editorOptions = {
   fontSize: 14,
   tabSize: 2,
   renderWhitespace: 'all',
-  readOnly: false,
+  readOnly: !advancedMode.value,
   contextmenu: true,
   selectOnLineNumbers: true,
   multiCursorModifier: 'alt',
@@ -291,6 +300,7 @@ const initEditor = () => {
     }
     
     editorInstance.value = monaco.editor.create(editorContainer.value, editorOptions)
+    editorInstance.value.updateOptions({ readOnly: !advancedMode.value })
     
     // 监听内容变化
     editorInstance.value.onDidChangeModelContent(() => {
@@ -306,6 +316,7 @@ const initEditor = () => {
 
 // 编辑器配置——在组件卸载时清理
 onBeforeUnmount(() => {
+  window.removeEventListener('advanced-mode-change', syncAdvancedMode)
   if (editorInstance.value) {
     editorInstance.value.dispose()
   }
@@ -448,7 +459,7 @@ const {
       setTimeout(() => {
         dialogVisible.value = false
         handleRefresh()
-      }, 500)
+      }, getSuggestedOperationDelayMs(500))
       return
     }
     if (entry.type === 'error') {
@@ -562,6 +573,10 @@ const handleSortChange = ({ prop, order }) => {
 }
 
 const handleSave = async () => {
+  if (!advancedMode.value) {
+    ElMessage.warning('请先在系统设置中开启“高级模式”')
+    return
+  }
   if (!projectForm.value.name || !projectForm.value.compose) {
     ElMessage.warning('请填写必要信息')
     return
@@ -676,6 +691,8 @@ const handleSave = async () => {
 }
 
 onMounted(async () => {
+  window.addEventListener('advanced-mode-change', syncAdvancedMode)
+  syncAdvancedMode()
   try {
     const res = await request.get('/settings/kv/sort_projects')
     if (res && res.value) {

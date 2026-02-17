@@ -85,3 +85,18 @@ func enrichNavigationByTitle(c *gin.Context) {
 	attempted := system.RunNavigationAIEnrichByTitle(title, limit, req.Force)
 	c.JSON(http.StatusOK, gin.H{"attempted": attempted, "force": req.Force, "title": title})
 }
+
+func enrichNavigationByID(c *gin.Context) {
+	type reqBody struct {
+		NavID int  `json:"navId"`
+		Force bool `json:"force"`
+	}
+	var req reqBody
+	_ = c.ShouldBindJSON(&req)
+	if req.NavID <= 0 {
+		respondError(c, http.StatusBadRequest, "navId is required", nil)
+		return
+	}
+	attempted := system.RunNavigationAIEnrichByID(req.NavID, req.Force)
+	c.JSON(http.StatusOK, gin.H{"attempted": attempted, "force": req.Force, "navId": req.NavID})
+}

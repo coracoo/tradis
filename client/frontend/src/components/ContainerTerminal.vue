@@ -71,6 +71,7 @@ import { FitAddon } from 'xterm-addon-fit'
 // import { AttachAddon } from 'xterm-addon-attach';
 import 'xterm/css/xterm.css'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { readJsonFromStorage } from '../utils/json'
 
 const props = defineProps({
   modelValue: {
@@ -127,27 +128,19 @@ watch(() => dialogVisible.value, (val) => {
 
 // 加载本地会话配置
 onMounted(() => {
-  try {
-    const saved = localStorage.getItem('terminalProfiles')
-    if (saved) {
-      const arr = JSON.parse(saved)
-      if (Array.isArray(arr) && arr.length > 0) {
-        // 兼容历史数据：补齐缺失的 id 字段
-        profiles.value = arr.map(p => ({
-          id: p.id || `p-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-          label: p.label,
-          cmd: p.cmd
-        }))
-        // 回写一次，防止后续匹配失败导致状态灯不变化
-        try { localStorage.setItem('terminalProfiles', JSON.stringify(profiles.value)) } catch {}
-        // 初始化状态灯为未连接
-        const init = {}
-        profiles.value.forEach(p => { init[p.id] = false })
-        profileStatusMap.value = init
-        refreshProfileStates()
-      }
-    }
-  } catch (e) {}
+  const arr = readJsonFromStorage('terminalProfiles', null)
+  if (Array.isArray(arr) && arr.length > 0) {
+    profiles.value = arr.map(p => ({
+      id: p.id || `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      label: p.label,
+      cmd: p.cmd
+    }))
+    try { localStorage.setItem('terminalProfiles', JSON.stringify(profiles.value)) } catch {}
+    const init = {}
+    profiles.value.forEach(p => { init[p.id] = false })
+    profileStatusMap.value = init
+    refreshProfileStates()
+  }
 })
 
 // 创建并挂载某个会话的终端实例

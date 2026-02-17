@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { updateLoadSheddingFromHeaders } from '../loadShedding'
 
 const service = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -37,6 +38,8 @@ service.interceptors.response.use(
     if (response.config.url?.includes('/images/pull')) {
       return response.data
     }
+
+    updateLoadSheddingFromHeaders(response.headers || {})
     const data = response.data
     if (!data || typeof data !== 'object') return data
 

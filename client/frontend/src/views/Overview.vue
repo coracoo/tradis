@@ -82,6 +82,7 @@ import api from '../api'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { formatBytes } from '../utils/format'
+import { getSuggestedRefreshMs } from '../shared/loadShedding'
 import IconEpMonitor from '~icons/ep/monitor'
 import IconEpCircleCheckFilled from '~icons/ep/circle-check-filled'
 import IconEpCircleCloseFilled from '~icons/ep/circle-close-filled'
@@ -308,24 +309,41 @@ const getUsageColorBg = (percent) => {
 }
 
 let timer = null
-const refreshInterval = 5000
+let refreshInterval = 5000
+let refreshSeq = 0
+
+const getAdaptiveRefreshInterval = (cpuPercent, memPercent) => {
+  const suggested = getSuggestedRefreshMs(5000)
+  if (suggested) return suggested
+  const cpu = Number(cpuPercent || 0)
+  const mem = Number(memPercent || 0)
+  if (cpu >= 90 || mem >= 90) return 20000
+  if (cpu >= 75 || mem >= 75) return 10000
+  return 5000
+}
 
 const stopRefresh = () => {
+  refreshSeq += 1
   if (timer) {
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = null
   }
 }
 
 const startRefresh = () => {
   stopRefresh()
-  fetchStatistics()
-  fetchEventLogs()
-  timer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return
-    fetchStatistics()
-    fetchEventLogs()
-  }, refreshInterval)
+  const seq = refreshSeq
+  const tick = async () => {
+    if (seq !== refreshSeq) return
+    if (document.visibilityState === 'visible') {
+      await fetchStatistics()
+      await fetchEventLogs()
+      refreshInterval = getAdaptiveRefreshInterval(resources.value.cpu.percent, resources.value.memory.percent)
+    }
+    if (seq !== refreshSeq) return
+    timer = setTimeout(tick, refreshInterval)
+  }
+  tick()
 }
 
 const handleVisibilityChange = () => {

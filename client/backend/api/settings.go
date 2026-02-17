@@ -38,6 +38,7 @@ type UpdateSettingsRequest struct {
 	LanUrl                      string   `json:"lanUrl"`
 	WanUrl                      string   `json:"wanUrl"`
 	AppStoreServerUrl           string   `json:"appStoreServerUrl"`
+	AdvancedMode                bool     `json:"advancedMode"`
 	AllocPortStart              int      `json:"allocPortStart"`
 	AllocPortEnd                int      `json:"allocPortEnd"`
 	AllowAutoAllocPort          bool     `json:"allowAutoAllocPort"`
@@ -51,6 +52,7 @@ type UpdateSettingsRequest struct {
 	VolumeBackupEnabled         *bool    `json:"volumeBackupEnabled"`
 	VolumeBackupImage           *string  `json:"volumeBackupImage"`
 	VolumeBackupEnv             *string  `json:"volumeBackupEnv"`
+	VolumeBackupCronExpression  *string  `json:"volumeBackupCronExpression"`
 	VolumeBackupVolumes         []string `json:"volumeBackupVolumes"`
 	VolumeBackupArchiveDir      *string  `json:"volumeBackupArchiveDir"`
 	VolumeBackupMountDockerSock *bool    `json:"volumeBackupMountDockerSock"`
@@ -91,6 +93,7 @@ func updateGlobalSettings(c *gin.Context) {
 	merged.LanUrl = req.LanUrl
 	merged.WanUrl = req.WanUrl
 	merged.AppStoreServerUrl = req.AppStoreServerUrl
+	merged.AdvancedMode = req.AdvancedMode
 	merged.AllocPortStart = req.AllocPortStart
 	merged.AllocPortEnd = req.AllocPortEnd
 	merged.AllowAutoAllocPort = req.AllowAutoAllocPort
@@ -118,6 +121,9 @@ func updateGlobalSettings(c *gin.Context) {
 	}
 	if req.VolumeBackupEnv != nil {
 		merged.VolumeBackupEnv = *req.VolumeBackupEnv
+	}
+	if req.VolumeBackupCronExpression != nil {
+		merged.VolumeBackupCronExpression = strings.TrimSpace(*req.VolumeBackupCronExpression)
 	}
 	if req.VolumeBackupVolumes != nil {
 		merged.VolumeBackupVolumes = req.VolumeBackupVolumes
